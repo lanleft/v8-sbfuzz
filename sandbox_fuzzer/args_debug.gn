@@ -1,0 +1,8 @@
+is_debug = true
+symbol_level = 2
+dcheck_always_on = false
+target_cpu = "x64"
+v8_enable_memory_corruption_api = true
+v8_enable_object_print = true
+v8_optimized_debug = false
+v8_enable_backtrace = true

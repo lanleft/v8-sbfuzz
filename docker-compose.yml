@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  v8:
+    image: v8
+    build:
+      context: .
+    volumes:
+      - ./v8:/home/vult/v8
+      - ./depot_tools:/home/vult/depot_tools
+      - ./AFLplusplus:/home/vult/AFLplusplus
+      - ./sandbox_fuzzer:/home/vult/sandbox_fuzzer
+    user: "1006:1007"  # Use actual UID:GID`
