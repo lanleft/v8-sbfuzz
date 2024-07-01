@@ -41,3 +41,26 @@ sudo make install
 ```
 
 
+# Unicorn fuzzer
+
+Blogs:
+    - https://eternalsakura13.com/2020/03/18/unicorn_learn/
+    - https://hackernoon.com/afl-unicorn-part-2-fuzzing-the-unfuzzable-bea8de3540a5
+
+## Dumpper
+
+```bash
+source /home/vult/v8_sb_fuzz/AFLplusplus/unicorn_mode/helper_scripts/unicorn_dumper_pwndbg.py
+```
+
+Example 1:
+
+![alt text](image.png)
+
+
+**Harness**
+
+- C: https://github.com/AFLplusplus/AFLplusplus/blob/stable/unicorn_mode/samples/c/harness.c
+- Python: https://github.com/AFLplusplus/AFLplusplus/blob/stable/unicorn_mode/samples/python_simple/simple_test_harness.py
+- Unicorn-fuzz: https://github.com/unicorn-engine/unicorn/blob/master/tests/fuzz/fuzz_emu_x86_64.c
+

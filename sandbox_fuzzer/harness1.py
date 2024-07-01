@@ -1,21 +1,20 @@
+import struct
 
+def read(name):
+    with open(name,'rb') as f:
+        return f.read()
 
-"""
-    template_test_harness.py
+def u32(data):
+    return struct.unpack("I", data)[0]
 
-    Template which loads the context of a process into a Unicorn Engine,
-    instance, loads a custom (mutated) inputs, and executes the 
-    desired code. Designed to be used in conjunction with one of the
-    Unicorn Context Dumper scripts.
-
-    Author:
-        Nathan Voss <njvoss299@gmail.com>
-"""
-
+def p32(num):
+    return struct.pack("I", num)
+    
 import argparse
 
 from unicorn import *
 from unicorn.x86_const import *  # TODO: Set correct architecture here as necessary
+import capstone
 
 import unicorn_loader 
 
@@ -23,14 +22,32 @@ import unicorn_loader
 unicorn_heap = None
 
 # Start and end address of emulation
-START_ADDRESS = # TODO: Set start address here
-END_ADDRESS   = # TODO: Set end address here
+START_ADDRESS = 0x555556c19100 # <Builtins_MathLog>       push   rbp
+END_ADDRESS   = 0x7fffffffd628 # 
+
+
+# Entry points of addresses of functions to hook
+MALLOC_ENTRY        = 0x08049C40
+FREE_ENTRY          = 0x08049980
+PRINTF_ENTRY        = 0x0804AA60
+CGC_TRANSMIT_ENTRY  = 0x0804A4C2
+CGC_TRANSMIT_PASSED = 0x0804A4DC
 
 """
     Implement target-specific hooks in here.
     Stub out, skip past, and re-implement necessary functionality as appropriate
 """
 def unicorn_hook_instruction(uc, address, size, user_data):
+    
+    # Bypass the CGC_TRANSMIT_ENTRY check
+    if address == CGC_TRANSMIT_ENTRY:
+        print("--- Bypassing CGC_TRANSMIT_ENTRY validation @ 0x{0:08x} ---".format(address))
+        uc.reg_write(UC_X86_REG_EIP, CGC_TRANSMIT_PASSED)
+    
+    elif address == START_ADDRESS:
+        print('>>> Tracing instruction at 0x%x, instruction size = 0x%x' %(address, size))
+        print(mu.mem_read(address,size))
+
 
     # TODO: Setup hooks and handle anything you need to here
     #    - For example, hook malloc/free/etc. and handle it internally
@@ -74,16 +91,20 @@ def main():
         input_content = input_file.read()
         input_file.close()
 
-        # TODO: Apply constraints to mutated input here
-        raise exceptions.NotImplementedError('No constraints on the mutated inputs have been set!')
+        # # TODO: Apply constraints to mutated input here
+        # if len(input_content) > 0xFF:
+        #     return
+        # raise exceptions.NotImplementedError('No constraints on the mutated inputs have been set!')
         
         # Allocate a new buffer and put the input into it
-        buf_addr = unicorn_heap.malloc(len(input_content))
-        uc.mem_write(buf_addr, input_content)
-        print("Allocated mutated input buffer @ 0x{0:016x}".format(buf_addr))
+        # buf_addr = unicorn_heap.malloc(len(input_content))
+        # uc.mem_write(buf_addr, input_content)
+        # print("Allocated mutated input buffer @ 0x{0:016x}".format(buf_addr))
 
         # TODO: Set the input into the state so it will be handled
-        raise exceptions.NotImplementedError('The mutated input was not loaded into the Unicorn state!')
+        #raise exceptions.NotImplementedError('The mutated input was not loaded into the Unicorn state!')
+        uc.reg_write(UC_X86_REG_EAX, buf_addr)
+        uc.reg_write(UC_X86_REG_DL, len(input_content))
         
     # Run the test
     print("Executing from 0x{0:016x} to 0x{1:016x}".format(START_ADDRESS, END_ADDRESS))

@@ -1,0 +1,2465 @@
+{
+    "arch": {
+        "arch": "x64"
+    },
+    "regs": {
+        "rip": 93825016107264,
+        "rsp": 140737488344592,
+        "rbp": 140737488344736,
+        "eflags": 518,
+        "rax": 2,
+        "rbx": 0,
+        "rcx": 93825016107264,
+        "rdx": 34080565493865,
+        "rdi": 34080567088593,
+        "rsi": 34080567072689,
+        "r8": 34080567172185,
+        "r9": 18446744073709551605,
+        "r10": 140735743524864,
+        "r11": 165,
+        "r12": 28866475197985,
+        "r13": 93825019949184,
+        "r14": 34080565493760,
+        "r15": 1269,
+        "cs": 51,
+        "ss": 43,
+        "ds": 0,
+        "es": 0,
+        "fs": 0,
+        "gs": 0,
+        "fsbase": 140737350188160,
+        "gsbase": 0,
+        "ax": 2,
+        "ah": 0,
+        "al": 2,
+        "bx": 0,
+        "bh": 0,
+        "bl": 0,
+        "cx": 37120,
+        "ch": 145,
+        "cl": 0,
+        "dx": 105,
+        "dh": 0,
+        "dl": 105,
+        "dil": 209,
+        "sil": 177,
+        "spl": 16,
+        "bpl": 160,
+        "di": 21969,
+        "si": 6065,
+        "bp": 54944,
+        "sp": 140737488344592,
+        "ip": null
+    },
+    "segments": [
+        {
+            "start": 24429365854208,
+            "end": 24429365858304,
+            "name": "[anon_1637e7ac8]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "ffe83bf78dc1a55a18d697391ab30b7b.bin"
+        },
+        {
+            "start": 28866475196416,
+            "end": 28866475200512,
+            "name": "[anon_1a4100000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "76282955777bd2a4539697e95be9cee2.bin"
+        },
+        {
+            "start": 28866475200512,
+            "end": 28866475982848,
+            "name": "[anon_1a4100001]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 28866475982848,
+            "end": 28866476244992,
+            "name": "[anon_1a41000c0]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "7eefd853a414c1b5b72bc90bf4da7ab4.bin"
+        },
+        {
+            "start": 28866476244992,
+            "end": 28867548938240,
+            "name": "[anon_1a4100100]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 30852917399552,
+            "end": 30852917407744,
+            "name": "[anon_1c0f812e9]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": true
+            },
+            "content_file": "bc109495a2edb5cbe4e17f2a72aed8d6.bin"
+        },
+        {
+            "start": 34046205755392,
+            "end": 34080565493760,
+            "name": "[anon_1ef700000]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 34080565493760,
+            "end": 34080565559296,
+            "name": "[anon_1eff00000]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "3fc352689fb254cb55d5f297b0fcbb93.bin"
+        },
+        {
+            "start": 34080565559296,
+            "end": 34080565624832,
+            "name": "[anon_1eff00010]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 34080565624832,
+            "end": 34080565755904,
+            "name": "[anon_1eff00020]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "9bb7a205705ffb1c3c6fb6d5c667a868.bin"
+        },
+        {
+            "start": 34080565755904,
+            "end": 34080566816768,
+            "name": "[anon_1eff00040]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "b85a17472581c5c9e6211951e397faf8.bin"
+        },
+        {
+            "start": 34080566816768,
+            "end": 34080567066624,
+            "name": "[anon_1eff00143]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 34080567066624,
+            "end": 34080568115200,
+            "name": "[anon_1eff00180]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "94c6dd11b7a509cc2ff4a248a3b52535.bin"
+        },
+        {
+            "start": 34080568115200,
+            "end": 34080568201216,
+            "name": "[anon_1eff00280]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "070655ec7f39e19d20b6de0c5d3d5300.bin"
+        },
+        {
+            "start": 34080568201216,
+            "end": 34080568377344,
+            "name": "[anon_1eff00295]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 34080568377344,
+            "end": 34080568901632,
+            "name": "[anon_1eff002c0]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "d15a757821dc12beee0b44de9810568f.bin"
+        },
+        {
+            "start": 34080568901632,
+            "end": 34084860461056,
+            "name": "[anon_1eff00340]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 34084860461056,
+            "end": 34084861509632,
+            "name": "[anon_1f0000000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "e5c6591897054a0ef5443ea8c430090d.bin"
+        },
+        {
+            "start": 34084861509632,
+            "end": 34093450395648,
+            "name": "[anon_1f0000100]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 34093450395648,
+            "end": 34094524137472,
+            "name": "[anon_1f0200000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "b3e38c97d25a6aa321d43db22013a9c9.bin"
+        },
+        {
+            "start": 34094524137472,
+            "end": 35214436859904,
+            "name": "[anon_1f0240000]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 93824992231424,
+            "end": 93824997298176,
+            "name": "/home/vult/v8_sb_fuzz/v8/out/release/d8",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "4fe01904c14dd57bbb77060f3071a8ae.bin"
+        },
+        {
+            "start": 93824997302272,
+            "end": 93825018925056,
+            "name": "/home/vult/v8_sb_fuzz/v8/out/release/d8",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": true
+            },
+            "content_file": "c425ae4cb4fedef9e370c5958b4c0351.bin"
+        },
+        {
+            "start": 93825018925056,
+            "end": 93825019297792,
+            "name": "/home/vult/v8_sb_fuzz/v8/out/release/d8",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "3c9eb77309c5173bb5f3f06fac1087ed.bin"
+        },
+        {
+            "start": 93825019301888,
+            "end": 93825019351040,
+            "name": "/home/vult/v8_sb_fuzz/v8/out/release/d8",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "7edfa486dd68d9e9a5c636f8ffac2f25.bin"
+        },
+        {
+            "start": 93825019351040,
+            "end": 93825019355136,
+            "name": "/home/vult/v8_sb_fuzz/v8/out/release/d8",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "d5da193a9e877ce8d893039e8a9aa791.bin"
+        },
+        {
+            "start": 93825019355136,
+            "end": 93825019412480,
+            "name": "/home/vult/v8_sb_fuzz/v8/out/release/d8",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "abe027aebaf0d10aa349f5680d17139c.bin"
+        },
+        {
+            "start": 93825019412480,
+            "end": 93825020698624,
+            "name": "[heap]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "c560df5d6e50c24ed3892283cef1820e.bin"
+        },
+        {
+            "start": 93826625568768,
+            "end": 93827162439680,
+            "name": "[anon_5555b6b00]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": true
+            },
+            "content_file": "7e24278977ef160a5095efcf3a8067be.bin"
+        },
+        {
+            "start": 140733394714624,
+            "end": 140733394849792,
+            "name": "[anon_7fff0c000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "24439d4f0ea89117df029e593373d598.bin"
+        },
+        {
+            "start": 140733394849792,
+            "end": 140733461823488,
+            "name": "[anon_7fff0c021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140733461823488,
+            "end": 140733461958656,
+            "name": "[anon_7fff10000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "8f71f305f86988b32f4de119ba02e237.bin"
+        },
+        {
+            "start": 140733461958656,
+            "end": 140733528932352,
+            "name": "[anon_7fff10021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140733528932352,
+            "end": 140733529067520,
+            "name": "[anon_7fff14000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "439e2af665b4ed920084752cff63e564.bin"
+        },
+        {
+            "start": 140733529067520,
+            "end": 140733596041216,
+            "name": "[anon_7fff14021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140733596041216,
+            "end": 140733596176384,
+            "name": "[anon_7fff18000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "64ea156d164dbc6fd3e6205f7ee3abc4.bin"
+        },
+        {
+            "start": 140733596176384,
+            "end": 140733663150080,
+            "name": "[anon_7fff18021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140733663150080,
+            "end": 140733663285248,
+            "name": "[anon_7fff1c000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "1840f86444e4104474cc0e3c098d6d0c.bin"
+        },
+        {
+            "start": 140733663285248,
+            "end": 140733730258944,
+            "name": "[anon_7fff1c021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140733730258944,
+            "end": 140733730394112,
+            "name": "[anon_7fff20000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "7e46d9e3d41f450d34021c4038c6316d.bin"
+        },
+        {
+            "start": 140733730394112,
+            "end": 140733797367808,
+            "name": "[anon_7fff20021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140733797367808,
+            "end": 140733797433344,
+            "name": "[anon_7fff24000]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "ed4b58523d0da395e188140af60aa9e0.bin"
+        },
+        {
+            "start": 140733797433344,
+            "end": 140733931585536,
+            "name": "[anon_7fff24010]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140733931585536,
+            "end": 140733931651072,
+            "name": "[anon_7fff2c000]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "ed4b58523d0da395e188140af60aa9e0.bin"
+        },
+        {
+            "start": 140733931651072,
+            "end": 140733931716608,
+            "name": "[anon_7fff2c010]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "0a63e745daac2c4182249430c3f62b0b.bin"
+        },
+        {
+            "start": 140733931716608,
+            "end": 140734468456448,
+            "name": "[anon_7fff2c020]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140734468456448,
+            "end": 140734468521984,
+            "name": "[anon_7fff4c000]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "ed4b58523d0da395e188140af60aa9e0.bin"
+        },
+        {
+            "start": 140734468521984,
+            "end": 140734602674176,
+            "name": "[anon_7fff4c010]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140734602674176,
+            "end": 140734602739712,
+            "name": "[anon_7fff54000]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "ed4b58523d0da395e188140af60aa9e0.bin"
+        },
+        {
+            "start": 140734602739712,
+            "end": 140734602805248,
+            "name": "[anon_7fff54010]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "493f5637202486e695acbcb6e235c3b0.bin"
+        },
+        {
+            "start": 140734602805248,
+            "end": 140734669783040,
+            "name": "[anon_7fff54020]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140734669783040,
+            "end": 140734669848576,
+            "name": "[anon_7fff58000]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "ed4b58523d0da395e188140af60aa9e0.bin"
+        },
+        {
+            "start": 140734669848576,
+            "end": 140735206653952,
+            "name": "[anon_7fff58010]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735206653952,
+            "end": 140735206719488,
+            "name": "[anon_7fff78000]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "3579ba9e3747559bca5690841afc46eb.bin"
+        },
+        {
+            "start": 140735206719488,
+            "end": 140735206850560,
+            "name": "[anon_7fff78010]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "16e5004bb4dfdebdf20ee75e524c61a5.bin"
+        },
+        {
+            "start": 140735206850560,
+            "end": 140735743524864,
+            "name": "[anon_7fff78030]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735743524864,
+            "end": 140735743590400,
+            "name": "[anon_7fff98000]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "ed4b58523d0da395e188140af60aa9e0.bin"
+        },
+        {
+            "start": 140735743590400,
+            "end": 140735743721472,
+            "name": "[anon_7fff98010]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "e66f8fa3da48663ca6edd46527c956bc.bin"
+        },
+        {
+            "start": 140735743721472,
+            "end": 140735877742592,
+            "name": "[anon_7fff98030]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735877742592,
+            "end": 140735877877760,
+            "name": "[anon_7fffa0000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "669133e1249bad29af5110e346b8ed8c.bin"
+        },
+        {
+            "start": 140735877877760,
+            "end": 140735944851456,
+            "name": "[anon_7fffa0021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735953211392,
+            "end": 140735953215488,
+            "name": "[anon_7fffa47f9]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735953215488,
+            "end": 140735961604096,
+            "name": "[anon_7fffa47fa]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "da1b27015d3b8e5640b7cdd20c694626.bin"
+        },
+        {
+            "start": 140735961604096,
+            "end": 140735961608192,
+            "name": "[anon_7fffa4ffa]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735961608192,
+            "end": 140735969996800,
+            "name": "[anon_7fffa4ffb]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "775277d374bb94375c604482758e47a8.bin"
+        },
+        {
+            "start": 140735969996800,
+            "end": 140735970000896,
+            "name": "[anon_7fffa57fb]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735970000896,
+            "end": 140735978389504,
+            "name": "[anon_7fffa57fc]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "7ea5a5e02d495c7077fbf110d2cc1059.bin"
+        },
+        {
+            "start": 140735978389504,
+            "end": 140735978393600,
+            "name": "[anon_7fffa5ffc]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735978393600,
+            "end": 140735986782208,
+            "name": "[anon_7fffa5ffd]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "dc30460c2815fdb79592807d4e9ea054.bin"
+        },
+        {
+            "start": 140735986782208,
+            "end": 140735986786304,
+            "name": "[anon_7fffa67fd]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735986786304,
+            "end": 140735995174912,
+            "name": "[anon_7fffa67fe]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "6bc025f51a8b4cd6b162c1bacc891f81.bin"
+        },
+        {
+            "start": 140735995174912,
+            "end": 140735995179008,
+            "name": "[anon_7fffa6ffe]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140735995179008,
+            "end": 140736003567616,
+            "name": "[anon_7fffa6fff]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "f2bb8157d60b58461874a3117ec321b7.bin"
+        },
+        {
+            "start": 140736003567616,
+            "end": 140736003571712,
+            "name": "[anon_7fffa77ff]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736003571712,
+            "end": 140736011960320,
+            "name": "[anon_7fffa7800]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "7ad8eb7ce6afd0941da69d8dd780365a.bin"
+        },
+        {
+            "start": 140736011960320,
+            "end": 140736012095488,
+            "name": "[anon_7fffa8000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "73ca60961e7897cecddff144e4cbba4c.bin"
+        },
+        {
+            "start": 140736012095488,
+            "end": 140736079069184,
+            "name": "[anon_7fffa8021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736079069184,
+            "end": 140736079204352,
+            "name": "[anon_7fffac000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "a325885cdb5fc62b2f9ae5572daf4494.bin"
+        },
+        {
+            "start": 140736079204352,
+            "end": 140736146178048,
+            "name": "[anon_7fffac021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736146178048,
+            "end": 140736146313216,
+            "name": "[anon_7fffb0000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "60b528eefcf4adde59f9187ccaf87367.bin"
+        },
+        {
+            "start": 140736146313216,
+            "end": 140736213286912,
+            "name": "[anon_7fffb0021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736221646848,
+            "end": 140736221650944,
+            "name": "[anon_7fffb47f9]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736221650944,
+            "end": 140736230039552,
+            "name": "[anon_7fffb47fa]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "ee7db303d128b43e788fb6f6ce4259b3.bin"
+        },
+        {
+            "start": 140736230039552,
+            "end": 140736230043648,
+            "name": "[anon_7fffb4ffa]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736230043648,
+            "end": 140736238432256,
+            "name": "[anon_7fffb4ffb]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "29d3952f3f07ed909b65271669deb12e.bin"
+        },
+        {
+            "start": 140736238432256,
+            "end": 140736238436352,
+            "name": "[anon_7fffb57fb]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736238436352,
+            "end": 140736246824960,
+            "name": "[anon_7fffb57fc]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "a8567d0bdb3c90a36bc48bcb6087f9f7.bin"
+        },
+        {
+            "start": 140736246824960,
+            "end": 140736246829056,
+            "name": "[anon_7fffb5ffc]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736246829056,
+            "end": 140736255217664,
+            "name": "[anon_7fffb5ffd]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "d8fb0cb989f3983d366be7009062aaec.bin"
+        },
+        {
+            "start": 140736255217664,
+            "end": 140736255221760,
+            "name": "[anon_7fffb67fd]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736255221760,
+            "end": 140736263610368,
+            "name": "[anon_7fffb67fe]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "fd37f9558b0b3abae97efad18b347e5f.bin"
+        },
+        {
+            "start": 140736263610368,
+            "end": 140736263614464,
+            "name": "[anon_7fffb6ffe]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736263614464,
+            "end": 140736272003072,
+            "name": "[anon_7fffb6fff]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "3d6774f37351f316b1473ead324008e8.bin"
+        },
+        {
+            "start": 140736272003072,
+            "end": 140736272007168,
+            "name": "[anon_7fffb77ff]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736272007168,
+            "end": 140736280395776,
+            "name": "[anon_7fffb7800]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "dfafb4a25637cac82f8136ac2a29b33c.bin"
+        },
+        {
+            "start": 140736280395776,
+            "end": 140736280530944,
+            "name": "[anon_7fffb8000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "cd6adc73ca845df3ed063b5d19d609b3.bin"
+        },
+        {
+            "start": 140736280530944,
+            "end": 140736347504640,
+            "name": "[anon_7fffb8021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736347504640,
+            "end": 140736347639808,
+            "name": "[anon_7fffbc000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "af04ab31b6ad223a46dc5daa209e3858.bin"
+        },
+        {
+            "start": 140736347639808,
+            "end": 140736414613504,
+            "name": "[anon_7fffbc021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736422973440,
+            "end": 140736422977536,
+            "name": "[anon_7fffc07f9]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736422977536,
+            "end": 140736431366144,
+            "name": "[anon_7fffc07fa]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "50864d9152628d4f3c8ec7de4bfb930f.bin"
+        },
+        {
+            "start": 140736431366144,
+            "end": 140736431370240,
+            "name": "[anon_7fffc0ffa]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736431370240,
+            "end": 140736439758848,
+            "name": "[anon_7fffc0ffb]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "ac347d4e39030fe83b792cc46d189dd8.bin"
+        },
+        {
+            "start": 140736439758848,
+            "end": 140736439762944,
+            "name": "[anon_7fffc17fb]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736439762944,
+            "end": 140736448151552,
+            "name": "[anon_7fffc17fc]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "1e1846be3f1630d66ff11fc134a0f07e.bin"
+        },
+        {
+            "start": 140736448151552,
+            "end": 140736448155648,
+            "name": "[anon_7fffc1ffc]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736448155648,
+            "end": 140736456544256,
+            "name": "[anon_7fffc1ffd]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "7ddeccaf6bbbcaeca5db2a8eb8470d29.bin"
+        },
+        {
+            "start": 140736456544256,
+            "end": 140736456548352,
+            "name": "[anon_7fffc27fd]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736456548352,
+            "end": 140736464936960,
+            "name": "[anon_7fffc27fe]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "c8b31a3f00799ace45be9a1a4fbc57a1.bin"
+        },
+        {
+            "start": 140736464936960,
+            "end": 140736464941056,
+            "name": "[anon_7fffc2ffe]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736464941056,
+            "end": 140736473329664,
+            "name": "[anon_7fffc2fff]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "2545cc20c01aa4efc4b3c3ca6650cdd2.bin"
+        },
+        {
+            "start": 140736473329664,
+            "end": 140736473333760,
+            "name": "[anon_7fffc37ff]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736473333760,
+            "end": 140736481722368,
+            "name": "[anon_7fffc3800]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "02544ba4299ea6292788c1fc47cb75bf.bin"
+        },
+        {
+            "start": 140736481722368,
+            "end": 140736481857536,
+            "name": "[anon_7fffc4000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "aca8cb30ef7b87bb9923679d18d59344.bin"
+        },
+        {
+            "start": 140736481857536,
+            "end": 140736548831232,
+            "name": "[anon_7fffc4021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736557191168,
+            "end": 140736557195264,
+            "name": "[anon_7fffc87f9]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736557195264,
+            "end": 140736565583872,
+            "name": "[anon_7fffc87fa]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "c7bfdb386010530f0a595416efaffce4.bin"
+        },
+        {
+            "start": 140736565583872,
+            "end": 140736565587968,
+            "name": "[anon_7fffc8ffa]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736565587968,
+            "end": 140736573976576,
+            "name": "[anon_7fffc8ffb]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "d85c9bfc83ea2b64dfd7c4719a383c93.bin"
+        },
+        {
+            "start": 140736573976576,
+            "end": 140736573980672,
+            "name": "[anon_7fffc97fb]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736573980672,
+            "end": 140736582369280,
+            "name": "[anon_7fffc97fc]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "24f635189ddf2fc375aadb124ee1f702.bin"
+        },
+        {
+            "start": 140736582369280,
+            "end": 140736582373376,
+            "name": "[anon_7fffc9ffc]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736582373376,
+            "end": 140736590761984,
+            "name": "[anon_7fffc9ffd]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "28ee4caedf00b5f44bfb0edcee0bd30c.bin"
+        },
+        {
+            "start": 140736590761984,
+            "end": 140736590766080,
+            "name": "[anon_7fffca7fd]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736590766080,
+            "end": 140736599154688,
+            "name": "[anon_7fffca7fe]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "661b9a8550577f4820d8c29de36096c5.bin"
+        },
+        {
+            "start": 140736599154688,
+            "end": 140736599158784,
+            "name": "[anon_7fffcaffe]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736599158784,
+            "end": 140736607547392,
+            "name": "[anon_7fffcafff]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "9c71c8264c9023d21a5f00fe8fcb7e39.bin"
+        },
+        {
+            "start": 140736607547392,
+            "end": 140736607551488,
+            "name": "[anon_7fffcb7ff]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736607551488,
+            "end": 140736615940096,
+            "name": "[anon_7fffcb800]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "45836a91ecb0f214464dc6e5490a3649.bin"
+        },
+        {
+            "start": 140736615940096,
+            "end": 140736616075264,
+            "name": "[anon_7fffcc000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "8aef65611e948ef16b0fb5419379cdd0.bin"
+        },
+        {
+            "start": 140736616075264,
+            "end": 140736683048960,
+            "name": "[anon_7fffcc021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736683048960,
+            "end": 140736683184128,
+            "name": "[anon_7fffd0000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "e20d79f213e60b2eb38e1cae6c116e1a.bin"
+        },
+        {
+            "start": 140736683184128,
+            "end": 140736750157824,
+            "name": "[anon_7fffd0021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736750157824,
+            "end": 140736750292992,
+            "name": "[anon_7fffd4000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "45f012cbbf0bc8cec894f5ec0a739838.bin"
+        },
+        {
+            "start": 140736750292992,
+            "end": 140736817266688,
+            "name": "[anon_7fffd4021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736825626624,
+            "end": 140736825630720,
+            "name": "[anon_7fffd87f9]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736825630720,
+            "end": 140736834019328,
+            "name": "[anon_7fffd87fa]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "5ba5467195df599de66df682cbd83916.bin"
+        },
+        {
+            "start": 140736834019328,
+            "end": 140736834023424,
+            "name": "[anon_7fffd8ffa]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736834023424,
+            "end": 140736842412032,
+            "name": "[anon_7fffd8ffb]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "42a1ef6f0318d993604078dc66ae59e6.bin"
+        },
+        {
+            "start": 140736842412032,
+            "end": 140736842416128,
+            "name": "[anon_7fffd97fb]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736842416128,
+            "end": 140736850804736,
+            "name": "[anon_7fffd97fc]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "89d6297b7a9c01d45e69072ee7ef5ff1.bin"
+        },
+        {
+            "start": 140736850804736,
+            "end": 140736850808832,
+            "name": "[anon_7fffd9ffc]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736850808832,
+            "end": 140736859197440,
+            "name": "[anon_7fffd9ffd]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "f3b34054b87e29aaabddc3f37b0392b6.bin"
+        },
+        {
+            "start": 140736859197440,
+            "end": 140736859201536,
+            "name": "[anon_7fffda7fd]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736859201536,
+            "end": 140736867590144,
+            "name": "[anon_7fffda7fe]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "42b3fc814fea908ce3e597c75d28b5d6.bin"
+        },
+        {
+            "start": 140736867590144,
+            "end": 140736867594240,
+            "name": "[anon_7fffdaffe]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736867594240,
+            "end": 140736875982848,
+            "name": "[anon_7fffdafff]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "5b05571b3eb27132c7988d9617ab2b94.bin"
+        },
+        {
+            "start": 140736875982848,
+            "end": 140736875986944,
+            "name": "[anon_7fffdb7ff]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736875986944,
+            "end": 140736884375552,
+            "name": "[anon_7fffdb800]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "a4f27b201f69e6e3dcdae3b0d468f11d.bin"
+        },
+        {
+            "start": 140736884375552,
+            "end": 140736884510720,
+            "name": "[anon_7fffdc000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "ff1d0711bc82b19723dafe896731b31f.bin"
+        },
+        {
+            "start": 140736884510720,
+            "end": 140736951484416,
+            "name": "[anon_7fffdc021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140736951484416,
+            "end": 140736951619584,
+            "name": "[anon_7fffe0000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "8ac29291e190b4fb85e55311a80810d1.bin"
+        },
+        {
+            "start": 140736951619584,
+            "end": 140737018593280,
+            "name": "[anon_7fffe0021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737026953216,
+            "end": 140737026957312,
+            "name": "[anon_7fffe47f9]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737026957312,
+            "end": 140737035345920,
+            "name": "[anon_7fffe47fa]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "badb8f59296b9f547280b887a4add03c.bin"
+        },
+        {
+            "start": 140737035345920,
+            "end": 140737035350016,
+            "name": "[anon_7fffe4ffa]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737035350016,
+            "end": 140737043738624,
+            "name": "[anon_7fffe4ffb]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "e0b5a8456cd1fd99d5dfd6998df8eccc.bin"
+        },
+        {
+            "start": 140737043738624,
+            "end": 140737043742720,
+            "name": "[anon_7fffe57fb]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737043742720,
+            "end": 140737052131328,
+            "name": "[anon_7fffe57fc]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "c9bcb2240b65b39ab08f09b3288b9943.bin"
+        },
+        {
+            "start": 140737052131328,
+            "end": 140737052135424,
+            "name": "[anon_7fffe5ffc]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737052135424,
+            "end": 140737060524032,
+            "name": "[anon_7fffe5ffd]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "d9a7069a09a92bf0d5e9297eff67443d.bin"
+        },
+        {
+            "start": 140737060524032,
+            "end": 140737060528128,
+            "name": "[anon_7fffe67fd]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737060528128,
+            "end": 140737068916736,
+            "name": "[anon_7fffe67fe]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "af3ceaea6a5ff77e646b0eb1b6180ce8.bin"
+        },
+        {
+            "start": 140737068916736,
+            "end": 140737068920832,
+            "name": "[anon_7fffe6ffe]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737068920832,
+            "end": 140737077309440,
+            "name": "[anon_7fffe6fff]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "e3aa2cea3384a0debd8290c21b95ec0a.bin"
+        },
+        {
+            "start": 140737077309440,
+            "end": 140737077313536,
+            "name": "[anon_7fffe77ff]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737077313536,
+            "end": 140737085702144,
+            "name": "[anon_7fffe7800]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "c8b881880cc1264c9e2d20fb45610484.bin"
+        },
+        {
+            "start": 140737085702144,
+            "end": 140737085837312,
+            "name": "[anon_7fffe8000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "810be012ad7f09eb4b2ddce401dd4bd1.bin"
+        },
+        {
+            "start": 140737085837312,
+            "end": 140737152811008,
+            "name": "[anon_7fffe8021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737152811008,
+            "end": 140737152946176,
+            "name": "[anon_7fffec000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "14ae8f3a38bd9aaed5cd9c408d4ec237.bin"
+        },
+        {
+            "start": 140737152946176,
+            "end": 140737219919872,
+            "name": "[anon_7fffec021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737219919872,
+            "end": 140737220055040,
+            "name": "[anon_7ffff0000]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "b9ef1c35a49e3ce3872cb6b9d4ea6874.bin"
+        },
+        {
+            "start": 140737220055040,
+            "end": 140737287028736,
+            "name": "[anon_7ffff0021]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737289043968,
+            "end": 140737289359360,
+            "name": "[anon_7ffff41ec]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "15262231252860484d685febaa4263cf.bin"
+        },
+        {
+            "start": 140737289359360,
+            "end": 140737289363456,
+            "name": "[anon_7ffff4239]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737289363456,
+            "end": 140737297752064,
+            "name": "[anon_7ffff423a]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "37ca96934d92b7261505b8705d640d7e.bin"
+        },
+        {
+            "start": 140737297752064,
+            "end": 140737297756160,
+            "name": "[anon_7ffff4a3a]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737297756160,
+            "end": 140737306144768,
+            "name": "[anon_7ffff4a3b]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "fe2030fb92a661670cf9d22a6d7b6eed.bin"
+        },
+        {
+            "start": 140737306144768,
+            "end": 140737306148864,
+            "name": "[anon_7ffff523b]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737306148864,
+            "end": 140737314537472,
+            "name": "[anon_7ffff523c]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "0622262baa726ceaf1556d18d43841fd.bin"
+        },
+        {
+            "start": 140737314537472,
+            "end": 140737314541568,
+            "name": "[anon_7ffff5a3c]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737314541568,
+            "end": 140737322930176,
+            "name": "[anon_7ffff5a3d]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "19867b45507aa7f3eaddfa4ca9bafca2.bin"
+        },
+        {
+            "start": 140737322930176,
+            "end": 140737322934272,
+            "name": "[anon_7ffff623d]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737322934272,
+            "end": 140737331322880,
+            "name": "[anon_7ffff623e]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "aff20a6cf88141ea5021e68000d1f248.bin"
+        },
+        {
+            "start": 140737331322880,
+            "end": 140737331326976,
+            "name": "[anon_7ffff6a3e]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737331326976,
+            "end": 140737350193152,
+            "name": "[anon_7ffff6a3f]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "591b323f2b3c75a90ecb2eedf97ba7a1.bin"
+        },
+        {
+            "start": 140737350193152,
+            "end": 140737350332416,
+            "name": "/usr/lib/x86_64-linux-gnu/libc-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "2daed4f82ebaf3c3f449c10c5d0a299f.bin"
+        },
+        {
+            "start": 140737350332416,
+            "end": 140737351872512,
+            "name": "/usr/lib/x86_64-linux-gnu/libc-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": true
+            },
+            "content_file": "23aa9018102c946f091fa7c944327957.bin"
+        },
+        {
+            "start": 140737351872512,
+            "end": 140737352192000,
+            "name": "/usr/lib/x86_64-linux-gnu/libc-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "78c438d4e279769b038cecfad4a0f2b1.bin"
+        },
+        {
+            "start": 140737352192000,
+            "end": 140737352208384,
+            "name": "/usr/lib/x86_64-linux-gnu/libc-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "ef37c30b839aac4daf6588acb6c26db0.bin"
+        },
+        {
+            "start": 140737352208384,
+            "end": 140737352216576,
+            "name": "/usr/lib/x86_64-linux-gnu/libc-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "1f517bc03ee13f6c4d8b50ee86301249.bin"
+        },
+        {
+            "start": 140737352216576,
+            "end": 140737352232960,
+            "name": "[anon_7ffff7e2b]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "01447f566e10f515356d4ae85e7861d4.bin"
+        },
+        {
+            "start": 140737352232960,
+            "end": 140737352245248,
+            "name": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "2a645d22a35e2fb7b5b6c9f94c62e960.bin"
+        },
+        {
+            "start": 140737352245248,
+            "end": 140737352318976,
+            "name": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": true
+            },
+            "content_file": "70212d63d0cc41486a6a309764b085b6.bin"
+        },
+        {
+            "start": 140737352318976,
+            "end": 140737352335360,
+            "name": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "990d3feb888ab4db8217676a591bc253.bin"
+        },
+        {
+            "start": 140737352335360,
+            "end": 140737352339456,
+            "name": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "dfd310fcf1e9311d7a7240df3344b350.bin"
+        },
+        {
+            "start": 140737352339456,
+            "end": 140737352343552,
+            "name": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "b13c7958b4a88a11bc43e5f7383f81d7.bin"
+        },
+        {
+            "start": 140737352343552,
+            "end": 140737352396800,
+            "name": "/usr/lib/x86_64-linux-gnu/libm-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "9ce044176d1e38041d3055231569d4ce.bin"
+        },
+        {
+            "start": 140737352396800,
+            "end": 140737353080832,
+            "name": "/usr/lib/x86_64-linux-gnu/libm-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": true
+            },
+            "content_file": "a29c8e9a51181d5de39bdd2819451f76.bin"
+        },
+        {
+            "start": 140737353080832,
+            "end": 140737353707520,
+            "name": "/usr/lib/x86_64-linux-gnu/libm-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "e4b7fe31d9bb05695e9cee7db0b38a0b.bin"
+        },
+        {
+            "start": 140737353707520,
+            "end": 140737353711616,
+            "name": "/usr/lib/x86_64-linux-gnu/libm-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "11ddf0f2cb3e6eff1291c73189d9c851.bin"
+        },
+        {
+            "start": 140737353711616,
+            "end": 140737353715712,
+            "name": "/usr/lib/x86_64-linux-gnu/libm-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "41d8a14e0206f9f57fe2b1b187db39b2.bin"
+        },
+        {
+            "start": 140737353715712,
+            "end": 140737353740288,
+            "name": "/usr/lib/x86_64-linux-gnu/libpthread-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "4a76a9cac2834a0931f60b4ccba9956d.bin"
+        },
+        {
+            "start": 140737353740288,
+            "end": 140737353809920,
+            "name": "/usr/lib/x86_64-linux-gnu/libpthread-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": true
+            },
+            "content_file": "dd97a5226a08db03381b940601d75999.bin"
+        },
+        {
+            "start": 140737353809920,
+            "end": 140737353834496,
+            "name": "/usr/lib/x86_64-linux-gnu/libpthread-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "439a7816199593b1df235b682de014c9.bin"
+        },
+        {
+            "start": 140737353834496,
+            "end": 140737353838592,
+            "name": "/usr/lib/x86_64-linux-gnu/libpthread-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "0569de32083539e43debcfb613056405.bin"
+        },
+        {
+            "start": 140737353838592,
+            "end": 140737353842688,
+            "name": "/usr/lib/x86_64-linux-gnu/libpthread-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "820c2ca75ee3099c9f07aa40fbec1b48.bin"
+        },
+        {
+            "start": 140737353842688,
+            "end": 140737353867264,
+            "name": "[anon_7ffff7fb8]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "3bb8a4b3717b593046e553ed0d116683.bin"
+        },
+        {
+            "start": 140737353912320,
+            "end": 140737353920512,
+            "name": "[anon_7ffff7fc9]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "56d64e639499acc923b04bf7f1472d02.bin"
+        },
+        {
+            "start": 140737353920512,
+            "end": 140737353932800,
+            "name": "[vvar]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": ""
+        },
+        {
+            "start": 140737353932800,
+            "end": 140737353936896,
+            "name": "[vdso]",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": true
+            },
+            "content_file": "406b71683ad43ac60a3035d0b2769bff.bin"
+        },
+        {
+            "start": 140737353936896,
+            "end": 140737353940992,
+            "name": "/usr/lib/x86_64-linux-gnu/ld-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "8a051e7cf64f1cf4fbc2aeb7fb1d7f9f.bin"
+        },
+        {
+            "start": 140737353940992,
+            "end": 140737354084352,
+            "name": "/usr/lib/x86_64-linux-gnu/ld-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": true
+            },
+            "content_file": "4340bbaff9c38c07699ce2f205ec8833.bin"
+        },
+        {
+            "start": 140737354084352,
+            "end": 140737354117120,
+            "name": "/usr/lib/x86_64-linux-gnu/ld-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "88f6f258ecb5626776eaa49b65d00cc3.bin"
+        },
+        {
+            "start": 140737354121216,
+            "end": 140737354125312,
+            "name": "/usr/lib/x86_64-linux-gnu/ld-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": false,
+                "x": false
+            },
+            "content_file": "5e4550ddfad07c9e72dfa9c58bc29920.bin"
+        },
+        {
+            "start": 140737354125312,
+            "end": 140737354129408,
+            "name": "/usr/lib/x86_64-linux-gnu/ld-2.31.so",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "2baf0be0697c9309c2824ff4d27740a7.bin"
+        },
+        {
+            "start": 140737354129408,
+            "end": 140737354133504,
+            "name": "[anon_7ffff7ffe]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "1f3a00562172b7de64b9a39f8d134fce.bin"
+        },
+        {
+            "start": 140737488216064,
+            "end": 140737488351232,
+            "name": "[stack]",
+            "permissions": {
+                "r": true,
+                "w": true,
+                "x": false
+            },
+            "content_file": "4435e63ea0ce3ce55f5cde84a15718b6.bin"
+        },
+        {
+            "start": 18446744073699065856,
+            "end": 18446744073699069952,
+            "name": "[vsyscall]",
+            "permissions": {
+                "r": false,
+                "w": false,
+                "x": true
+            },
+            "content_file": ""
+        }
+    ]
+}
