@@ -63,4 +63,14 @@ Example 1:
 - C: https://github.com/AFLplusplus/AFLplusplus/blob/stable/unicorn_mode/samples/c/harness.c
 - Python: https://github.com/AFLplusplus/AFLplusplus/blob/stable/unicorn_mode/samples/python_simple/simple_test_harness.py
 - Unicorn-fuzz: https://github.com/unicorn-engine/unicorn/blob/master/tests/fuzz/fuzz_emu_x86_64.c
+- https://github.com/domenukk/unicornafl
+- https://github.com/kirasys/unicorn-fuzzer
 
+
+### Run sample fuzz
+
+`/home/vult/v8_sb_fuzz/AFLplusplus/unicorn_mode/samples/c`
+
+```bash
+AFL_DEBUG=1 afl-fuzz -U -m none -i sample_inputs/ -o fuzz_out1 -- ./harness @@
+```

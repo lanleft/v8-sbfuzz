@@ -74,12 +74,12 @@ jobs:
         brew install p7zip cmake ninja pkg-config
 
     - name: '🚧 Cargo test'
-      if: "!startsWith(github.ref, 'refs/tags')"
+      if: "!starts_with(github.ref, 'refs/tags')"
       run: |
         cargo test
 
     - name: '📦 Cargo Publish'
-      if: startsWith(github.ref, 'refs/tags') && contains(matrix.config.os, 'ubuntu')
+      if: starts_with(github.ref, 'refs/tags') && contains(matrix.config.os, 'ubuntu')
       env:
         TOKEN: ${{ secrets.cratesio_token }}
         UNICORN_VERSION: dev

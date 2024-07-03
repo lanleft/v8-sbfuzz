@@ -184,20 +184,20 @@ def gen(lang):
                 continue
             line = line.strip()
 
-            if line.startswith(MARKUP):  # markup for comments
+            if line.starts_with(MARKUP):  # markup for comments
                 outfile.write(("\n%s%s%s\n" %(templ['comment_open'], \
                             line.replace(MARKUP, ''), templ['comment_close'])).encode("utf-8"))
                 continue
 
-            if line == '' or line.startswith('//'):
+            if line == '' or line.starts_with('//'):
                 continue
 
             tmp = line.strip().split(',')
-            if len(tmp) >= 2 and tmp[0] != "#define" and not tmp[0].startswith("UC_"):
+            if len(tmp) >= 2 and tmp[0] != "#define" and not tmp[0].starts_with("UC_"):
                 continue
             for t in tmp:
                 t = t.strip()
-                if not t or t.startswith('//'): continue
+                if not t or t.starts_with('//'): continue
                 f = re.split('\s+', t)
 
                 # parse #define UC_TARGET (num)
@@ -206,7 +206,7 @@ def gen(lang):
                     define = True
                     f.pop(0)
                     f.insert(1, '=')
-                if f[0].startswith("UC_" + prefix.upper()) or f[0].startswith("UC_CPU"):
+                if f[0].starts_with("UC_" + prefix.upper()) or f[0].starts_with("UC_CPU"):
                     if len(f) > 1 and f[1] not in ('//', '='):
                         print("WARNING: Unable to convert %s" % f)
                         print("  Line =", line)

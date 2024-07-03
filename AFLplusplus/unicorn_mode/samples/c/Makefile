@@ -13,7 +13,8 @@ AR_EXT = a
 # Verbose output?
 V ?= 0
 
-CFLAGS += -Wall -Werror -I../../unicornafl/unicorn/include -I../../unicornafl/include
+CFLAGS += -Wall -Werror -I../../unicornafl/unicorn/include -I../../unicornafl/include -I../../../qemu_mode/qemuafl/capstone/include -I../../../qemu_mode/qemuafl/include
+CFLAGS += -g3
 
 LDFLAGS += -L$(UNICORNAFL_LIB) -L$(UNICORN_LIB) -lunicorn -lunicornafl -lpthread -lm -lstdc++
 
@@ -33,20 +34,24 @@ all: harness
 clean:
 	rm -rf *.o harness harness-debug
 
-harness.o: harness.c ../../unicornafl/unicorn/include/unicorn/*.h
+harness.o: harness.c ../../unicornafl/unicorn/include/unicorn/*.h ../../../qemu_mode/qemuafl/capstone/include/capstone/*.h
 	${CC} ${CFLAGS} -O3 -c harness.c
 
-harness-debug.o: harness.c ../../unicornafl/unicorn/include/unicorn/*.h
+harness-debug.o: harness.c ../../unicornafl/unicorn/include/unicorn/*.h ../../../qemu_mode/qemuafl/capstone/include/capstone/*.h
 	${CC} ${CFLAGS} -g -c harness.c -o $@
 
 ../../unicornafl/build/libunicornafl.a:
 	cd ../.. && ./build_unicorn_support.sh
 
 harness: harness.o
-	${CC} harness.o ../../unicornafl/build/libunicornafl.a $(LDFLAGS) -o $@
+
+	-rm ../../unicornafl/build/libunicorn.a ../../unicornafl/build/libunicornafl.a || true
+	cd ../../unicornafl/build && make -j `nproc`
+	${CC} harness.o ../../unicornafl/build/libunicornafl.a ../../../qemu_mode/qemuafl/capstone/build/libcapstone.a $(LDFLAGS) -o $@
 
 debug: harness-debug.o
 	${CC} harness.o ../../unicornafl/build/libunicornafl.a $(LDFLAGS) -o harness-debug
 
 fuzz: harness
+
 	DYLD_FALLBACK_LIBRARY_PATH="../../unicornafl/unicorn/build" LD_LIBRARY_PATH="../../unicornafl/unicorn/build" ../../../afl-fuzz -m none -i sample_inputs -o out -- ./harness @@

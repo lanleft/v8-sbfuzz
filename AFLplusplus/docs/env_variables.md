@@ -196,6 +196,19 @@ in the specified file.
 For more information, see
 [instrumentation/README.instrument_list.md](../instrumentation/README.instrument_list.md).
 
+#### INJECTIONS
+
+This feature is able to find simple injection vulnerabilities in insecure
+calls to mysql/mariadb/nosql/postgresql/ldap and XSS in libxml2.
+
+  - Setting `AFL_LLVM_INJECTIONS_ALL` will enable all injection hooking
+
+  - Setting `AFL_LLVM_INJECTIONS_SQL` will enable SQL injection hooking
+
+  - Setting `AFL_LLVM_INJECTIONS_LDAP` will enable LDAP injection hooking
+
+  - Setting `AFL_LLVM_INJECTIONS_XSS` will enable XSS injection hooking
+
 #### LAF-INTEL
 
 This great feature will split compares into series of single byte comparisons to
@@ -235,6 +248,9 @@ use (which only ever the author of this LTO implementation will use). These are
 used if several separated instrumentations are performed which are then later
 combined.
 
+  - `AFL_LLVM_LTO_CALLER` activates collision free CALLER instrumentation
+  - `AFL_LLVM_LTO_CALLER` sets the maximum mumber of single block functions
+    to dig deeper into a real function. Default 0.
   - `AFL_LLVM_DOCUMENT_IDS=file` will document to a file which edge ID was given
     to which function. This helps to identify functions with variable bytes or
     which functions were touched by an input.
@@ -315,7 +331,26 @@ mode.
     the target performs only a few loops, then this will give a small
     performance boost.
 
-## 4) Settings for afl-fuzz
+## 4) Runtime settings
+
+The following environment variables are for a compiled AFL++ target.
+
+  - Setting `AFL_DUMP_MAP_SIZE` when executing the target directly will
+    dump the map size of the target and exit.
+
+  - Setting `AFL_OLD_FORKSERVER` will use the old AFL vanilla forkserver.
+    This makes only sense when you
+      a) compile in a classic colliding coverage mode (e.g.
+         AFL_LLVM_INSTRUMENT=CLASSIC) or if the map size of the target is
+         below MAP_SIZE (65536 by default), AND
+      b) you want to use this compiled AFL++ target with a different tool
+         that expects vanilla AFL behaviour, e.g. symcc, symqemu, nautilus, etc.
+    You would use this option together with the target fuzzing application.
+
+  - Setting `AFL_DISABLE_LLVM_INSTRUMENTATION` will disable collecting
+    instrumentation. (More of an internal option.)
+
+## 5) Settings for afl-fuzz
 
 The main fuzzer binary accepts several options that disable a couple of sanity
 checks or alter some of the more exotic semantics of the tool:
@@ -352,6 +387,10 @@ checks or alter some of the more exotic semantics of the tool:
     XML or other highly flexible structured input. For details, see
     [custom_mutators.md](custom_mutators.md).
 
+  - Setting `AFL_CUSTOM_MUTATOR_LATE_SEND` will call the afl_custom_fuzz_send()
+    function after the target has been restarted. (This is needed for e.g. TCP
+    services.)
+
   - Setting `AFL_CYCLE_SCHEDULES` will switch to a different schedule every time
     a cycle is finished.
 
@@ -364,6 +403,9 @@ checks or alter some of the more exotic semantics of the tool:
 
   - Setting `AFL_DISABLE_TRIM` tells afl-fuzz not to trim test cases. This is
     usually a bad idea!
+
+  - Setting `AFL_DISABLE_REDUNDANT` disables any queue items that are redundant.
+    This can be useful with huge queues.
 
   - Setting `AFL_KEEP_TIMEOUTS` will keep longer running inputs if they reach
     new coverage
@@ -495,6 +537,8 @@ checks or alter some of the more exotic semantics of the tool:
   - `AFL_NO_SNAPSHOT` will advise afl-fuzz not to use the snapshot feature if
     the snapshot lkm is loaded.
 
+  - `AFL_NO_FASTRESUME` will not try to read or write a fast resume file.
+
   - Setting `AFL_NO_UI` inhibits the UI altogether and just periodically prints
     some basic stats. This behavior is also automatically triggered when the
     output from afl-fuzz is redirected to a file or to a pipe.
@@ -531,6 +575,9 @@ checks or alter some of the more exotic semantics of the tool:
     use a custom afl-qemu-trace or if you need to modify the afl-qemu-trace
     arguments.
 
+  - `AFL_SHA1_FILENAMES` causes AFL++ to generate files named by the SHA1 hash
+    of their contents, rather than use the standard `id:000000,...` names.
+
   - `AFL_SHUFFLE_QUEUE` randomly reorders the input queue on startup. Requested
     by some users for unorthodox parallelized fuzzing setups, but not advisable
     otherwise.
@@ -565,6 +612,9 @@ checks or alter some of the more exotic semantics of the tool:
   - `AFL_SYNC_TIME` allows you to specify a different minimal time (in minutes)
     between fuzzing instances synchronization. Default sync time is 30 minutes,
     note that time is halved for -M main nodes.
+
+  - `AFL_NO_SYNC` disables any syncing whatsoever and takes priority on all
+    other syncing parameters.
 
   - Setting `AFL_TARGET_ENV` causes AFL++ to set extra environment variables for
     the target binary. Example: `AFL_TARGET_ENV="VAR1=1 VAR2='a b c'" afl-fuzz
@@ -611,7 +661,7 @@ checks or alter some of the more exotic semantics of the tool:
     Note that will not be exact and with slow targets it can take seconds
     until there is a slice for the time test.
 
-## 5) Settings for afl-qemu-trace
+## 6) Settings for afl-qemu-trace
 
 The QEMU wrapper used to instrument binary-only code supports several settings:
 
@@ -683,7 +733,7 @@ The QEMU wrapper used to instrument binary-only code supports several settings:
     crash is found. Setting `AFL_NO_CRASH_README` will prevent this. Useful when
     counting crashes based on a file count in that directory.
 
-## 7) Settings for afl-frida-trace
+## 8) Settings for afl-frida-trace
 
 The FRIDA wrapper used to instrument binary-only code supports many of the same
 options as `afl-qemu-trace`, but also has a number of additional advanced
@@ -773,7 +823,7 @@ support.
   dump you must set a sufficient timeout (using `-t`) to avoid `afl-fuzz`
   killing the process whilst it is being dumped.
 
-## 8) Settings for afl-cmin
+## 9) Settings for afl-cmin
 
 The corpus minimization script offers very little customization:
 
@@ -791,7 +841,7 @@ The corpus minimization script offers very little customization:
   - `AFL_PRINT_FILENAMES` prints each filename to stdout, as it gets processed.
     This can help when embedding `afl-cmin` or `afl-showmap` in other scripts.
 
-## 9) Settings for afl-tmin
+## 10) Settings for afl-tmin
 
 Virtually nothing to play with. Well, in QEMU mode (`-Q`), `AFL_PATH` will be
 searched for afl-qemu-trace. In addition to this, `TMPDIR` may be used if a
@@ -802,12 +852,12 @@ to match when minimizing crashes. This will make minimization less useful, but
 may prevent the tool from "jumping" from one crashing condition to another in
 very buggy software. You probably want to combine it with the `-e` flag.
 
-## 10) Settings for afl-analyze
+## 11) Settings for afl-analyze
 
 You can set `AFL_ANALYZE_HEX` to get file offsets printed as hexadecimal instead
 of decimal.
 
-## 11) Settings for libdislocator
+## 12) Settings for libdislocator
 
 The library honors these environment variables:
 
@@ -829,12 +879,12 @@ The library honors these environment variables:
   - `AFL_LD_VERBOSE` causes the library to output some diagnostic messages that
     may be useful for pinpointing the cause of any observed issues.
 
-## 11) Settings for libtokencap
+## 13) Settings for libtokencap
 
 This library accepts `AFL_TOKEN_FILE` to indicate the location to which the
 discovered tokens should be written.
 
-## 12) Third-party variables set by afl-fuzz & other tools
+## 14) Third-party variables set by afl-fuzz & other tools
 
 Several variables are not directly interpreted by afl-fuzz, but are set to
 optimal values if not already present in the environment:

@@ -1,9 +1,21 @@
 
-#include "include/unicorn/unicorn.h"
-#include "include/AflUnicornEngine.h"
+#include <cstddef>
+#include <unicorn/unicorn.h>
+#include <cassert>
+#include <cstring>
+#include <cstdlib>
+#include "AflUnicornEngine.h"
+#include "UnicornSimpleHeap.h"
+#include "include/unicorn/x86.h"
+#include <memory>
+#include <stdexcept>
+#include <iostream>
+#include <fstream>
+#include <filesystem>
+#include <string>
 
 
-#define LLVM_FUZZER
+// #define LLVM_FUZZER
 
 // memory address where emulation starts
 #define START_ADDRESS 0x1000000
@@ -15,98 +27,43 @@ FILE * outfile = NULL;
 
 
 // for loading pages and 
-AflUnicornEngine* afl;
-UnicornSimpleHeap* uc_heap;
+AflUnicornEngine afl;
+// UnicornSimpleHeap* uc_heap;
 
-static void unicorn_hook_instruction(uc_engine *uc, uint64_t address, uint32_t size, void *user_data){
-    if (address == _malloc){
-        uint32_t esp;
-        uc_reg_read(uc, UC_X86_REG_ESP, &esp);
-
-        uint32_t size, ret_addr;
-        uc_mem_read(uc, esp+4, &size, sizeof(size));
-        uc_mem_read(uc, esp, &ret_addr, sizeof(ret_addr));
-        uc_reg_write(uc, UC_X86_REG_EIP, &ret_addr);
-        
-        uint32_t eax = uc_heap->malloc(size);
-        uc_reg_write(uc, UC_X86_REG_EAX, &eax);
-        
-        esp += 4;
-        uc_reg_write(uc, UC_X86_REG_ESP, &esp);
-    }
-    
-    if (address == _free){ 
-        uint32_t esp;
-        uc_reg_read(uc, UC_X86_REG_ESP, &esp);
-        
-        uint32_t addr, ret_addr;
-        uc_mem_read(uc, esp+4, &addr, sizeof(addr));
-        uc_mem_read(uc, esp, &ret_addr, sizeof(ret_addr));
-        uc_reg_write(uc, UC_X86_REG_EIP, &ret_addr);
-        
-        uint32_t eax = uc_heap->free(addr);
-        uc_reg_write(uc, UC_X86_REG_EAX, &eax);
-        
-        esp += 4;
-        uc_reg_write(uc, UC_X86_REG_ESP, &esp);
-    }
-}
-
-@
-void init_state(){
-    const std::string context_dir = getenv("CONTEXT_DIR");
-
-    if(!context_dir){
-        std::cout << "Missing CONTEXT_DIR enviroment" << std::endl;
-        exit(1);
-    }
-
-    // const std::string context_dir = argv[1];
-    // const std::string file_path   = argv[2];
-    // bool debug_trace = strcmp(argv[3], "true")? false : true;
-    // bool heap_trace = strcmp(argv[4], "true")? false : true;
-    bool debug_trace = true;
-    bool heap_trace = true;
-    uc_err err;
-        
-    // Load Context files and create a engine
-    afl = new AflUnicornEngine(context_dir, false, debug_trace);
-    uc_heap = new UnicornSimpleHeap(afl->get_uc(), heap_trace);
-    
-    // Hooking some functions
-    uc_hook trace;
-    uc_hook_add(afl->get_uc(), &trace, UC_HOOK_CODE, reinterpret_cast<void*>(unicorn_hook_instruction), NULL, 1, 0);
+void unicorn_hook_instruction(uc_engine *uc, uint64_t address, uint32_t size, void *user_data){
 }
 
 
 #ifdef LLVM_FUZZER
-
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
 #else 
 
 int main(int argc, char **argv){
-        filepath = argv[1];
-        std::ifstream in(filepath, std::ios::binary);
-        size = std::filesystem::file_size(filepath);
-        data = new uint8_t[size];
-        in.read((char *)(data), std::filesystem::file_size(filepath));
-        std::cout << "Reproducing Poc: " << filepath << " Size : " << size << std::endl;
-        printf("Running maaaain() from %s\n", __FILE__);
+    std::string filepath = argv[1];
+    std::ifstream in(filepath, std::ios::binary);
+    size = std::filesystem::file_size(filepath);
+    data = new uint8_t[size];
+    in.read((char *)(data), std::filesystem::file_size(filepath));
+    std::cout << "Reproducing Poc: " << filepath << " Size : " << size << std::endl;
+    printf("Running maaaain() from %s\n", __FILE__);
 }
 
 #endif
     uc_err err;
 
+    uc_hook trace;
+    uc_hook_add(afl.get_uc(), &trace, UC_HOOK_CODE, reinterpret_cast<void*>(unicorn_hook_instruction), NULL, 1, 0);
+
     // Start emulation
-    uint64_t eip = START_ADDRESS;
-    while (eip != END_ADDRESS){
-        err = uc_emu_start(afl->get_uc(), eip, END_ADDRESS, 0, 0);
+    uint64_t rip = START_ADDRESS;
+    while (rip != END_ADDRESS){
+        err = uc_emu_start(afl.get_uc(), rip, END_ADDRESS, 0, 0);
         if (err){
-            afl->force_crash(err);
+            afl.force_crash(err);
             return 0;
         }
-        uc_reg_read(afl->get_uc(), UC_X86_REG_EIP, &eip);
+        uc_reg_read(afl.get_uc(), UC_X86_REG_RIP, &rip);
     }
 
     return 0;

@@ -885,6 +885,7 @@ UNICORN_EXPORT
 uc_err uc_emu_start(uc_engine *uc, uint64_t begin, uint64_t until,
                     uint64_t timeout, size_t count)
 {
+    // printf("uc_emu_start\n");
     uc_err err;
 
     // reset the counter
@@ -933,6 +934,7 @@ uc_err uc_emu_start(uc_engine *uc, uint64_t begin, uint64_t until,
             uc_reg_write(uc, UC_X86_REG_EIP, &begin_pc32);
             break;
         case UC_MODE_64:
+            // printf("0 - UC_MODE_64\n");
             uc_reg_write(uc, UC_X86_REG_RIP, &begin);
             break;
         }
@@ -1013,6 +1015,7 @@ uc_err uc_emu_start(uc_engine *uc, uint64_t begin, uint64_t until,
         // restore to append mode for uc_hook_add()
         uc->hook_insert = 0;
         if (err != UC_ERR_OK) {
+            // printf("1 - err: %d\n", err);
             uc->nested_level--;
             return err;
         }
@@ -1028,7 +1031,10 @@ uc_err uc_emu_start(uc_engine *uc, uint64_t begin, uint64_t until,
         enable_emu_timer(uc, timeout * 1000); // microseconds -> nanoseconds
     }
 
+    // printf("uc->invalid_error: %d\n", uc->invalid_error);
     uc->vm_start(uc);
+    // printf("uc->invalid_error: %d\n", uc->invalid_error);
+    
 
     uc->nested_level--;
 

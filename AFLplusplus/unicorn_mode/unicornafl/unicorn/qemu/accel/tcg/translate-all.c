@@ -1147,7 +1147,7 @@ static void uc_invalidate_tb(struct uc_struct *uc, uint64_t start_addr, size_t l
     if (start > end) {
         return;
     }
-
+    // printf("uc->invalid_error: %d\n", uc->invalid_error);
     tb_invalidate_phys_range(uc, start, end);
 }
 

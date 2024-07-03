@@ -12,8 +12,30 @@ void _error(const char* err_msg){
     exit(-1);
 }
 
-AflUnicornEngine::AflUnicornEngine(const std::string context_dir, bool enable_trace, bool _debug_trace) // enable_trace mode not surpported now.
-    : debug_trace(_debug_trace){
+
+
+
+AflUnicornEngine::AflUnicornEngine() // enable_trace mode not surpported now.
+    : debug_trace(true){
+
+    const char* context_dir_env = getenv("CONTEXT_DIR");
+
+    if(!context_dir_env){
+        std::cout << "Missing CONTEXT_DIR enviroment" << std::endl;
+        exit(1);
+    }
+
+    const std::string context_dir = context_dir_env;
+    // const std::string context_dir = argv[1];
+    // const std::string file_path   = argv[2];
+    // bool debug_trace = strcmp(argv[3], "true")? false : true;
+    // bool heap_trace = strcmp(argv[4], "true")? false : true;
+    // bool debug_trace = true;
+    bool heap_trace = true;
+    uc_err err;
+    
+    // ======================================================
+
     // Making full path of index file
     std::string index_dir = context_dir + "/" + INDEX_FILE_NAME;
     DEBUG("Loading process context index from %s", index_dir.c_str());
@@ -26,8 +48,6 @@ AflUnicornEngine::AflUnicornEngine(const std::string context_dir, bool enable_tr
     if(context["arch"] == 0 || context["regs"] == 0 || \
          context["segments"] == 0)
         _error("Couldn't find infomation in indexfile.");
-    
-    uc_err err;
     
     // Only support ARCH_86 & MODE_32 now
     this->uc_set = _get_arch_and_mode(context["arch"]["arch"]);
@@ -47,7 +67,9 @@ AflUnicornEngine::AflUnicornEngine(const std::string context_dir, bool enable_tr
     // Map the memory segment and load data
     AflUnicornEngine::_map_segments(context["segments"], context_dir);
     DEBUG("Done context loading.");
+
 }
+
 
 void AflUnicornEngine::_map_segment(const std::string name, const uint64_t address, const uint64_t size, int perms){
     uint64_t mem_start_aligned = ALIGN_PAGE_DOWN(address);
@@ -245,7 +267,10 @@ void AflUnicornEngine::dump_regs() const {
 }
 
 uc_settings AflUnicornEngine::_get_arch_and_mode(const std::string arch_str) const{
-    static std::map<std::string, uc_settings> arch_map = {{"x86", {UC_ARCH_X86, UC_MODE_32}}};
+    static std::map<std::string, uc_settings> arch_map = {
+        {"x86", {UC_ARCH_X86, UC_MODE_32}},
+        {"x86_64", {UC_ARCH_X86, UC_MODE_64}}
+    };
     
     return arch_map[arch_str];
 }
@@ -265,6 +290,26 @@ std::map<std::string, int> AflUnicornEngine::_get_register_map(uc_mode mode) con
         r_map["eflags"] = UC_X86_REG_EFLAGS;
         // Segment registers are removed
         // Set a segment registers in another function
+    }
+    else if(mode == UC_MODE_64){
+        r_map["rax"] = UC_X86_REG_RAX;
+        r_map["rbx"] = UC_X86_REG_RBX;
+        r_map["rcx"] = UC_X86_REG_RCX;
+        r_map["rdx"] = UC_X86_REG_RDX;
+        r_map["rsi"] = UC_X86_REG_RSI;
+        r_map["rdi"] = UC_X86_REG_RDI;
+        r_map["rbp"] = UC_X86_REG_RBP;
+        r_map["rsp"] = UC_X86_REG_RSP;
+        r_map["rip"] = UC_X86_REG_RIP;
+        r_map["r8"]  = UC_X86_REG_R8;
+        r_map["r9"]  = UC_X86_REG_R9;
+        r_map["r10"] = UC_X86_REG_R10;
+        r_map["r11"] = UC_X86_REG_R11;
+        r_map["r12"] = UC_X86_REG_R12;
+        r_map["r13"] = UC_X86_REG_R13;
+        r_map["r14"] = UC_X86_REG_R14;
+        r_map["r15"] = UC_X86_REG_R15;
+        r_map["rflags"] = UC_X86_REG_EFLAGS;
     }
         
     return r_map;

@@ -33,6 +33,7 @@
 #include "gslice.h"
 #include "gmessages.h"
 #include "gnode.h"
+#include <stdio.h>
 
 /**
  * SECTION:trees-binary
@@ -884,6 +885,7 @@ void g_tree_foreach (GTree *tree, GTraverseFunc func, gpointer user_data)
 
     while (node)
     {
+        // printf("2222\n");
         if ((*func) (node->key, node->value, user_data))
             break;
 

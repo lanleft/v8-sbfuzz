@@ -89,7 +89,7 @@ static int tcg_cpu_exec(struct uc_struct *uc)
     while (!uc->exit_request) {
         CPUState *cpu = uc->cpu;
 
-        //qemu_clock_enable(QEMU_CLOCK_VIRTUAL,
+        // qemu_clock_enable(QEMU_CLOCK_VIRTUAL,
         //                  (cpu->singlestep_enabled & SSTEP_NOTIMER) == 0);
         if (cpu_can_run(cpu)) {
             uc->quit_request = false;
@@ -106,30 +106,30 @@ static int tcg_cpu_exec(struct uc_struct *uc)
                 cpu->exception_index = -1;
                 cpu_resume(cpu);
             } else if (uc->stop_request) {
-                //printf(">>> got STOP request!!!\n");
+                printf(">>> got STOP request!!!\n");
                 finish = true;
                 break;
             }
 
             // save invalid memory access error & quit
             if (uc->invalid_error) {
-                // printf(">>> invalid memory accessed, STOP = %u!!!\n", env->invalid_error);
+                printf(">>> invalid memory accessed, STOP !!\n");
                 finish = true;
                 break;
             }
 
-            // printf(">>> stop with r = %x, HLT=%x\n", r, EXCP_HLT);
+            printf(">>> stop with r = %x, HLT=%x\n", r, EXCP_HLT);
             if (r == EXCP_DEBUG) {
                 cpu_handle_guest_debug(cpu);
                 break;
             }
             if (r == EXCP_HLT) {
-                //printf(">>> got HLT!!!\n");
+                printf(">>> got HLT!!!\n");
                 finish = true;
                 break;
             }
         } else if (cpu->stop || cpu->stopped) {
-            // printf(">>> got stopped!!!\n");
+            printf(">>> got stopped!!!\n");
             break;
         }
     }
@@ -187,6 +187,7 @@ static inline gboolean uc_exit_invalidate_iter(gpointer key, gpointer val, gpoin
     uint64_t exit = *((uint64_t*)key);
     uc_engine *uc = (uc_engine*)data;
     
+    printf("=== uc_exit_invalidate_iter, uc->invalid_error: %d ===\n", uc->invalid_error);
     if (exit != 0) {
         // Unicorn: Why addr - 1?
         // 
@@ -204,6 +205,7 @@ static inline gboolean uc_exit_invalidate_iter(gpointer key, gpointer val, gpoin
 
 void resume_all_vcpus(struct uc_struct* uc)
 {
+    // printf("======= resume_all_vcpus of unicorn_mode ==========\n");
     CPUState *cpu = uc->cpu;
     cpu->halted = 0;
     cpu->exit_request = 0;
@@ -221,6 +223,7 @@ void resume_all_vcpus(struct uc_struct* uc)
     // at that address is to exit emulation, but not for the instruction there.
     // if we dont do this, next time we cannot emulate at that address
     if (uc->use_exits) {
+        // printf("111\n");
         g_tree_foreach(uc->ctl_exits, uc_exit_invalidate_iter, (void*)uc);
     } else {
         uc_exit_invalidate_iter((gpointer)&uc->exits[uc->nested_level - 1], NULL, (gpointer)uc);
