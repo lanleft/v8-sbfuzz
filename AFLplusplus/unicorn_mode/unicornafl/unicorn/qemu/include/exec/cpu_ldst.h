@@ -101,6 +101,7 @@ static inline uintptr_t tlb_index(CPUArchState *env, uintptr_t mmu_idx,
 #ifdef TARGET_ARM
     struct uc_struct *uc = env->uc;
 #endif
+    // printf("=== tlb_index: mmu_idx: %lu, addr: %lx ===\n", mmu_idx, addr);
     uintptr_t size_mask = env_tlb(env)->f[mmu_idx].mask >> CPU_TLB_ENTRY_BITS;
 
     return (addr >> TARGET_PAGE_BITS) & size_mask;
@@ -110,6 +111,7 @@ static inline uintptr_t tlb_index(CPUArchState *env, uintptr_t mmu_idx,
 static inline CPUTLBEntry *tlb_entry(CPUArchState *env, uintptr_t mmu_idx,
                                      target_ulong addr)
 {
+    // printf("=== tlb_entry: mmu_idx: %lu, addr: %lx ===\n", mmu_idx, addr);
     return &env_tlb(env)->f[mmu_idx].table[tlb_index(env, mmu_idx, addr)];
 }
 

@@ -902,7 +902,7 @@ static uint64_t uc_get_pc(uc_engine* uc) {
         } else if (mode == UC_MODE_16) {
             uc_reg_read(uc, UC_X86_REG_IP, &pc);
         } else {
-            printf("uc_get_pc mode 64bit\n");
+            // printf("uc_get_pc mode 64bit\n");
             uc_reg_read(uc, UC_X86_REG_RIP, &pc);
         }
     } else if (arch == UC_ARCH_ARM) {

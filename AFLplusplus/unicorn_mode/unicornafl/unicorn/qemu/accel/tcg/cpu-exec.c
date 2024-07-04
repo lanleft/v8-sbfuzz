@@ -553,6 +553,7 @@ int cpu_exec(struct uc_struct *uc, CPUState *cpu)
     // rcu_read_lock();
 
     cc->cpu_exec_enter(cpu);
+    // printf("111 uc->invalid_error = %d\n", uc->invalid_error);
 
     /* Calculate difference between guest clock and host clock.
      * This delay includes the delay of the last cycle, so
@@ -564,6 +565,7 @@ int cpu_exec(struct uc_struct *uc, CPUState *cpu)
     // Unicorn: We would like to support nested uc_emu_start calls.
     /* prepare setjmp context for exception handling */
     // if (sigsetjmp(cpu->jmp_env, 0) != 0) {
+    // printf("uc->nested_level = %d\n", uc->nested_level);
     if (sigsetjmp(uc->jmp_bufs[uc->nested_level - 1], 0) != 0) {
 #if defined(__clang__) || !QEMU_GNUC_PREREQ(4, 6)
         /* Some compilers wrongly smash all local variables after
@@ -579,15 +581,18 @@ int cpu_exec(struct uc_struct *uc, CPUState *cpu)
 
         assert_no_pages_locked();
     }
+    // printf("222 uc->invalid_error = %d\n", uc->invalid_error);
 
     /* if an exception is pending, we execute it here */
     while (!cpu_handle_exception(cpu, &ret)) {
         TranslationBlock *last_tb = NULL;
         int tb_exit = 0;
+        // printf("333 uc->invalid_error = %d\n", uc->invalid_error);
 
         while (!cpu_handle_interrupt(cpu, &last_tb)) {
             uint32_t cflags = cpu->cflags_next_tb;
             TranslationBlock *tb;
+            // printf("444 uc->invalid_error = %d\n", uc->invalid_error);
 
             /* When requested, use an exact setting for cflags for the next
                execution.  This is used for icount, precise smc, and stop-
@@ -605,6 +610,7 @@ int cpu_exec(struct uc_struct *uc, CPUState *cpu)
                 continue;
             }
             cpu_loop_exec_tb(cpu, tb, &last_tb, &tb_exit);
+            // printf("555 uc->invalid_error = %d\n", uc->invalid_error);
             /* Try to align the host and virtual clocks
                if the guest is in advance */
             // align_clocks(&sc, cpu);

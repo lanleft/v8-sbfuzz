@@ -7,16 +7,17 @@ UNAME_S:sh=uname -s       # BSD make
 
 UNICORNAFL_LIB = ../../unicornafl/build
 UNICORN_LIB = ../../unicornafl/unicorn/build
+CJSON_LIB = ./cJSON/build
 BIN_EXT =
 AR_EXT = a
 
 # Verbose output?
 V ?= 0
 
-CFLAGS += -Wall -Werror -I../../unicornafl/unicorn/include -I../../unicornafl/include -I../../../qemu_mode/qemuafl/capstone/include -I../../../qemu_mode/qemuafl/include
-CFLAGS += -g3
+CFLAGS += -Wall -Werror -I../../unicornafl/unicorn/include -I../../unicornafl/include -I../../../qemu_mode/qemuafl/capstone/include -I../../../qemu_mode/qemuafl/include -I./cJSON
+CFLAGS += -g3 -MD -MP -MF 
 
-LDFLAGS += -L$(UNICORNAFL_LIB) -L$(UNICORN_LIB) -lunicorn -lunicornafl -lpthread -lm -lstdc++
+LDFLAGS += -L$(UNICORNAFL_LIB) -L$(UNICORN_LIB) -L$(CJSON_LIB) -lunicorn -lunicornafl -lpthread -lm -lstdc++ -lcjson
 
 ifeq ($(UNAME), Linux)
 # do something Linux-y
@@ -47,7 +48,7 @@ harness: harness.o
 
 	-rm ../../unicornafl/build/libunicorn.a ../../unicornafl/build/libunicornafl.a || true
 	cd ../../unicornafl/build && make -j `nproc`
-	${CC} harness.o ../../unicornafl/build/libunicornafl.a ../../../qemu_mode/qemuafl/capstone/build/libcapstone.a $(LDFLAGS) -o $@
+	${CC} harness.o ../../unicornafl/build/libunicornafl.a ../../../qemu_mode/qemuafl/capstone/build/libcapstone.a ./cJSON/build/libcjson.so.1 $(LDFLAGS) -o $@
 
 debug: harness-debug.o
 	${CC} harness.o ../../unicornafl/build/libunicornafl.a $(LDFLAGS) -o harness-debug

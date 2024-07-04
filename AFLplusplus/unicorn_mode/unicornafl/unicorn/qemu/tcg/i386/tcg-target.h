@@ -213,6 +213,7 @@ static inline void tb_target_set_jmp_target(uintptr_t tc_ptr,
 {
     /* patch the branch destination */
     *(int32_t *)jmp_addr = addr - (jmp_addr + 4);
+    // printf(" ===xxx===  tb_target_set_jmp_target: tc_ptr: %lx, jmp_addr: %lx, addr: %lx\n", tc_ptr, jmp_addr, addr);
     /* no need to flush icache explicitly */
 }
 

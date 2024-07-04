@@ -4,6 +4,8 @@
         "string_view": "cpp",
         "*.inc": "cpp",
         "inttypes.h": "c",
-        "valarray": "c"
+        "valarray": "c",
+        "regex": "c",
+        "format": "c"
     }
 }

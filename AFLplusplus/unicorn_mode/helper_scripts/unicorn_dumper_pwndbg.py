@@ -139,6 +139,7 @@ def dump_process_memory(output_dir):
         print("No address mapping information found")
         return final_segment_list
 
+    print("dump_process_memory BBBBBBB")
     # Assume segment entries are sorted by start address
     for entry in vmmap:
         if entry.start == entry.end:
@@ -164,7 +165,7 @@ def dump_process_memory(output_dir):
         }
 
         # "(deleted)" may or may not be valid, but don't push it.
-        if entry.read and not "(deleted)" in entry.objfile:
+        if entry.read and not "(deleted)" in entry.objfile or ((entry.read | entry.write | entry.execute) != False):
             try:
                 # Compress and dump the content to a file
                 seg_content = pwndbg.gdblib.memory.read(start, end - start)
@@ -183,7 +184,8 @@ def dump_process_memory(output_dir):
                             repr(seg_info["permissions"]),
                         )
                     )
-                    compressed_seg_content = zlib.compress(bytes(seg_content))
+                    # compressed_seg_content = zlib.compress(bytes(seg_content))
+                    compressed_seg_content = seg_content # No compression
                     md5_sum = hashlib.md5(compressed_seg_content).hexdigest() + ".bin"
                     seg_info["content_file"] = md5_sum
 
@@ -191,6 +193,9 @@ def dump_process_memory(output_dir):
                     out_file = open(os.path.join(output_dir, md5_sum), "wb")
                     out_file.write(compressed_seg_content)
                     out_file.close()
+                    
+                # Add the segment to the list
+                final_segment_list.append(seg_info)
 
             except Exception as e:
                 traceback.print_exc()
@@ -204,8 +209,7 @@ def dump_process_memory(output_dir):
 
         segment_last_addr = end
 
-        # Add the segment to the list
-        final_segment_list.append(seg_info)
+
 
     return final_segment_list
 

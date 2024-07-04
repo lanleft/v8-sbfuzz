@@ -10,3 +10,4 @@ services:
       - ./AFLplusplus:/home/vult/AFLplusplus
       - ./sandbox_fuzzer:/home/vult/sandbox_fuzzer
     user: "1006:1007"  # Use actual UID:GID`
+    # user: "root:root"  # Use actual UID:GID`
