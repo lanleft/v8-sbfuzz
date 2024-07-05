@@ -627,6 +627,7 @@ static inline void tcg_gen_mov_i64(TCGContext *tcg_ctx, TCGv_i64 ret, TCGv_i64 a
 
 static inline void tcg_gen_movi_i64(TCGContext *tcg_ctx, TCGv_i64 ret, int64_t arg)
 {
+    // printf("### tcg_gen_movi_i64, arg: 0x%lx\n", arg);
     tcg_gen_op2i_i64(tcg_ctx, INDEX_op_movi_i64, ret, arg);
 }
 

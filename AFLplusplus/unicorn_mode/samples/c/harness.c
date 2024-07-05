@@ -98,10 +98,10 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
     // printf(">>> Tracing instruction at 0x%"PRIx64 ", instruction size = 0x%x\n", address, size);
     // print disassemply
     if (tracing) {
-        unsigned char code[16];
-        // if (address == 0x555556ca2233) address = 0x555556b04740;
+        unsigned char code[16] = {0};
+        // if (address == 0x555556ca2233) address = 0x555555c4840f;
         // address = 0x555555a2a000;
-        uc_mem_read(uc, address, code, sizeof(code));
+        uc_mem_read(uc, address, code, size);
         // printf("code:\n");
         // for (int i = 0; i < size; i++) {
         //     printf("    0x%"PRIx64 ": %02x\n", address + i, code[i]);
@@ -112,7 +112,7 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
         cs_insn *insn;
         csh handle;
         cs_open(CS_ARCH_X86, CS_MODE_64, &handle);
-        count = cs_disasm(handle, code, sizeof(code), address, 0, &insn);
+        count = cs_disasm(handle, code, size, address, 0, &insn);
         if (count > 0) {
             snprintf(asm_buf, sizeof(asm_buf), "%s %s", insn[0].mnemonic, insn[0].op_str);
             cs_free(insn, count);

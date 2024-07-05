@@ -70,6 +70,14 @@ Example 1:
 - prompts for asking questions: https://github.com/f/awesome-chatgpt-prompts/tree/main
 
 
+**Git**
+
+```bash
+# reset after `git add`
+git reset -- AFLplusplus/unicorn_mode/samples/c/UnicornContext_20240704_110015/
+
+```
+
 
 ### Run sample fuzz
 
@@ -179,7 +187,6 @@ $$$$$$$$$$$ gen_goto_tb: pc=0x555556b047b6, tb_num=1
 ######### jump to same page: we can use a direct jump eip=0x555556b047b6
 $$$$$$$$$$$ gen_goto_tb: pc=0x555556b04765, tb_num=0
 // ... 
-$$$$$$$$$$$ gen_goto_tb: pc=0x555555c47fd9, tb_num=0
 ######### jump to same page: we can use a direct jump eip=0x555555c47fd9
 $$$$$$$$$$$ gen_goto_tb: pc=0x555555c47feb, tb_num=1
 ######### jump to same page: we can use a direct jump eip=0x555555c47feb
@@ -189,6 +196,46 @@ $$$$$$$$$$$ gen_goto_tb: pc=0x555555c4838f, tb_num=0
 ######### jump to same page: we can use a direct jump eip=0x555555c4838f
 $$$$$$$$$$$ gen_goto_tb: pc=0x555555c4840f, tb_num=1
 ######### jump to same page: we can use a direct jump eip=0x555555c4840f
-
+>>> invalid memory accessed, STOP !!
+=== uc_exit_invalidate_iter, uc->invalid_error: 6 ===
+[2]    851779 abort (core dumped)  CONTEXT_DIR=UnicornContext_20240704_121555 ./harness -t 
 
 ```
+
+Dump PC:
+
+```js
+##### disas_insn s->pc: 555555c4837a
+##### disas_insn s->pc: 555555c48383
+##### disas_insn s->pc: 555555c48387
+##### disas_insn s->pc: 555555c48389
+>>> invalid memory accessed, STOP !!
+=== uc_exit_invalidate_iter, uc->invalid_error: 6 ===
+[3]    854534 abort (core dumped)  CONTEXT_DIR=UnicornContext_20240704_121555 ./harness -t 
+```
+
+Flow opcodes:
+
+```js
+##### disas_insn s->pc: 0x555555c4837a
+	 b: 0x64
+	 b: 0x48
+	 b: 0x8b
+##### disas_insn s->pc: 0x555555c48383
+	 b: 0x48
+	 b: 0x89
+##### disas_insn s->pc: 0x555555c48387
+	 b: 0x85
+##### disas_insn s->pc: 0x555555c48389
+	 b: 0xf
+	0xf -- b: 0x184
+		b: 0x184, tval: 0x55c4840f, next_eip: 0x55c4838f
+>>> invalid memory accessed, STOP !!
+=== uc_exit_invalidate_iter, uc->invalid_error: 6 ===
+[3]    855733 abort (core dumped)  CONTEXT_DIR=UnicornContext_20240704_121555 ./harness -t 
+```
+
+Reading QEMU code~~: https://github.com/qemu/qemu/blob/7914bda497f07965f15a91905cd7ed9eaf1c1092/target/i386/cpu-dump.c
+x86_cpu: https://github.com/qemu/qemu/blob/7914bda497f07965f15a91905cd7ed9eaf1c1092/target/i386/cpu.c#L8044
+Following unicorn qemu: https://github.com/unicorn-engine/unicorn/blob/master/qemu/tcg/tcg-op.c
+
