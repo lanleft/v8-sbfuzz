@@ -2,6 +2,9 @@
 # Table of content
 
 - [Setup](#setup)
+- [Unicorn fuzzer](#unicorn-fuzzer)
+    - [Dumpper](#Dumpper)
+    - [Run sample fuzz](#Run-sample-fuzz)
 
 
 # Setup 
