@@ -99,7 +99,7 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
     // print disassemply
     if (tracing) {
         unsigned char code[16] = {0};
-        // if (address == 0x555556ca2233) address = 0x555555c4840f;
+        if (address == 0x555556ca2233) address = 0x0000555555c48389;
         // address = 0x555555a2a000;
         uc_mem_read(uc, address, code, size);
         // printf("code:\n");
@@ -118,6 +118,7 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
             cs_free(insn, count);
         } else {
             snprintf(asm_buf, sizeof(asm_buf), "invalid");
+            
         }
         // printf("asm:\n");
         printf("    0x%"PRIx64 ": %s\n", address, asm_buf);
@@ -186,7 +187,7 @@ int main(int argc, char **argv, char **envp) {
 
     // Set the program counter to the start of the code
     uint64_t start_address = 0x555556c19100;      // address of entry point of main()
-    uint64_t end_address = 0x7f5556c19100; // Address of last instruction in main()
+    uint64_t end_address = 0xff5556c19100; // Address of last instruction in main()
 
     // If we want tracing output, set the callbacks here
     uc_hook hooks[2];

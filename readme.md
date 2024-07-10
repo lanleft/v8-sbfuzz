@@ -89,6 +89,20 @@ AFL_DEBUG=1 afl-fuzz -U -m none -i sample_inputs/ -o fuzz_out1 -- ./harness @@
 
 I'm working on folder `/home/vult/AFLplusplus/unicorn_mode/samples/c` of docker v8
 
+Building steps:
+
+```bash
+# building inside docker
+rm harness && make harness
+
+# running outside docker
+CONTEXT_DIR=UnicornContext_20240704_121555 ./harness -t out/default/crashes/id:000000,sig:01,src:000000,time:353,execs:371,op:havoc,rep:16
+
+# show debug
+ UNICORN_DEBUG=1 CONTEXT_DIR=UnicornContext_20240704_121555 ./harness -t out/default/crashes/id:000000,sig:01,src:000000,time:353,execs:371,op:havoc,rep:16
+
+```
+
 **snapshot_blob.bin**
 
 ```
@@ -239,3 +253,167 @@ Reading QEMU code~~: https://github.com/qemu/qemu/blob/7914bda497f07965f15a91905
 x86_cpu: https://github.com/qemu/qemu/blob/7914bda497f07965f15a91905cd7ed9eaf1c1092/target/i386/cpu.c#L8044
 Following unicorn qemu: https://github.com/unicorn-engine/unicorn/blob/master/qemu/tcg/tcg-op.c
 
+Error:
+
+```js
+    0x555556ca1efa: jmp 0x555556ca2202
+    0x555556ca2202: movsx rcx, byte ptr [r12 + r9 + 3]
+    0x555556ca2208: movsx r9, byte ptr [r12 + r9 + 2]
+    0x555556ca220e: mov rcx, qword ptr [rdx + rcx*8]
+    0x555556ca2212: mov rdx, qword ptr [rdx + r9*8]
+    0x555556ca2216: mov rbp, qword ptr [rbp]
+    0x555556ca221a: add rsp, 0x18
+    0x555556ca221e: push rdx
+    0x555556ca221f: push qword ptr [rsp + 8]
+    0x555556ca2223: mov eax, 2
+    0x555556ca2228: mov rdi, rbx
+    0x555556ca222b: mov qword ptr [rsp + 0x10], rcx
+    0x555556ca2230: mov rsi, r8
+    0x555555c48389: invalid
+
+222 uc->invalid_error = 6
+
+// log 
+ insn_idx=8 ---- 0000555555c48371 0000000000000011
+ 1:  ext32u_i64 r12,rdx  sync: 0  dead: 0
+
+ insn_idx=9 ---- 0000555555c48374 0000000000000011
+ 1:  mov_i64 r14,rsi mem_base=0x555557393878   sync: 0  dead: 0 1
+
+ insn_idx=10 ---- 0000555555c48377 0000000000000011
+ 1:  mov_i64 rbx,rdi mem_base=0x555557393878   sync: 0  dead: 0 1
+
+ insn_idx=11 ---- 0000555555c4837a 0000000000000011
+ 1:  movi_i64 tmp2,$0x28
+ 2:  add_i64 tmp2,fs_base,tmp2  dead: 1 2
+ 3:  qemu_ld_i64 tmp0,tmp2,leq,2  dead: 1
+ 4:  ld_i32 tmp11,env,$0xfffffffffffffff0
+ 5:  movi_i32 tmp12,$0x0
+ 6:  brcond_i32 tmp11,tmp12,lt,$L0  dead: 0 1
+ 7:  mov_i64 rax,tmp0  sync: 0  dead: 1
+
+ insn_idx=12 ---- 0000555555c48383 0000000000000011
+ 1:  movi_i64 tmp13,$0xffffffffffffffd0
+ 2:  add_i64 tmp2,rbp,tmp13  dead: 1 2
+ 3:  qemu_st_i64 rax,tmp2,leq,2  dead: 0 1
+ 4:  ld_i32 tmp11,env,$0xfffffffffffffff0  dead: 1
+ 5:  movi_i32 tmp12,$0x0
+ 6:  brcond_i32 tmp11,tmp12,lt,$L0  dead: 0 1
+
+ insn_idx=13 ---- 0000555555c48387 0000000000000011
+ 1:  mov_i64 cc_dst,rdx mem_base=0x555557393878   sync: 0  dead: 1
+ 2:  discard cc_src
+ 3:  discard loc10
+
+ insn_idx=14 ---- 0000555555c48389 0000000000000018
+ 1:  ext32u_i64 tmp0,cc_dst  dead: 1
+ 2:  movi_i32 cc_op,$0x18  sync: 0  dead: 0
+ 3:  movi_i64 tmp13,$0x0
+ 4:  brcond_i64 tmp0,tmp13,eq,$L1  dead: 0 1
+ 5:  goto_tb $0x0
+ 6:  movi_i64 tmp3,$0x555555c4838f
+ 7:  st_i64 tmp3,env,$0x80  dead: 0 1
+ 8:  exit_tb $0x7fffb79e1f00
+ 9:  set_label $L1
+ 10:  goto_tb $0x1
+ 11:  movi_i64 tmp3,$0x555555c4840f
+ 12:  st_i64 tmp3,env,$0x80  dead: 0 1
+ 13:  exit_tb $0x7fffb79e1f01
+ 14:  set_label $L0
+ 15:  exit_tb $0x7fffb79e1f03
+222 uc->invalid_error = 6
+```
+
+Maybe it's missing `je` instruction
+
+```js
+code:
+    0x555555c48389: 0f
+    0x555555c4838a: 84
+    0x555555c4838b: 80
+    0x555555c4838c: 00
+    0x555555c4838d: 00
+    0x555555c48389: invalid
+// ==========================================
+pwndbg> x/2i 0x555555c48389
+   0x555555c48389 <_ZN2v88internal11FactoryBaseINS0_7FactoryEE18HeapNumberToStringENS0_6HandleINS0_10HeapNumberEEEdNS0_15NumberCacheModeE+41>:	je     0x555555c4840f <_ZN2v88internal11FactoryBaseINS0_7FactoryEE18HeapNumberToStringENS0_6HandleINS0_10HeapNumberEEEdNS0_15NumberCacheModeE+175>
+   0x555555c4838f <_ZN2v88internal11FactoryBaseINS0_7FactoryEE18HeapNumberToStringENS0_6HandleINS0_10HeapNumberEEEdNS0_15NumberCacheModeE+47>:	mov    rdi,rbx
+```
+
+`uc->invalid_error = 6` means:
+This is setting an error code. In Unicorn Engine, error code 6 typically corresponds to UC_ERR_FETCH_UNMAPPED, which means the emulator tried to fetch instructions from unmapped memory.
+
+```js
+// =========
+$$$$$$$ INDEX_op_exit_tb $$$$$$$
+ $$$$$$$ 3333, ===== s->tb_ret_addr: 0x7fffb79c9018
+$$$$$$$ INDEX_op_exit_tb $$$$$$$
+ $$$$$$$ 3333, ===== s->tb_ret_addr: 0x7fffb79c9018
+222 uc->invalid_error = 6
+>>> invalid memory accessed, STOP !!
+=== uc_exit_invalidate_iter, uc->invalid_error: 6 ===
+```
+
+Hereeeeee:
+
+```js
+static uint64_t inline
+load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
+            uintptr_t retaddr, MemOp op, bool code_read,
+            FullLoadHelper *full_load)
+{
+    uintptr_t mmu_idx = get_mmuidx(oi);
+    uintptr_t index = tlb_index(env, mmu_idx, addr);
+    CPUTLBEntry *entry = tlb_entry(env, mmu_idx, addr);
+    target_ulong tlb_addr = code_read ? entry->addr_code : entry->addr_read;
+    //...
+}
+// =======
+/* helper signature: helper_ret_ld_mmu(CPUState *env, target_ulong addr,
+ *                                     int mmu_idx, uintptr_t ra)
+ */
+static void * const qemu_ld_helpers[16] = {
+    [MO_UB]   = helper_ret_ldub_mmu,
+    [MO_LEUW] = helper_le_lduw_mmu,
+    [MO_LEUL] = helper_le_ldul_mmu,
+    [MO_LEQ]  = helper_le_ldq_mmu,
+    [MO_BEUW] = helper_be_lduw_mmu,
+    [MO_BEUL] = helper_be_ldul_mmu,
+    [MO_BEQ]  = helper_be_ldq_mmu,
+};
+// ===========
+uint64_t helper_le_ldq_mmu(CPUArchState *env, target_ulong addr,
+                           TCGMemOpIdx oi, uintptr_t retaddr)
+{
+    printf("&&&&& helper_le_ldq_mmu  addr: %lx,  retaddr: %lx\n", addr, retaddr);
+    return load_helper(env, addr, oi, retaddr, MO_LEQ, false,
+                       helper_le_ldq_mmu);
+}
+// ===========
+/*
+ * Generate code for the slow path for a load at the end of block
+ */
+static bool tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
+{..}
+// ===========
+static void tcg_out_opc(TCGContext *s, int opc, int r, int rm, int x)
+{
+    int rex;
+
+    if (opc & P_GS) {
+        tcg_out8(s, 0x65);
+    }
+    if (opc & P_DATA16) {
+        /* We should never be asking for both 16 and 64-bit operation.  */
+        tcg_debug_assert((opc & P_REXW) == 0);
+        tcg_out8(s, 0x66);
+    }
+    if (opc & P_SIMDF3) {
+        tcg_out8(s, 0xf3);
+    } else if (opc & P_SIMDF2) {
+        tcg_out8(s, 0xf2);
+    }
+    //...
+}
+
+```

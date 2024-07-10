@@ -704,6 +704,7 @@ static void tcg_out_vex_modrm(TCGContext *s, int opc, int r, int v, int rm)
 static void tcg_out_sib_offset(TCGContext *s, int r, int rm, int index,
                                int shift, intptr_t offset)
 {
+    // printf(" ###### tcg_out_sib_offset r=%d, rm=%d, index=%d, shift=%d, offset=%lx\n", r, rm, index, shift, offset);
     int mod, len;
 
     if (index < 0 && rm < 0) {
@@ -712,6 +713,7 @@ static void tcg_out_sib_offset(TCGContext *s, int r, int rm, int index,
                the 32-bit-mode absolute addressing encoding.  */
             intptr_t pc = (intptr_t)s->code_ptr + 5 + ~rm;
             intptr_t disp = offset - pc;
+            // printf(" ###### tcg_out_sib_offset: pc=%lx, disp=%lx, offset=%lx\n", pc, disp, offset);
             if (disp == (int32_t)disp) {
                 tcg_out8(s, (LOWREGMASK(r) << 3) | 5);
                 tcg_out32(s, disp);
@@ -745,17 +747,21 @@ static void tcg_out_sib_offset(TCGContext *s, int r, int rm, int index,
     } else if (offset == 0 && LOWREGMASK(rm) != TCG_REG_EBP) {
         mod = 0, len = 0;
     } else if (offset == (int8_t)offset) {
+        // printf("===== 0000\n");
         mod = 0x40, len = 1;
     } else {
+        // printf("===== 0055\n");
         mod = 0x80, len = 4;
     }
 
     /* Use a single byte MODRM format if possible.  Note that the encoding
        that would be used for %esp is the escape to the two byte form.  */
     if (index < 0 && LOWREGMASK(rm) != TCG_REG_ESP) {
-        /* Single byte MODRM format.  */
+        // printf("===== 1111\n");
+        // /* Single byte MODRM format.  */
         tcg_out8(s, mod | (LOWREGMASK(r) << 3) | LOWREGMASK(rm));
     } else {
+        // printf("===== 2222\n");
         /* Two byte MODRM+SIB format.  */
 
         /* Note that the encoding that would place %esp into the index
@@ -772,9 +778,13 @@ static void tcg_out_sib_offset(TCGContext *s, int r, int rm, int index,
     }
 
     if (len == 1) {
+        // printf("===== 3333\n");
         tcg_out8(s, offset);
     } else if (len == 4) {
+        // printf("===== 4444\n");
+        // printf(" ####### len: %d, offset: %lx\n", len, offset);
         tcg_out32(s, offset);
+        // printf("===== 4455\n");
     }
 }
 
@@ -797,6 +807,7 @@ static void tcg_out_vex_modrm_sib_offset(TCGContext *s, int opc, int r, int v,
 static inline void tcg_out_modrm_offset(TCGContext *s, int opc, int r,
                                         int rm, intptr_t offset)
 {
+    // printf(" ###### tcg_out_modrm_offset opc=%x, r=%d, rm=%d, offset=%lx\n", opc, r, rm, offset);
     tcg_out_modrm_sib_offset(s, opc, r, rm, -1, 0, offset);
 }
 
@@ -1859,6 +1870,7 @@ static bool tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
                      (uintptr_t)l->raddr);
     }
 
+    // printf("***** before calling tcg_out_call, opc & (MO_BSWAP | MO_SIZE): %d\n", opc & (MO_BSWAP | MO_SIZE));
     tcg_out_call(s, qemu_ld_helpers[opc & (MO_BSWAP | MO_SIZE)]);
 
     data_reg = l->datalo_reg;
@@ -2238,12 +2250,16 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
 
     switch (opc) {
     case INDEX_op_exit_tb:
+        // printf("$$$$$$$ INDEX_op_exit_tb $$$$$$$\n");
         /* Reuse the zeroing that exists for goto_ptr.  */
         if (a0 == 0) {
+            // printf(" $$$$$$$ 1111\n");
             tcg_out_jmp(s, s->code_gen_epilogue);
         } else {
+            // printf(" $$$$$$$ 2222\n");
             tcg_out_movi(s, TCG_TYPE_PTR, TCG_REG_EAX, a0);
             tcg_out_jmp(s, s->tb_ret_addr);
+            // printf(" $$$$$$$ 3333, ===== s->tb_ret_addr: %p\n", s->tb_ret_addr);
         }
         break;
     case INDEX_op_goto_tb:
@@ -2545,12 +2561,16 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         tcg_out_ld(s, TCG_TYPE_I64, a0, a1, a2);
         break;
     case INDEX_op_st_i64:
+        // printf(" $$$$$$ const_args[0]: %d \n", const_args[0]);
         if (const_args[0]) {
             tcg_out_modrm_offset(s, OPC_MOVL_EvIz | P_REXW, 0, a1, a2);
             tcg_out32(s, a0);
         } else {
+            // printf(" $$$$$$$ INDEX_op_st_i64  a0: %lx, a1: %lx, a2: %lx \n", a0, a1, a2);
             tcg_out_st(s, TCG_TYPE_I64, a0, a1, a2);
+            // printf(" $$$$$$$ After tcg_out_st\n");
         }
+        // printf(" $$$$$$$ INDEX_op_st_i64 \n");
         break;
 
     case INDEX_op_brcond_i64:

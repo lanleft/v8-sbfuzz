@@ -1464,6 +1464,8 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
 
     // memory might be still unmapped while reading or fetching
     if (mr == NULL) {
+        printf(" $$$$$$$$$ load_helper: memory might be still unmapped while reading or fetching aaaaa\n");
+        printf("\t### paddr: %lx, op: %d\n", paddr, op);
         handled = false;
         // if there is already an unhandled eror, skip callbacks.
         if (uc->invalid_error == UC_ERR_OK) {
@@ -1807,6 +1809,7 @@ tcg_target_ulong helper_be_ldul_mmu(CPUArchState *env, target_ulong addr,
 uint64_t helper_le_ldq_mmu(CPUArchState *env, target_ulong addr,
                            TCGMemOpIdx oi, uintptr_t retaddr)
 {
+    printf("&&&&& helper_le_ldq_mmu  addr: %lx,  retaddr: %lx\n", addr, retaddr);
     return load_helper(env, addr, oi, retaddr, MO_LEQ, false,
                        helper_le_ldq_mmu);
 }
@@ -1912,6 +1915,7 @@ uint32_t cpu_ldl_mmuidx_ra(CPUArchState *env, abi_ptr addr,
 uint64_t cpu_ldq_mmuidx_ra(CPUArchState *env, abi_ptr addr,
                            int mmu_idx, uintptr_t ra)
 {
+    // printf("@@@@@@ cpu_ldq_mmuidx_ra\n");
     return cpu_load_helper(env, addr, mmu_idx, ra, MO_TEQ,
                            MO_TE == MO_LE
                            ? helper_le_ldq_mmu : helper_be_ldq_mmu);
@@ -1946,6 +1950,7 @@ uint32_t cpu_ldl_data_ra(CPUArchState *env, target_ulong ptr, uintptr_t retaddr)
 
 uint64_t cpu_ldq_data_ra(CPUArchState *env, target_ulong ptr, uintptr_t retaddr)
 {
+    printf("@@@@@@@@@ cpu_ldq_data_ra\n");
     return cpu_ldq_mmuidx_ra(env, ptr, cpu_mmu_index(env, false), retaddr);
 }
 
@@ -1976,6 +1981,7 @@ uint32_t cpu_ldl_data(CPUArchState *env, target_ulong ptr)
 
 uint64_t cpu_ldq_data(CPUArchState *env, target_ulong ptr)
 {
+    printf("@@@@@@@@@ cpu_ldq_data  ptr: %lx\n", ptr);
     return cpu_ldq_data_ra(env, ptr, 0);
 }
 

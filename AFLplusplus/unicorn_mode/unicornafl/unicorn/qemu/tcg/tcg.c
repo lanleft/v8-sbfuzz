@@ -198,6 +198,7 @@ static  QEMU_UNUSED_FUNC inline void tcg_out32(TCGContext *s, uint32_t v)
         tcg_insn_unit *p = s->code_ptr;
         memcpy(p, &v, sizeof(v));
         s->code_ptr = p + (4 / TCG_TARGET_INSN_UNIT_SIZE);
+        // printf(" $$$$$$ s->code_ptr: %lx, v: %x\n", s->code_ptr, v);
     }
 }
 
@@ -1101,6 +1102,9 @@ TCGv_i64 tcg_const_i64(TCGContext *tcg_ctx, int64_t val)
 {
     TCGv_i64 t0;
     t0 = tcg_temp_new_i64(tcg_ctx);
+    // printf("#### tcg_const_i64, val: 0x%lx, t0: 0x%x\n", val, t0);
+
+
     tcg_gen_movi_i64(tcg_ctx, t0, val);
     return t0;
 }
@@ -1285,6 +1289,7 @@ bool tcg_op_supported(TCGOpcode op)
     case INDEX_op_sar_i64:
     case INDEX_op_ext_i32_i64:
     case INDEX_op_extu_i32_i64:
+        // printf(" ######## TCG_TARGET_REG_BITS == %d\n", TCG_TARGET_REG_BITS);
         return TCG_TARGET_REG_BITS == 64;
 
     case INDEX_op_movcond_i64:
@@ -1802,6 +1807,8 @@ void tcg_dump_op(TCGContext *s, bool have_prefs, TCGOp* op)
                     const char *s_al, *s_op;
                     s_al = alignment_name[(op & MO_AMASK) >> MO_ASHIFT];
                     s_op = ldst_name[op & (MO_BSWAP | MO_SSIZE)];
+                    // printf(" $$$$$$ %s%s,%u \n", s_al, s_op, ix);
+                    
                     fprintf(stderr, ",%s%s,%u", s_al, s_op, ix);
                 }
                 i = 1;
@@ -3144,6 +3151,7 @@ static void tcg_reg_alloc_do_movi(TCGContext *s, TCGTemp *ots,
                                   tcg_target_ulong val, TCGLifeData arg_life,
                                   TCGRegSet preferred_regs)
 {
+    // printf("#### tcg_reg_alloc_do_movi val: 0x%lx, arg_life: 0x%x\n", val, arg_life);
     /* ENV should not be modified.  */
     tcg_debug_assert(!ots->fixed_reg);
 

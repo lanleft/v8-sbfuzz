@@ -47,7 +47,7 @@ harness-debug.o: harness.c ../../unicornafl/unicorn/include/unicorn/*.h ../../..
 harness: harness.o
 
 	-rm ../../unicornafl/build/libunicorn.a ../../unicornafl/build/libunicornafl.a || true
-	cd ../../unicornafl/build && make -j `nproc`
+	cd ../../unicornafl/build && make clean && make -j `nproc`
 	${CC} harness.o ../../unicornafl/build/libunicornafl.a ../../../qemu_mode/qemuafl/capstone/build/libcapstone.a ./cJSON/build/libcjson.so.1 $(LDFLAGS) -o $@
 
 debug: harness-debug.o
