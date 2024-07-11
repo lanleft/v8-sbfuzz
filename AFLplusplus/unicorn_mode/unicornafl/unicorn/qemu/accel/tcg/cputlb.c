@@ -1464,8 +1464,9 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
 
     // memory might be still unmapped while reading or fetching
     if (mr == NULL) {
-        printf(" $$$$$$$$$ load_helper: memory might be still unmapped while reading or fetching aaaaa\n");
-        printf("\t### paddr: %lx, op: %d\n", paddr, op);
+        printf(" $$$$$$$$$ load_helper: memory might be still unmapped while reading or fetching bbbb\n");
+        printf("\t### paddr: %lx, op: %d, addr: 0x%lx\n", paddr, op, addr);
+        // if ((1)) __builtin_trap();
         handled = false;
         // if there is already an unhandled eror, skip callbacks.
         if (uc->invalid_error == UC_ERR_OK) {

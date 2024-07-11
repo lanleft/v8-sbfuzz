@@ -1,10 +1,15 @@
 
 # Table of content
 
+- [References](#references)
 - [Setup](#setup)
 - [Unicorn fuzzer](#unicorn-fuzzer)
     - [Dumpper](#Dumpper)
     - [Run sample fuzz](#Run-sample-fuzz)
+
+# References
+
+- https://github.com/search?q=repo%3Aunicorn-engine%2Funicorn%20tcg_out32&type=code
 
 
 # Setup 
@@ -41,6 +46,15 @@ cd AFLplusplus
 make distrib
 sudo make install
 
+```
+
+4. Unicornafl building
+
+```bash
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DUCAFL_NO_LOG=on # disable logging for the maximum speed
+make
 ```
 
 
@@ -393,6 +407,16 @@ uint64_t helper_le_ldq_mmu(CPUArchState *env, target_ulong addr,
                        helper_le_ldq_mmu);
 }
 // ===========
+static void tcg_out_sib_offset(TCGContext *s, int r, int rm, int index,
+                               int shift, intptr_t offset)
+{
+    // printf(" ###### tcg_out_sib_offset r=%d, rm=%d, index=%d, shift=%d, offset=%lx\n", r, rm, index, shift, offset);
+    int mod, len;
+
+    //...
+}
+// ===========
+// https://github.com/unicorn-engine/unicorn/blob/d4b92485b1a228fb003e1218e42f6c778c655809/qemu/tcg/i386/tcg-target.inc.c#L1821
 /*
  * Generate code for the slow path for a load at the end of block
  */
@@ -418,5 +442,22 @@ static void tcg_out_opc(TCGContext *s, int opc, int r, int rm, int x)
     }
     //...
 }
+// ======= log ======
+### tcg_out_qemu_ld_slow_path called, opc: 3
+### tcg_out_qemu_ld_slow_path called, opc: 3
+### tcg_out_qemu_ld_slow_path called, opc: 3
+&&&&& helper_le_ldq_mmu  addr: 28,  retaddr: 7fffb79e21e9
+ $$$$$$$$$ load_helper: memory might be still unmapped while reading or fetching bbbb
+	### paddr: 28, op: 3, addr: 0x28
+222 uc->invalid_error = 6
+>>> invalid memory accessed, STOP !!
 
+```
+
+**Why is the address invalid?**
+
+```js
+&&&&& helper_le_ldq_mmu  addr: 28,  retaddr: 7fffb79e21e9
+ $$$$$$$$$ load_helper: memory might be still unmapped while reading or fetching bbbb
+	### paddr: 28, op: 3, addr: 0x28
 ```

@@ -880,12 +880,9 @@ static uc_err dummy_uc_afl_fuzz_callback(uc_engine* uc, void* data) {
     uint64_t pc;
 
     pc = uc_get_pc(uc);
-    // printf("============xxx pc=0x%" PRIx64 "\n", pc);
 
     // Note the multiple exits is enabled in this case.
-    uc_err ret = uc_emu_start(uc, pc, 0, 0, 0);
-    // printf("ret=%d\n", ret);
-    return ret;
+    return uc_emu_start(uc, pc, 0, 0, 0);
 }
 
 static uint64_t uc_get_pc(uc_engine* uc) {
@@ -902,7 +899,6 @@ static uint64_t uc_get_pc(uc_engine* uc) {
         } else if (mode == UC_MODE_16) {
             uc_reg_read(uc, UC_X86_REG_IP, &pc);
         } else {
-            // printf("uc_get_pc mode 64bit\n");
             uc_reg_read(uc, UC_X86_REG_RIP, &pc);
         }
     } else if (arch == UC_ARCH_ARM) {
