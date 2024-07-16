@@ -12,6 +12,6 @@ References:
     
 About the blog:
 
-[text](IMG_6802.HEIC)
+![text](IMG_6802.HEIC)
 
-[text](IMG_6806.HEIC)
+![text](IMG_6806.HEIC)

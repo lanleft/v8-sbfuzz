@@ -13,7 +13,7 @@
 
 **Idea**
 
-[text](IMG_6804.HEIC)
+![text](IMG_6804.HEIC)
 
 
 # Setup 
