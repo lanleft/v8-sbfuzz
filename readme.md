@@ -11,6 +11,10 @@
 
 - https://github.com/search?q=repo%3Aunicorn-engine%2Funicorn%20tcg_out32&type=code
 
+**Idea**
+
+[text](vscode-local:/Users/lanleft/Downloads/IMG_6804.HEIC)
+
 
 # Setup 
 
