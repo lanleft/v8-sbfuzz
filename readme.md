@@ -13,7 +13,7 @@
 
 **Idea**
 
-[text](vscode-local:/Users/lanleft/Downloads/IMG_6804.HEIC)
+[text](IMG_6804.HEIC)
 
 
 # Setup 
