@@ -12,10 +12,13 @@ References:
 
 About the blog:
 
-![text](IMG_6802.HEIC)
+![text](IMG_6802.jpg)
 
-![text](IMG_6806.HEIC)
+![text](IMG_6806.jpg)
 
 The answer:
 
 ![alt text](image-1.png)
+
+
+**Practice is a key**
