@@ -57,6 +57,7 @@ static inline tcg_target_ulong cpu_tb_exec(CPUState *cpu, TranslationBlock *itb)
 
     UC_TRACE_START(UC_TRACE_TB_EXEC);
     tb_exec_lock(cpu->uc->tcg_ctx);
+    // printf("#### cpu_tb_exec itb->pc: 0x%" PRIx64 "\n", itb->pc);
     ret = tcg_qemu_tb_exec(env, tb_ptr);
     if (cpu->uc->nested_level == 1) {
         // Only unlock (allow writing to JIT area) if we are the outmost uc_emu_start
@@ -606,9 +607,11 @@ int cpu_exec(struct uc_struct *uc, CPUState *cpu)
             }
 
             tb = tb_find(cpu, last_tb, tb_exit, cflags);
+            printf("\t============> tb_find done tb->pc = 0x%" PRIx64 "\n", tb->pc);
             if (unlikely(cpu->exit_request)) {
                 continue;
             }
+
             cpu_loop_exec_tb(cpu, tb, &last_tb, &tb_exit);
             // printf("555 uc->invalid_error = %d\n", uc->invalid_error);
             /* Try to align the host and virtual clocks

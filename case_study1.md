@@ -1,8 +1,5 @@
 
-# Table of Content
-
-
-# Case study 1: KVM 
+## Case study 1: KVM 
 
 Blog 
     - https://googleprojectzero.blogspot.com/2021/06/an-epyc-escape-case-study-of-kvm.html

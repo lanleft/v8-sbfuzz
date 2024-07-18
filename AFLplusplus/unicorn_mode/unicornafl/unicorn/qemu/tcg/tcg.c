@@ -3792,6 +3792,7 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb)
     num_insns = -1;
     QTAILQ_FOREACH(op, &s->ops, link) {
         TCGOpcode opc = op->opc;
+        // printf("\topc: %ld\n", opc);    
 
         switch (opc) {
         case INDEX_op_mov_i32:

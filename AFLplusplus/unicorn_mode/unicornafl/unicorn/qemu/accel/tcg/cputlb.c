@@ -1465,7 +1465,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
     // memory might be still unmapped while reading or fetching
     if (mr == NULL) {
         printf(" $$$$$$$$$ load_helper: memory might be still unmapped while reading or fetching bbbb\n");
-        printf("\t### paddr: %lx, op: %d, addr: 0x%lx\n", paddr, op, addr);
+        printf("\t### paddr: 0x%lx op: %d addr: 0x%lx\n", paddr, op, addr);
         // if ((1)) __builtin_trap();
         handled = false;
         // if there is already an unhandled eror, skip callbacks.
@@ -1810,7 +1810,8 @@ tcg_target_ulong helper_be_ldul_mmu(CPUArchState *env, target_ulong addr,
 uint64_t helper_le_ldq_mmu(CPUArchState *env, target_ulong addr,
                            TCGMemOpIdx oi, uintptr_t retaddr)
 {
-    printf("&&&&& helper_le_ldq_mmu  addr: %lx,  retaddr: %lx\n", addr, retaddr);
+    printf("&&&&& helper_le_ldq_mmu  addr: 0x%lx  retaddr: 0x%lx\n", addr, retaddr);
+    // if ((addr==0x28)) __builtin_trap();
     return load_helper(env, addr, oi, retaddr, MO_LEQ, false,
                        helper_le_ldq_mmu);
 }

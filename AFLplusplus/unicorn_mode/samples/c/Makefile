@@ -15,7 +15,7 @@ AR_EXT = a
 V ?= 0
 
 CFLAGS += -Wall -Werror -I../../unicornafl/unicorn/include -I../../unicornafl/include -I../../../qemu_mode/qemuafl/capstone/include -I../../../qemu_mode/qemuafl/include -I./cJSON
-CFLAGS += -g -MD -MP -MF 
+CFLAGS += -g -MD -MP -MF
 
 LDFLAGS += -L$(UNICORNAFL_LIB) -L$(UNICORN_LIB) -L$(CJSON_LIB) -lunicorn -lunicornafl -lpthread -lm -lstdc++ -lcjson
 

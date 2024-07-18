@@ -1776,6 +1776,7 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     }
 
     gen_code_size = tcg_gen_code(tcg_ctx, tb);
+    // printf("\t gen_code_size: %d\n", gen_code_size);
     if (unlikely(gen_code_size < 0)) {
         switch (gen_code_size) {
         case -1:
@@ -1814,6 +1815,10 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
         goto buffer_overflow;
     }
     tb->tc.size = gen_code_size;
+
+    // this is tcg code (Tiny Code Generator)
+    // printf("\ttc->tc.ptr: 0x%lx\n", (uintptr_t)tb->tc.ptr);
+    // printf("\ttc->size: 0x%x\n", tb->tc.size);
 
     tcg_ctx->code_gen_ptr = (void *)
         ROUND_UP((uintptr_t)gen_code_buf + gen_code_size + search_size,

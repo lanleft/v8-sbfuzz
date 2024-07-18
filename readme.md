@@ -57,7 +57,7 @@ sudo make install
 ```bash
 mkdir build
 cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DUCAFL_NO_LOG=on # disable logging for the maximum speed
+cmake .. -DCMAKE_BUILD_TYPE=Debug -DUNICORN_TRACER=1 -DUCAFL_NO_LOG=off -DBUILD_SHARED_LIBS=OFF -DCONFIG_DEBUG_TCG=1 # build a static library
 make
 ```
 
@@ -465,3 +465,478 @@ static void tcg_out_opc(TCGContext *s, int opc, int r, int rm, int x)
  $$$$$$$$$ load_helper: memory might be still unmapped while reading or fetching bbbb
 	### paddr: 28, op: 3, addr: 0x28
 ```
+
+Stacktrace:
+
+```js
+
+pwndbg> bt
+#0  0x000055555612ec5b in tcg_out_qemu_ld_slow_path ()
+#1  0x0000555556128278 in tcg_out_ldst_finalize ()
+#2  0x00005555561255ee in tcg_gen_code_x86_64 ()
+#3  0x000055555610e8c8 in tb_gen_code_x86_64 ()
+#4  0x000055555611efdd in tb_find ()
+#5  0x000055555611ea33 in cpu_exec_x86_64 ()
+#6  0x0000555556155ae4 in tcg_cpu_exec ()
+#7  0x0000555556155a09 in resume_all_vcpus_x86_64 ()
+#8  0x0000555556155cd5 in vm_start_x86_64 ()
+#9  0x0000555555a0deed in uc_emu_start ()
+#10 0x0000555555895355 in dummy_uc_afl_fuzz_callback(uc_struct*, void*) ()
+#11 0x00005555558971ee in UCAFL::_child_fuzz(bool) ()
+#12 0x00005555558959ae in UCAFL::fsrv_run() ()
+#13 0x00005555558950b6 in uc_afl_fuzz ()
+#14 0x0000555555894ce1 in main ()
+#15 0x00007ffff7a73083 in __libc_start_main (main=0x555555894b80 <main>, argc=3, argv=0x7fffffffe268, init=<optimized out>, fini=<optimized out>, rtld_fini=<optimized out>, stack_end=0x7fffffffe258) at ../csu/libc-start.c:308
+#16 0x000055555589377e in _start ()
+
+```
+
+```js
+// AFLplusplus/unicorn_mode/unicornafl/unicorn/qemu/accel/tcg/translate-all.c
+/* Called with mmap_lock held for user mode emulation.  */
+TranslationBlock *tb_gen_code(CPUState *cpu,
+                              target_ulong pc, target_ulong cs_base,
+                              uint32_t flags, int cflags)
+{}
+
+// AFLplusplus/unicorn_mode/unicornafl/unicorn/qemu/tcg/tcg.c
+int tcg_gen_code(TCGContext *s, TranslationBlock *tb)
+{
+    int i, num_insns;
+    TCGOp *op;
+}
+
+// AFLplusplus/unicorn_mode/unicornafl/unicorn/qemu/accel/tcg/cpu-exec.c
+/* Execute a TB, and fix up the CPU state afterwards if necessary */
+static inline tcg_target_ulong cpu_tb_exec(CPUState *cpu, TranslationBlock *itb)
+{
+    CPUArchState *env = cpu->env_ptr;
+    uintptr_t ret;
+    TranslationBlock *last_tb;
+    int tb_exit;
+    uint8_t *tb_ptr = itb->tc.ptr;
+
+    UC_TRACE_START(UC_TRACE_TB_EXEC);
+    tb_exec_lock(cpu->uc->tcg_ctx);
+    ret = tcg_qemu_tb_exec(env, tb_ptr);
+    if (cpu->uc->nested_level == 1) {
+        // Only unlock (allow writing to JIT area) if we are the outmost uc_emu_start
+        tb_exec_unlock(cpu->uc->tcg_ctx);
+    }
+    UC_TRACE_END(UC_TRACE_TB_EXEC, "[uc] exec tb 0x%" PRIx64 ": ", itb->pc);
+}
+
+
+void translator_loop(const TranslatorOps *ops, DisasContextBase *db,
+                     CPUState *cpu, TranslationBlock *tb, int max_insns)
+{
+    int bp_insn = 0;
+    struct uc_struct *uc = (struct uc_struct *)cpu->uc;
+    TCGContext *tcg_ctx = uc->tcg_ctx;
+    TCGOp *prev_op = NULL;
+    bool block_hook = false;
+//...
+}
+
+```
+
+
+Stacktrace:
+
+```js
+
+pwndbg> bt
+#0  0x000055555612ec5b in tcg_out_qemu_ld_slow_path ()
+#1  0x0000555556128278 in tcg_out_ldst_finalize ()
+#2  0x00005555561255ee in tcg_gen_code_x86_64 ()
+#3  0x000055555610e8c8 in tb_gen_code_x86_64 ()
+#4  0x000055555611efdd in tb_find ()
+#5  0x000055555611ea33 in cpu_exec_x86_64 ()
+#6  0x0000555556155ae4 in tcg_cpu_exec ()
+#7  0x0000555556155a09 in resume_all_vcpus_x86_64 ()
+#8  0x0000555556155cd5 in vm_start_x86_64 ()
+#9  0x0000555555a0deed in uc_emu_start ()
+#10 0x0000555555895355 in dummy_uc_afl_fuzz_callback(uc_struct*, void*) ()
+#11 0x00005555558971ee in UCAFL::_child_fuzz(bool) ()
+#12 0x00005555558959ae in UCAFL::fsrv_run() ()
+#13 0x00005555558950b6 in uc_afl_fuzz ()
+#14 0x0000555555894ce1 in main ()
+#15 0x00007ffff7a73083 in __libc_start_main (main=0x555555894b80 <main>, argc=3, argv=0x7fffffffe268, init=<optimized out>, fini=<optimized out>, rtld_fini=<optimized out>, stack_end=0x7fffffffe258) at ../csu/libc-start.c:308
+#16 0x000055555589377e in _start ()
+
+```
+
+```js
+// AFLplusplus/unicorn_mode/unicornafl/unicorn/qemu/accel/tcg/translate-all.c
+/* Called with mmap_lock held for user mode emulation.  */
+TranslationBlock *tb_gen_code(CPUState *cpu,
+                              target_ulong pc, target_ulong cs_base,
+                              uint32_t flags, int cflags)
+{}
+
+// AFLplusplus/unicorn_mode/unicornafl/unicorn/qemu/tcg/tcg.c
+int tcg_gen_code(TCGContext *s, TranslationBlock *tb)
+{
+    int i, num_insns;
+    TCGOp *op;
+}
+
+// AFLplusplus/unicorn_mode/unicornafl/unicorn/qemu/accel/tcg/cpu-exec.c
+/* Execute a TB, and fix up the CPU state afterwards if necessary */
+static inline tcg_target_ulong cpu_tb_exec(CPUState *cpu, TranslationBlock *itb)
+{
+    CPUArchState *env = cpu->env_ptr;
+    uintptr_t ret;
+    TranslationBlock *last_tb;
+    int tb_exit;
+    uint8_t *tb_ptr = itb->tc.ptr;
+
+    UC_TRACE_START(UC_TRACE_TB_EXEC);
+    tb_exec_lock(cpu->uc->tcg_ctx);
+    ret = tcg_qemu_tb_exec(env, tb_ptr);
+    if (cpu->uc->nested_level == 1) {
+        // Only unlock (allow writing to JIT area) if we are the outmost uc_emu_start
+        tb_exec_unlock(cpu->uc->tcg_ctx);
+    }
+    UC_TRACE_END(UC_TRACE_TB_EXEC, "[uc] exec tb 0x%" PRIx64 ": ", itb->pc);
+}
+
+
+void translator_loop(const TranslatorOps *ops, DisasContextBase *db,
+                     CPUState *cpu, TranslationBlock *tb, int max_insns)
+{
+    int bp_insn = 0;
+    struct uc_struct *uc = (struct uc_struct *)cpu->uc;
+    TCGContext *tcg_ctx = uc->tcg_ctx;
+    TCGOp *prev_op = NULL;
+    bool block_hook = false;
+//...
+
+    // tcg_dump_ops(tcg_ctx, false, "translator loop");
+
+    /* Start translating.  */
+    gen_tb_start(tcg_ctx, db->tb);
+    // tcg_dump_ops(tcg_ctx, false, "tb start");
+
+    ops->tb_start(db, cpu);
+    // tcg_dump_ops(tcg_ctx, false, "tb start 2");
+    //...
+}
+
+```
+
+Executing process:
+
+```js
+
+cpu_loop_exec_tb(cpu, tb, &last_tb, &tb_exit);
+// =====
+
+pwndbg> tele 0x7fffffffd7a0
+00:0000│ rsp 0x7fffffffd7a0 ◂— 0x100000000
+01:0008│-028 0x7fffffffd7a8 —▸ 0x7fffb79e216f ◂— mov r13d, dword ptr [rbp - 0x10] /* 0xfed8545f06d8b44 */
+02:0010│-020 0x7fffffffd7b0 —▸ 0x7fffb79e21e9 ◂— mov r14d, dword ptr [rbp - 0x10] /* 0xff68545f0758b44 */
+03:0018│-018 0x7fffffffd7b8 ◂— 0x3256fc3000
+04:0020│-010 0x7fffffffd7c0 ◂— 0x28 /* '(' */
+05:0028│-008 0x7fffffffd7c8 —▸ 0x5555573c06d0 ◂— 0xbffd944e444aaaea
+06:0030│ rbp 0x7fffffffd7d0 —▸ 0x5555573c06d0 ◂— 0xbffd944e444aaaea
+07:0038│+008 0x7fffffffd7d8 —▸ 0x7fffb79e235a ◂— mov r13, rax /* 0xfffffe87e9e88b4c */
+pwndbg> 
+08:0040│+010 0x7fffffffd7e0 ◂— 0x2e007fffffffd830
+09:0048│+018 0x7fffffffd7e8 —▸ 0x5555573944f0 —▸ 0x55555736c710 ◂— 0xc00000001
+0a:0050│+020 0x7fffffffd7f0 —▸ 0x7ffff7fa13c0 (funlockfile) ◂— endbr64 
+0b:0058│+028 0x7fffffffd7f8 —▸ 0x7ffff7c3c6a0 (_IO_2_1_stdout_) ◂— 0xfbad2a84
+0c:0060│+030 0x7fffffffd800 ◂— 0x8900555500000000
+0d:0068│+038 0x7fffffffd808 ◂— 0
+0e:0070│+040 0x7fffffffd810 —▸ 0x7fffffffd840 —▸ 0x7fffffffd890 —▸ 0x7fffffffd8e0 —▸ 0x55555734a018 ◂— ...
+0f:0078│+048 0x7fffffffd818 ◂— 0x3000000008
+pwndbg> 
+10:0080│+050 0x7fffffffd820 —▸ 0x7fffffffdd50 —▸ 0x7fffb79e1f00 —▸ 0x555555c48360 (io_readx+96) ◂— adc byte ptr [rax - 0x77], cl
+11:0088│+058 0x7fffffffd828 —▸ 0x7fffffffdc90 —▸ 0x7fffffffdcf0 —▸ 0x7fffffffdd40 —▸ 0x7fffffffdd90 ◂— ...
+12:0090│+060 0x7fffffffd830 ◂— 0x8000000006
+13:0098│+068 0x7fffffffd838 —▸ 0x5555573944f0 —▸ 0x55555736c710 ◂— 0xc00000001
+14:00a0│+070 0x7fffffffd840 —▸ 0x7fffffffd890 —▸ 0x7fffffffd8e0 —▸ 0x55555734a018 ◂— 0
+15:00a8│+078 0x7fffffffd848 —▸ 0x55555612ba9a (tcg_out_sib_offset+554) ◂— jmp 0x55555612ba9c
+16:00b0│+080 0x7fffffffd850 ◂— 0x8900000000000020 /* ' ' */
+17:00b8│+088 0x7fffffffd858 —▸ 0x5555573944f0 —▸ 0x55555736c710 ◂— 0xc00000001
+pwndbg> 
+18:00c0│+090 0x7fffffffd860 —▸ 0x7fffffffd890 —▸ 0x7fffffffd8e0 —▸ 0x55555734a018 ◂— 0
+19:00c8│+098 0x7fffffffd868 ◂— 0x8000000004
+1a:00d0│+0a0 0x7fffffffd870 ◂— 0x80
+1b:00d8│+0a8 0x7fffffffd878 ◂— 0xffffffff00000000
+1c:00e0│+0b0 0x7fffffffd880 ◂— 0x300000005
+1d:00e8│+0b8 0x7fffffffd888 —▸ 0x5555573944f0 —▸ 0x55555736c710 ◂— 0xc00000001
+1e:00f0│+0c0 0x7fffffffd890 —▸ 0x7fffffffd8e0 —▸ 0x55555734a018 ◂— 0
+1f:00f8│+0c8 0x7fffffffd898 —▸ 0x55555612b861 (tcg_out_modrm_sib_offset+145) ◂— add rsp, 0x40
+pwndbg> 
+20:0100│+0d0 0x7fffffffd8a0 ◂— 0xffffd8e0
+21:0108│+0d8 0x7fffffffd8a8 ◂— 0x500000005
+22:0110│+0e0 0x7fffffffd8b0 ◂— 0
+23:0118│+0e8 0x7fffffffd8b8 ◂— 0x30 /* '0' */
+24:0120│+0f0 0x7fffffffd8c0 ◂— 7
+25:0128│+0f8 0x7fffffffd8c8 —▸ 0x55555734a012 ◂— 0x500070000
+26:0130│+100 0x7fffffffd8d0 ◂— 0x28 /* '(' */
+27:0138│+108 0x7fffffffd8d8 ◂— 0x555500000003
+pwndbg> 
+
+```
+
+I know why it catched fetch faild, cause `fs:0x28` 
+This instruction is reading a 64-bit value from the memory address pointed to by fs:0x28 and storing it in the rax register.
+In practice, this instruction is often used to access thread-local storage (TLS) on Windows systems. Specifically:
+
+On 64-bit Windows, the fs segment register points to the Thread Environment Block (TEB).
+The offset 0x28 (40 bytes) into the TEB is where the thread-local storage pointer is stored.
+
+This means that this instruction is typically used to retrieve a pointer to the thread-local storage area for the current thread. It's a common way for a program to access thread-specific data structures in a multi-threaded environment on Windows.
+It's worth noting that while this syntax is valid for Windows systems, on Linux systems, the gs segment is typically used for similar purposes instead of fs.
+
+```js
+pwndbg> x/20i 0x555555c48360
+   0x555555c48360 func>:	push   rbp
+   0x555555c48361 func+1>:	mov    rbp,rsp
+   0x555555c48364 func+4>:	push   r15
+   0x555555c48366 func+6>:	push   r14
+   0x555555c48368 func+8>:	push   r13
+   0x555555c4836a func+10>:	push   r12
+   0x555555c4836c func+12>:	push   rbx
+   0x555555c4836d func+13>:	sub    rsp,0x38
+   0x555555c48371 func+17>:	mov    r12d,edx
+   0x555555c48374 func+20>:	mov    r14,rsi
+   0x555555c48377 func+23>:	mov    rbx,rdi
+   0x555555c4837a func+26>:	mov    rax,QWORD PTR fs:0x28
+   0x555555c48383 func+35>:	mov    QWORD PTR [rbp-0x30],rax
+   0x555555c48387 func+39>:	test   edx,edx
+   0x555555c48389 func+41>:	je     0x555555c4840f func+175>
+
+breakpoint:
+2       breakpoint     keep y   0x0000555555c48383
+```
+
+Solution: https://github.com/unicorn-engine/unicorn/issues/1152
+
+### New SSE instructions
+
+SSE4.1 (Streaming SIMD Extensions 4.1) includes a set of 47 new instructions. Here's a comprehensive list of the instructions introduced in SSE4.1:
+
+Packed Integer Operations:
+
+    - PBLENDVB: Variable Blend Packed Bytes
+    - PMULDQ: Multiply Packed Signed Dword Integers
+    - PMULLD: Multiply Packed Signed Dword Integers and Store Low Result
+    - PTEST: Logical Compare
+    - PHMINPOSUW: Packed Horizontal Word Minimum
+
+
+Dword Multiply Operations:
+
+    - PMULDQ: Multiply Packed Signed Dword Integers
+    - PMULLD: Multiply Packed Signed Dword Integers and Store Low Result
+
+
+Floating-Point Rounding Operations:
+
+    - ROUNDPS: Round Packed Single Precision Floating-Point Values
+    - ROUNDPD: Round Packed Double Precision Floating-Point Values
+    - ROUNDSS: Round Scalar Single Precision Floating-Point Values
+    - ROUNDSD: Round Scalar Double Precision Floating-Point Value
+
+
+Packed Blending Operations:
+
+    - BLENDPD: Blend Packed Double Precision Floating-Point Values
+    - BLENDPS: Blend Packed Single Precision Floating-Point Values
+    - BLENDVPD: Variable Blend Packed Double Precision Floating-Point Values
+    - BLENDVPS: Variable Blend Packed Single Precision Floating-Point Values
+    - PBLENDVB: Variable Blend Packed Bytes
+    - PBLENDW: Blend Packed Words
+
+
+Packed Integer Min/Max Operations:
+
+    - PMINUW: Minimum of Packed Word Integers
+    - PMINUD: Minimum of Packed Dword Integers
+    - PMINSB: Minimum of Packed Signed Byte Integers
+    - PMINSD: Minimum of Packed Signed Dword Integers
+    - PMAXUW: Maximum of Packed Word Integers
+    - PMAXUD: Maximum of Packed Dword Integers
+    - PMAXSB: Maximum of Packed Signed Byte Integers
+    - PMAXSD: Maximum of Packed Signed Dword Integers
+
+
+Packed Integer Format Conversions:
+
+    - PMOVSXBW, PMOVSXBD, PMOVSXBQ: Sign Extend Packed Integer Values
+    - PMOVSXWD, PMOVSXWQ: Sign Extend Packed Integer Values
+    - PMOVSXDQ: Sign Extend Packed Integer Values
+    - PMOVZXBW, PMOVZXBD, PMOVZXBQ: Zero Extend Packed Integer Values
+    - PMOVZXWD, PMOVZXWQ: Zero Extend Packed Integer Values
+    - PMOVZXDQ: Zero Extend Packed Integer Values
+
+
+Packed Dword to Packed Single-Precision Floating-Point Conversion:
+
+CVTPS2DQ: Convert Packed Single-Precision FP Values to Packed Dword Integers
+CVTDQ2PS: Convert Packed Dword Integers to Packed Single-Precision FP Values
+
+
+Memory Access:
+
+MOVNTDQA: Load Double Quadword Non-Temporal Aligned Hint
+
+
+String and Text Processing:
+
+MPSADBW: Compute Multiple Packed Sums of Absolute Difference
+
+
+Dot Product:
+
+DPPS: Dot Product of Packed Single Precision Floating-Point Values
+DPPD: Dot Product of Packed Double Precision Floating-Point Values
+
+
+Other:
+
+INSERTPS: Insert Packed Single Precision Floating-Point Value
+EXTRACTPS: Extract Packed Single Precision Floating-Point Value
+PINSRB, PINSRD, PINSRQ: Insert Byte/Dword/Qword
+PEXTRB, PEXTRD, PEXTRQ: Extract Byte/Dword/Qword
+
+
+
+These instructions significantly enhanced SIMD capabilities, particularly for multimedia processing, 3D graphics, scientific computations, and general-purpose computing on GPUs (GPGPU) applications.
+
+**translate.c is the most important**
+
+
+Enable some features
+
+```cpp
+static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
+{
+    DisasContext *dc = container_of(dcbase, DisasContext, base);
+    TCGContext *tcg_ctx = cpu->uc->tcg_ctx;
+    CPUX86State *env = cpu->env_ptr;
+    uint32_t flags = dc->base.tb->flags;
+    target_ulong cs_base = dc->base.tb->cs_base;
+
+    // unicorn setup
+    dc->uc = cpu->uc;
+    dc->pe = (flags >> HF_PE_SHIFT) & 1;
+    dc->code32 = (flags >> HF_CS32_SHIFT) & 1;
+    dc->ss32 = (flags >> HF_SS32_SHIFT) & 1;
+    dc->addseg = (flags >> HF_ADDSEG_SHIFT) & 1;
+    dc->f_st = 0;
+    dc->vm86 = (flags >> VM_SHIFT) & 1;
+    dc->cpl = (flags >> HF_CPL_SHIFT) & 3;
+    dc->iopl = (flags >> IOPL_SHIFT) & 3;
+    dc->tf = (flags >> TF_SHIFT) & 1;
+    dc->cc_op = CC_OP_DYNAMIC;
+    dc->cc_op_dirty = false;
+    dc->cs_base = cs_base;
+    dc->popl_esp_hack = 0;
+    /* select memory access functions */
+    dc->mem_index = 0;
+    dc->mem_index = cpu_mmu_index(env, false);
+    dc->cpuid_features = env->features[FEAT_1_EDX];
+    dc->cpuid_ext_features = env->features[FEAT_1_ECX];
+    dc->cpuid_ext2_features = env->features[FEAT_8000_0001_EDX];
+    dc->cpuid_ext3_features = env->features[FEAT_8000_0001_ECX];
+    dc->cpuid_7_0_ebx_features = env->features[FEAT_7_0_EBX];
+    dc->cpuid_xsave_features = env->features[FEAT_XSAVE];
+//...
+    /* init CPUState */
+    cpu_common_initfn(uc, cs);
+//...
+    /* realize X86CPU */
+    x86_cpu_realizefn(uc, cs); // <== init featuring here
+//...
+
+}
+
+// init CPU
+X86CPU *cpu_x86_init(struct uc_struct *uc)
+{
+    X86CPU *cpu;
+    CPUState *cs;
+    CPUClass *cc;
+    X86CPUClass *xcc;
+    //...
+}
+
+void cpu_common_initfn(struct uc_struct *uc, CPUState *cs)
+{
+    CPUState *cpu = CPU(cs);
+
+    cpu->cpu_index = UNASSIGNED_CPU_INDEX;
+    cpu->cluster_index = UNASSIGNED_CLUSTER_INDEX;
+    /* *-user doesn't have configurable SMP topology */
+    /* the default value is changed by qemu_init_vcpu() for softmmu */
+    cpu->nr_cores = 1;
+    cpu->nr_threads = 1;
+
+    QTAILQ_INIT(&cpu->breakpoints);
+    QTAILQ_INIT(&cpu->watchpoints);
+
+    /* cpu_exec_initfn(cpu); */
+    cpu->num_ases = 1;
+    cpu->as = &(cpu->uc->address_space_memory);
+    cpu->memory = cpu->uc->system_memory;
+}
+
+
+// set expand features
+    x86_cpu_expand_features(cpu);
+
+    x86_cpu_filter_features(cpu, cpu->check_cpuid || cpu->enforce_cpuid);
+
+
+
+/* Expand CPU configuration data, based on configured features
+ * and host/accelerator capabilities when appropriate.
+ */
+static void x86_cpu_expand_features(X86CPU *cpu)
+{
+    CPUX86State *env = &cpu->env;
+    FeatureWord w;
+
+    /*TODO: Now cpu->max_features doesn't overwrite features
+     * set using QOM properties, and we can convert
+     * plus_features & minus_features to global properties
+     * inside x86_cpu_parse_featurestr() too.
+     */
+    if (cpu->max_features) {
+        for (w = 0; w < FEATURE_WORDS; w++) {
+            /* Override only features that weren't set explicitly
+             * by the user.
+             */
+            env->features[w] |=
+                x86_cpu_get_supported_feature_word(w, cpu->migratable) &
+                ~env->user_features[w] & \
+                ~feature_word_info[w].no_autoenable_flags;
+        }
+    }
+//...
+}
+
+static void x86_cpu_initfn(struct uc_struct *uc, CPUState *obj)
+{
+    X86CPU *cpu = X86_CPU(obj);
+    X86CPUClass *xcc = X86_CPU_GET_CLASS(obj);
+    CPUX86State *env = &cpu->env;
+
+    env->nr_dies = 1;
+    env->nr_nodes = 1;
+    cpu_set_cpustate_pointers(cpu);
+    env->uc = uc;
+
+    if (xcc->model) {
+        x86_cpu_load_model(cpu, xcc->model);
+    }
+}
+```
+
+About:
+
+To enable specific features in FEAT_1_ECX (CPUID function 1, ECX register) on an AMD Linux system, you typically need to work with the CPU's Model-Specific Registers (MSRs) or use system calls

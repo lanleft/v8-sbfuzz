@@ -713,7 +713,7 @@ static void tcg_out_sib_offset(TCGContext *s, int r, int rm, int index,
                the 32-bit-mode absolute addressing encoding.  */
             intptr_t pc = (intptr_t)s->code_ptr + 5 + ~rm;
             intptr_t disp = offset - pc;
-            // printf(" ###### tcg_out_sib_offset: pc=%lx, disp=%lx, offset=%lx\n", pc, disp, offset);
+            printf(" ###### tcg_out_sib_offset: pc=%lx, disp=%lx, offset=%lx\n", pc, disp, offset);
             if (disp == (int32_t)disp) {
                 tcg_out8(s, (LOWREGMASK(r) << 3) | 5);
                 tcg_out32(s, disp);
@@ -1838,7 +1838,8 @@ static bool tcg_out_qemu_ld_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
     tcg_insn_unit **label_ptr = &l->label_ptr[0];
     int rexw = (l->type == TCG_TYPE_I64 ? P_REXW : 0);
 
-    printf("### tcg_out_qemu_ld_slow_path called, opc: %x\n", opc);
+    // printf("### tcg_out_qemu_ld_slow_path called, opc: %x s->code_ptr : 0x%lx\n", opc, s->code_ptr );
+    // if (s->code_ptr == 0x7fffb79e2345) __builtin_trap();
     /* resolve label address */
     tcg_patch32(label_ptr[0], s->code_ptr - label_ptr[0] - 4);
     if (TARGET_LONG_BITS > TCG_TARGET_REG_BITS) {

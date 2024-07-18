@@ -99,10 +99,10 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
     // print disassemply
     if (tracing) {
         unsigned char code[16] = {0};
-        if (address == 0x555556ca2233) address = 0x0000555555c48389;
+        // if (address == 0x555556ca2233) address = 0x0000555555c48389;
         // address = 0x555555a2a000;
         uc_mem_read(uc, address, code, size);
-        // printf("code:\n");
+        // printf("size: %d\n", size);
         // for (int i = 0; i < size; i++) {
         //     printf("    0x%"PRIx64 ": %02x\n", address + i, code[i]);
         // }
@@ -115,6 +115,17 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
         count = cs_disasm(handle, code, size, address, 0, &insn);
         if (count > 0) {
             snprintf(asm_buf, sizeof(asm_buf), "%s %s", insn[0].mnemonic, insn[0].op_str);
+
+            // hooking instruction 
+            // Check if it's a roundsd instruction => replace with NOP
+            if (strcmp(insn[0].mnemonic, "roundsd") == 0) {
+                printf("Replacing ROUNDSD at 0x%" PRIx64 " with NOP\n", address);
+
+                // Replace with NOP (0x90)
+                memset(code, 0x90, size);
+                uc_mem_write(uc, address, code, size);
+            }
+
             cs_free(insn, count);
         } else {
             snprintf(asm_buf, sizeof(asm_buf), "invalid");
@@ -158,6 +169,18 @@ static bool place_input_callback(
 uc_engine* init_unicorn(const char* context_dir) {
     uc_engine* uc;
     load_context(&uc, context_dir);
+    
+    // enable some features on cpu 
+
+
+    // setup value for fs:0x28
+    uc_mem_map(uc, 0, 0x2000, UC_PROT_ALL);
+    uint8_t a[8] = "\x00\x2b\x9b\x82\x26\xdf\xc6\x87";
+    uc_mem_write(uc, 0x28, a, 8); // canary 
+
+
+
+
     return uc;
 }
 

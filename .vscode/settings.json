@@ -6,6 +6,9 @@
         "inttypes.h": "c",
         "valarray": "c",
         "regex": "c",
-        "format": "c"
+        "format": "c",
+        "mips.h": "c",
+        "sparc.h": "c",
+        "riscv.h": "c"
     }
 }
