@@ -28,3 +28,4 @@ sandbox_fuzzer/fuzz_in
 sandbox_fuzzer/cov_report
 
 AFLplusplus/unicorn_mode/samples/c/UnicornContext*
+sandbox_fuzzer/UnicornContext*
