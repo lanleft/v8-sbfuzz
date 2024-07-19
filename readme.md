@@ -807,6 +807,7 @@ PEXTRB, PEXTRD, PEXTRQ: Extract Byte/Dword/Qword
 
 These instructions significantly enhanced SIMD capabilities, particularly for multimedia processing, 3D graphics, scientific computations, and general-purpose computing on GPUs (GPGPU) applications.
 
+
 **translate.c is the most important**
 
 
@@ -846,13 +847,62 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
     dc->cpuid_7_0_ebx_features = env->features[FEAT_7_0_EBX];
     dc->cpuid_xsave_features = env->features[FEAT_XSAVE];
 //...
+}
+X86CPU *cpu_x86_init(struct uc_struct *uc)
+{
+    X86CPU *cpu;
+    CPUState *cs;
+    CPUClass *cc;
+    X86CPUClass *xcc;
+
+    cpu = calloc(1, sizeof(*cpu));
     /* init CPUState */
     cpu_common_initfn(uc, cs);
 //...
     /* realize X86CPU */
     x86_cpu_realizefn(uc, cs); // <== init featuring here
 //...
+    /* init X86CPUModel */
+    /* Ignore X86CPUVersion, X86CPUVersionDefinition.
+       we do not need so many cpu types and their property.
+       version: more typename. x86_cpu_versioned_model_name().
+       alias: more property. */
+    xcc = &cpu->cc;
+    xcc->model = calloc(1, sizeof(*(xcc->model)));
+    if (xcc->model == NULL) {
+        free(cpu);
+        return NULL;
+    }
 
+    xcc->model->version = CPU_VERSION_AUTO;
+    xcc->model->cpudef = &builtin_x86_defs[uc->cpu_model];
+
+    if (xcc->model->cpudef == NULL) {
+        free(xcc->model);
+        free(cpu);
+        return NULL;
+    }
+
+}
+
+/* Load data from X86CPUDefinition into a X86CPU object
+ */
+static void x86_cpu_load_model(X86CPU *cpu, X86CPUModel *model)
+{
+    X86CPUDefinition *def = model->cpudef;
+    CPUX86State *env = &cpu->env;
+    FeatureWord w;
+
+    env->cpuid_min_level = def->level;
+    env->cpuid_xlevel = def->xlevel;
+    x86_cpuid_version_set_family(cpu, def->family);
+    x86_cpuid_version_set_model(cpu, def->model);
+    x86_cpuid_version_set_stepping(cpu, def->stepping);
+    x86_cpuid_set_model_id(cpu, def->model_id);
+    for (w = 0; w < FEATURE_WORDS; w++) {
+        env->features[w] = def->features[w];
+    }
+    //...
 }
 
 // init CPU
