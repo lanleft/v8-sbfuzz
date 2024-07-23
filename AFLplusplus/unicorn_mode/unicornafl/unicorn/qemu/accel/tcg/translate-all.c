@@ -1691,6 +1691,26 @@ tb_link_page(struct uc_struct *uc, TranslationBlock *tb, tb_page_addr_t phys_pc,
 
     return tb;
 }
+static void dump_reg_tmp(TCGContext *s) {
+
+    // #ifdef CONFIG_DEBUG_TCG
+    static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
+        "%rax", "%rcx", "%rdx", "%rbx", "%rsp", "%rbp", "%rsi", "%rdi",
+        "%r8",  "%r9",  "%r10", "%r11", "%r12", "%r13", "%r14", "%r15",
+        "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
+        "%xmm8", "%xmm9", "%xmm10", "%xmm11",
+        "%xmm12", "%xmm13", "%xmm14", "%xmm15"
+    };
+
+    char buf[64];
+    // dump registers
+    for(int i = 0; i < 16; i++) {
+        if (s->cpu_regs[i] != NULL) {
+            printf("%s: 0x%lx\n", 
+                   tcg_target_reg_names[i], s->cpu_regs[i]);
+        }
+    }
+}
 
 /* Called with mmap_lock held for user mode emulation.  */
 TranslationBlock *tb_gen_code(CPUState *cpu,
@@ -1762,6 +1782,12 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     gen_intermediate_code(cpu, tb, max_insns);
     UC_TRACE_END(UC_TRACE_TB_TRANS, "[uc] translate tb 0x%" PRIx64 ": ", tb->pc);
     tcg_ctx->cpu = NULL;
+
+    // // dump regs
+    // if (tb->pc == 0x555555c95330){
+    //     printf(">>>>> dump_reg_tmp\n");
+    //     dump_reg_tmp(tcg_ctx);
+    // }
 
     /* generate machine code */
     tb->jmp_reset_offset[0] = TB_JMP_RESET_OFFSET_INVALID;

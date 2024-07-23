@@ -94,40 +94,73 @@ static void load_context(uc_engine** uc, const char* context_dir) {
 //     // printf(">>> Tracing basic block at 0x%"PRIx64 ", block size = 0x%x\n", address, size);
 // }
 
+// hook function avx2
+
+#define MEMSET_ADDR 0x555556ec7940
+
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
 
     uint64_t rip;
+    uint64_t rdi, rsi, rdx, rax, rsp;
+    uint64_t new_rip ;
+    unsigned char tmp_data[0x100] = {0};
 
     switch (address){
         case 0x7ffff7dc5915:
             printf("####  Hooking address 0x7ffff7dc5915\n");
-            dump_registers(uc);
-            unsigned char rdi_data[0x20] = {0};
-            uint64_t rdi_value;
-            uc_reg_read(uc, UC_X86_REG_RDI, &rdi_value);
-
-            printf("\t rdi_value: 0x%"PRIx64 "\n", rdi_value);
-            uc_mem_read(uc, rdi_value, rdi_data, 0x20);
             uint32_t eax_value = 0;
-            uint64_t rax_value = 0;
-            uc_reg_read(uc, UC_X86_REG_RAX, &rax_value);
-            eax_value = rax_value & 0xffffffff;
-            printf("\t eax_value: 0x%x\n", eax_value);
+            uc_reg_read(uc, UC_X86_REG_RDI, &rdi);
+            printf("\t rdi: 0x%"PRIx64 "\n", rdi);
+            uc_mem_read(uc, rdi, tmp_data, 0x20);
+            
+            // uint64_t rax_value = 0;
+            // uc_reg_read(uc, UC_X86_REG_RAX, &rax_value);
+            eax_value = 1 << 31;
+            printf("\t before ymm eax_value: 0x%x\n", eax_value);
 
             for (int i=0; i<0x20; i++){
-                if(rdi_data[i] == 0){
+                if(tmp_data[i] == 0){
                     eax_value |= 1 << i;
                 } 
             }
-            printf("\t eax: 0x%x\n", eax_value);
+            printf("\t after ymm eax_value: 0x%x\n", eax_value);
             uc_reg_write(uc, UC_X86_REG_RAX, &eax_value);
             // add rip by 8
             uc_reg_read(uc, UC_X86_REG_RIP, &rip);
-            uint64_t new_rip = rip + 8;
+            new_rip = rip + 8;
             uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
             printf("Skipped 2 instructions at 0x7ffff7dc5915. New RIP: 0x%" PRIx64 "\n", new_rip);
 
             break;
+        case 0x7ffff7cd711a:
+            // dump_registers(uc);
+            rax = 0x555556fb1010;
+            uc_reg_write(uc, UC_X86_REG_RAX, &rax);
+            new_rip = 0x7ffff7cd711f;
+            uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
+            break;
+
+        case MEMSET_ADDR:
+            uc_reg_read(uc, UC_X86_REG_RDI, &rdi);
+            uc_reg_read(uc, UC_X86_REG_RSI, &rsi);
+            uc_reg_read(uc, UC_X86_REG_RDX, &rdx);
+            uint8_t memset_byte = rsi & 0xff;
+            for (int i=0; i<rdx; i++){
+                uc_mem_write(uc, rdi+i, &memset_byte, 1);
+            }
+            printf(">>> memset(0x%"PRIx64 ", 0x%"PRIx64 ", 0x%"PRIx64 ")\n", rdi, rsi, rdx);
+
+            uc_reg_read(uc, UC_X86_REG_RSP, &rsp);
+            // read 8 bytes at rsp 
+            uc_mem_read(uc, rsp, &new_rip, 8);
+            printf("\t new_rip: 0x%"PRIx64 "\n", new_rip);
+            uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
+
+            break;
+        // case 0x555555c84b85:
+        //     dump_registers(uc);
+        //     break;
+
         default:
             break;
     }
@@ -196,7 +229,9 @@ uc_engine* init_unicorn(const char* context_dir) {
     uc_mem_map(uc, 0, 0x2000, UC_PROT_ALL);
     uint8_t a[8] = "\x00\x2b\x9b\x82\x26\xdf\xc6\x87";
     uc_mem_write(uc, 0x28, a, 8); // canary 
-
+    // mov 0x7ffff7c3bc80 to fs:0x0
+    memcpy(a, "\x80\xbc\xc3\xf7\xff\x7f\x00\x00", 8);
+    uc_mem_write(uc, 0, a, 8); // canary
 
 
 
@@ -228,15 +263,12 @@ int main(int argc, char **argv, char **envp) {
     // ======================= load context ===============================
 
     // Set the program counter to the start of the code
-    uint64_t start_address = 0x555556c19100;      // address of entry point of main()
+    uint64_t start_address = 0x555556ca3c8b;      // address of entry point of main()
     uint64_t end_address = 0xff5556c19100; // Address of last instruction in main()
 
     // If we want tracing output, set the callbacks here
     uc_hook hooks[2];
     uc_hook_add(uc, &hooks[0], UC_HOOK_CODE, hook_code, NULL, start_address, end_address);
-
-    // Set up rip
-    uc_reg_write(uc, UC_X86_REG_RIP, &start_address); // Set the instruction pointer back
 
     // start fuzzing
     printf("Starting to fuzz...\n");

@@ -986,7 +986,6 @@ static void x86_cpu_initfn(struct uc_struct *uc, CPUState *obj)
     }
 }
 ```
-
 About:
 
 To enable specific features in FEAT_1_ECX (CPUID function 1, ECX register) on an AMD Linux system, you typically need to work with the CPU's Model-Specific Registers (MSRs) or use system calls
@@ -1095,3 +1094,37 @@ Output:
 
 ```
 
+
+### Solution
+
+Disable features 
+
+```cpp
+void CpuFeatures::ProbeImpl(bool cross_compile) {
+  base::CPU cpu;
+  CHECK(cpu.has_sse2());  // SSE2 support is mandatory.
+  CHECK(cpu.has_cmov());  // CMOV support is mandatory.
+
+  // Only use statically determined features for cross compile (snapshot).
+  if (cross_compile) return;
+
+  if (cpu.has_sse42()) SetSupported(SSE4_2);
+  if (cpu.has_sse41()) SetSupported(SSE4_1);
+  if (cpu.has_ssse3()) SetSupported(SSSE3);
+  if (cpu.has_sse3()) SetSupported(SSE3);
+  if (cpu.has_avx() && cpu.has_osxsave() && OSHasAVXSupport()) {
+    SetSupported(AVX);
+    if (cpu.has_avx2()) SetSupported(AVX2);
+    if (cpu.has_fma3()) SetSupported(FMA3);
+  }
+
+  if (cpu.has_bmi1() && v8_flags.enable_bmi1) SetSupported(BMI1);
+  if (cpu.has_bmi2() && v8_flags.enable_bmi2) SetSupported(BMI2);
+  if (cpu.has_lzcnt() && v8_flags.enable_lzcnt) SetSupported(LZCNT);
+  if (cpu.has_popcnt() && v8_flags.enable_popcnt) SetSupported(POPCNT);
+  if (strcmp(v8_flags.mcpu, "auto") == 0) {
+    if (cpu.is_atom()) SetSupported(INTEL_ATOM);
+  } else if (strcmp(v8_flags.mcpu, "atom") == 0) {
+    SetSupported(INTEL_ATOM);
+  }
+```

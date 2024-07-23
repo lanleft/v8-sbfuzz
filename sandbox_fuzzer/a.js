@@ -57,8 +57,8 @@ instance.exports.func0(0n);
 
 // ===============================
 // breakpoint     keep y   0x0000555556c19100 <Builtins_MathLog>
-console.log(Math.log(10));
-// %SystemBreak();
+// console.log(Math.log(10));
+%SystemBreak();
 // find breakpoints before running func1 second time 
 // v8_write64(addrOf(instance.exports.func1)-0x30+0x18,0x4141n);
 

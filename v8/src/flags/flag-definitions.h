@@ -2121,16 +2121,16 @@ DEFINE_BOOL(code_comments, false,
 DEFINE_BOOL_READONLY(code_comments, false, "")
 #endif
 DEFINE_BOOL(enable_sse3, true, "enable use of SSE3 instructions if available")
-DEFINE_BOOL(enable_ssse3, true, "enable use of SSSE3 instructions if available")
-DEFINE_BOOL(enable_sse4_1, true,
+DEFINE_BOOL(enable_ssse3, false, "enable use of SSSE3 instructions if available")
+DEFINE_BOOL(enable_sse4_1, false,
             "enable use of SSE4.1 instructions if available")
-DEFINE_BOOL(enable_sse4_2, true,
+DEFINE_BOOL(enable_sse4_2, false,
             "enable use of SSE4.2 instructions if available")
 DEFINE_BOOL(enable_sahf, true,
             "enable use of SAHF instruction if available (X64 only)")
-DEFINE_BOOL(enable_avx, true, "enable use of AVX instructions if available")
-DEFINE_BOOL(enable_avx2, true, "enable use of AVX2 instructions if available")
-DEFINE_BOOL(enable_avx_vnni, true,
+DEFINE_BOOL(enable_avx, false, "enable use of AVX instructions if available")
+DEFINE_BOOL(enable_avx2, false, "enable use of AVX2 instructions if available")
+DEFINE_BOOL(enable_avx_vnni, false,
             "enable use of AVX-VNNI instructions if available")
 DEFINE_BOOL(enable_fma3, true, "enable use of FMA3 instructions if available")
 DEFINE_BOOL(enable_bmi1, true, "enable use of BMI1 instructions if available")
