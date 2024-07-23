@@ -1810,7 +1810,7 @@ tcg_target_ulong helper_be_ldul_mmu(CPUArchState *env, target_ulong addr,
 uint64_t helper_le_ldq_mmu(CPUArchState *env, target_ulong addr,
                            TCGMemOpIdx oi, uintptr_t retaddr)
 {
-    printf("&&&&& helper_le_ldq_mmu  addr: 0x%lx  retaddr: 0x%lx\n", addr, retaddr);
+    // printf("&&&&& helper_le_ldq_mmu  addr: 0x%lx  retaddr: 0x%lx\n", addr, retaddr);
     // if ((addr==0x28)) __builtin_trap();
     return load_helper(env, addr, oi, retaddr, MO_LEQ, false,
                        helper_le_ldq_mmu);

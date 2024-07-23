@@ -95,48 +95,67 @@ static void load_context(uc_engine** uc, const char* context_dir) {
 // }
 
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
-    // printf(">>> Tracing instruction at 0x%"PRIx64 ", instruction size = 0x%x\n", address, size);
-    // print disassemply
-    if (tracing) {
-        unsigned char code[16] = {0};
-        // if (address == 0x555556ca2233) address = 0x0000555555c48389;
-        // address = 0x555555a2a000;
-        uc_mem_read(uc, address, code, size);
-        // printf("size: %d\n", size);
-        // for (int i = 0; i < size; i++) {
-        //     printf("    0x%"PRIx64 ": %02x\n", address + i, code[i]);
-        // }
-        char asm_buf[256] = {0};
-        size_t count;
-        // use cs_disasm
-        cs_insn *insn;
-        csh handle;
-        cs_open(CS_ARCH_X86, CS_MODE_64, &handle);
-        count = cs_disasm(handle, code, size, address, 0, &insn);
-        if (count > 0) {
-            snprintf(asm_buf, sizeof(asm_buf), "%s %s", insn[0].mnemonic, insn[0].op_str);
 
-            // hooking instruction 
-            // Check if it's a roundsd instruction => replace with NOP
-            if (strcmp(insn[0].mnemonic, "roundsd") == 0) {
-                printf("Replacing ROUNDSD at 0x%" PRIx64 " with NOP\n", address);
+    uint64_t rip;
 
-                // Replace with NOP (0x90)
-                memset(code, 0x90, size);
-                uc_mem_write(uc, address, code, size);
+    switch (address){
+        case 0x7ffff7dc5915:
+            printf("####  Hooking address 0x7ffff7dc5915\n");
+            dump_registers(uc);
+            unsigned char rdi_data[0x20] = {0};
+            uint64_t rdi_value;
+            uc_reg_read(uc, UC_X86_REG_RDI, &rdi_value);
+
+            printf("\t rdi_value: 0x%"PRIx64 "\n", rdi_value);
+            uc_mem_read(uc, rdi_value, rdi_data, 0x20);
+            uint32_t eax_value = 0;
+            uint64_t rax_value = 0;
+            uc_reg_read(uc, UC_X86_REG_RAX, &rax_value);
+            eax_value = rax_value & 0xffffffff;
+            printf("\t eax_value: 0x%x\n", eax_value);
+
+            for (int i=0; i<0x20; i++){
+                if(rdi_data[i] == 0){
+                    eax_value |= 1 << i;
+                } 
             }
+            printf("\t eax: 0x%x\n", eax_value);
+            uc_reg_write(uc, UC_X86_REG_RAX, &eax_value);
+            // add rip by 8
+            uc_reg_read(uc, UC_X86_REG_RIP, &rip);
+            uint64_t new_rip = rip + 8;
+            uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
+            printf("Skipped 2 instructions at 0x7ffff7dc5915. New RIP: 0x%" PRIx64 "\n", new_rip);
 
-            cs_free(insn, count);
-        } else {
-            snprintf(asm_buf, sizeof(asm_buf), "invalid");
-            
-        }
-        // printf("asm:\n");
-        printf("    0x%"PRIx64 ": %s\n", address, asm_buf);
-        // if (address == 0x555556ca2233){
-        //     dump_registers(uc);
-        // }
+            break;
+        default:
+            break;
     }
+
+    unsigned char code[16] = {0};
+    uc_mem_read(uc, address, code, size);
+    // printf("size: %d\n", size);
+    // for (int i = 0; i < size; i++) {
+    //     printf("    0x%"PRIx64 ": %02x\n", address + i, code[i]);
+    // }
+    char asm_buf[256] = {0};
+    size_t count;
+
+    // use cs_disasm
+    cs_insn *insn;
+    csh handle;
+    cs_open(CS_ARCH_X86, CS_MODE_64, &handle);
+    count = cs_disasm(handle, code, size, address, 0, &insn);
+    if (count > 0) {
+        snprintf(asm_buf, sizeof(asm_buf), "%s %s", insn[0].mnemonic, insn[0].op_str);
+        cs_free(insn, count);
+    } else {
+        snprintf(asm_buf, sizeof(asm_buf), "invalid");
+        
+    }
+    // printf("asm:\n");
+    printf("    0x%"PRIx64 ": %s\n", address, asm_buf);
+
 
 }
 

@@ -25,6 +25,11 @@ if (UCAFL_NO_LOG)
     target_compile_options(unicornafl PUBLIC -DUCAFL_NO_LOG)
 endif()
 
+if (CONFIG_DEBUG_TCG)
+    message("CONFIG_DEBUG_TCG is enable!")
+    target_compile_options(unicornafl PUBLIC -DCONFIG_DEBUG_TCG=on)
+endif()
+
 find_package(PkgConfig)
 if (PKG_CONFIG_FOUND)
     pkg_check_modules(UNICORN unicorn>=2.0.0)

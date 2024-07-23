@@ -990,3 +990,108 @@ static void x86_cpu_initfn(struct uc_struct *uc, CPUState *obj)
 About:
 
 To enable specific features in FEAT_1_ECX (CPUID function 1, ECX register) on an AMD Linux system, you typically need to work with the CPU's Model-Specific Registers (MSRs) or use system calls
+
+**Errors defined**
+
+```cpp
+// All type of errors encountered by Unicorn API.
+// These are values returned by uc_errno()
+typedef enum uc_err {
+    UC_ERR_OK = 0,         // No error: everything was fine
+    UC_ERR_NOMEM,          // Out-Of-Memory error: uc_open(), uc_emulate()
+    UC_ERR_ARCH,           // Unsupported architecture: uc_open()
+    UC_ERR_HANDLE,         // Invalid handle
+    UC_ERR_MODE,           // Invalid/unsupported mode: uc_open()
+    UC_ERR_VERSION,        // Unsupported version (bindings)
+    UC_ERR_READ_UNMAPPED,// 6  // Quit emulation due to READ on unmapped memory:
+                           // uc_emu_start()
+    UC_ERR_WRITE_UNMAPPED, // Quit emulation due to WRITE on unmapped memory:
+                           // uc_emu_start()
+    UC_ERR_FETCH_UNMAPPED, // Quit emulation due to FETCH on unmapped memory:
+                           // uc_emu_start()
+    UC_ERR_HOOK,           // Invalid hook type: uc_hook_add()
+    UC_ERR_INSN_INVALID, // 10  // Quit emulation due to invalid instruction:
+                           // uc_emu_start()
+    UC_ERR_MAP,            // Invalid memory mapping: uc_mem_map()
+    UC_ERR_WRITE_PROT,     // Quit emulation due to UC_MEM_WRITE_PROT violation:
+                           // uc_emu_start()
+    UC_ERR_READ_PROT,      // Quit emulation due to UC_MEM_READ_PROT violation:
+                           // uc_emu_start()
+    UC_ERR_FETCH_PROT,     // Quit emulation due to UC_MEM_FETCH_PROT violation:
+                           // uc_emu_start()
+    UC_ERR_ARG, // Inavalid argument provided to uc_xxx function (See specific
+                // function API)
+    UC_ERR_READ_UNALIGNED,  // Unaligned read
+    UC_ERR_WRITE_UNALIGNED, // Unaligned write
+    UC_ERR_FETCH_UNALIGNED, // Unaligned fetch
+    UC_ERR_HOOK_EXIST,      // hook for this event already existed
+    UC_ERR_RESOURCE,        // Insufficient resource: uc_emu_start()
+    UC_ERR_EXCEPTION,       // Unhandled CPU exception
+    UC_ERR_OVERFLOW,        // Provided buffer is not large enough: uc_reg_*2()
+} uc_err;
+
+```
+
+SIMD - simple instruction multi data
+
+```cpp
+static void decode_opc(CPUMIPSState *env, DisasContext *ctx)
+{
+    TCGContext *tcg_ctx = ctx->uc->tcg_ctx;
+    int32_t offset;
+    int rs, rt, rd, sa;
+    uint32_t op, op1;
+    int16_t imm;
+    //...
+    case OPC_CP2:
+        check_insn(ctx, INSN_LOONGSON2F);
+        /* Note that these instructions use different fields.  */
+        gen_loongson_multimedia(ctx, sa, rd, rt);
+        break;
+
+/* Loongson multimedia instructions */
+static void gen_loongson_multimedia(DisasContext *ctx, int rd, int rs, int rt)
+{
+    TCGContext *tcg_ctx = ctx->uc->tcg_ctx;
+    uint32_t opc, shift_max;
+    TCGv_i64 t0, t1;
+    TCGCond cond;
+    case OPC_PCMPEQB:
+        gen_helper_pcmpeqb(tcg_ctx, t0, t0, t1);
+        break;
+}
+
+static void gen_sse(CPUX86State *env, DisasContext *s, int b,
+                    target_ulong pc_start, int rex_r)
+{
+    // printf("########33 gen_sse b: 0x%x\n", b);  
+    TCGContext *tcg_ctx = s->uc->tcg_ctx;
+   modrm = x86_ldub_code(env, s);
+    reg = ((modrm >> 3) & 7);
+    if (is_xmm)
+        reg |= rex_r;
+    mod = (modrm >> 6) & 3;
+    /* VEX.L (256 bit) encodings are not supported */
+    if (s->vex_l != 0) {
+        printf("\t#### gen_sse s->vex_l: 0x%x \n\tVEX.L (256 bit) encodings are not supported\n", s->vex_l);
+        goto illegal_op; // perhaps it should be unknown_op?
+    }
+//...
+}
+
+```
+
+Output:
+
+```bash
+[uc] exec tb 0x7ffff7dc5900: 36.001000us
+	######## gen_sse b: 0x74 b1: 0x1 sse_fn_epp: 0x55555684c480
+	#### gen_sse s->vex_l: 0x1 
+	VEX.L (256 bit) encodings are not supported
+	######### b: 0x74 gen_sse illegal_op
+[uc] translate tb 0x7ffff7dc5915: 17.078000us
+    0x7ffff7dc5915: vpcmpeqb ymm1, ymm0, ymmword ptr [rdi]
+>>> invalid memory accessed, STOP !!
+
+```
+

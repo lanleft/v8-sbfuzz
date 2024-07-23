@@ -9,6 +9,11 @@
         "format": "c",
         "mips.h": "c",
         "sparc.h": "c",
-        "riscv.h": "c"
+        "riscv.h": "c",
+        "tcg-op.h": "c",
+        "typeindex": "c",
+        "typeinfo": "c",
+        "*.def": "c",
+        "rope": "c"
     }
 }

@@ -2813,7 +2813,7 @@ static bool liveness_pass_2(TCGContext *s)
     return changes;
 }
 
-#ifdef CONFIG_DEBUG_TCG
+// #ifdef CONFIG_DEBUG_TCG
 static void dump_regs(TCGContext *s)
 {
     TCGTemp *ts;
@@ -2883,7 +2883,7 @@ static void check_regs(TCGContext *s)
         }
     }
 }
-#endif
+// #endif
 
 static void temp_allocate_frame(TCGContext *s, TCGTemp *ts)
 {
@@ -3846,6 +3846,7 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb)
             break;
         }
 #ifdef CONFIG_DEBUG_TCG
+        printf("########## Enable CONFIG_DEBUG_TCG ##########\n");
         check_regs(s);
 #endif
 
@@ -3883,6 +3884,9 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb)
 
     /* flush instruction cache */
     flush_icache_range((uintptr_t)s->code_buf, (uintptr_t)s->code_ptr);
+
+    // dump RIP
+    
 
     return tcg_current_code_size(s);
 }

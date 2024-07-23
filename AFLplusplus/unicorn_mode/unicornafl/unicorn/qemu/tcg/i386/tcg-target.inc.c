@@ -28,7 +28,7 @@
 #include <intrin.h>
 #endif
 
-#ifdef CONFIG_DEBUG_TCG
+// #ifdef CONFIG_DEBUG_TCG
 static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
 #if TCG_TARGET_REG_BITS == 64
     "%rax", "%rcx", "%rdx", "%rbx", "%rsp", "%rbp", "%rsi", "%rdi",
@@ -42,7 +42,7 @@ static const char * const tcg_target_reg_names[TCG_TARGET_NB_REGS] = {
     "%xmm12", "%xmm13", "%xmm14", "%xmm15",
 #endif
 };
-#endif
+// #endif
 
 static const int tcg_target_reg_alloc_order[] = {
 #if TCG_TARGET_REG_BITS == 64

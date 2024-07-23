@@ -554,7 +554,7 @@ int cpu_exec(struct uc_struct *uc, CPUState *cpu)
     // rcu_read_lock();
 
     cc->cpu_exec_enter(cpu);
-    printf("111 uc->invalid_error = %d\n", uc->invalid_error);
+    // printf("111 uc->invalid_error = %d\n", uc->invalid_error);
 
     /* Calculate difference between guest clock and host clock.
      * This delay includes the delay of the last cycle, so
@@ -582,7 +582,7 @@ int cpu_exec(struct uc_struct *uc, CPUState *cpu)
 
         assert_no_pages_locked();
     }
-    printf("222 uc->invalid_error = %d\n", uc->invalid_error);
+    // printf("222 uc->invalid_error = %d\n", uc->invalid_error);
 
     /* if an exception is pending, we execute it here */
     while (!cpu_handle_exception(cpu, &ret)) {
@@ -607,7 +607,7 @@ int cpu_exec(struct uc_struct *uc, CPUState *cpu)
             }
 
             tb = tb_find(cpu, last_tb, tb_exit, cflags);
-            printf("\t============> tb_find done tb->pc = 0x%" PRIx64 "\n", tb->pc);
+            // printf("\t============> tb_find done tb->pc = 0x%" PRIx64 "\n", tb->pc);
             if (unlikely(cpu->exit_request)) {
                 continue;
             }
