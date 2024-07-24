@@ -187,19 +187,13 @@ class Worker : public std::enable_shared_from_this<Worker> {
  public:
   static constexpr i::ExternalPointerTag kManagedTag = i::kGenericManagedTag;
 
-  explicit Worker(const char* script);
+  explicit Worker(Isolate* parent_isolate, const char* script);
   ~Worker();
 
   // Post a message to the worker. The worker will take ownership of the
   // SerializationData. This function should only be called by the thread that
   // created the Worker.
   void PostMessage(std::unique_ptr<SerializationData> data);
-  // Get the onmessage handler from the worker.
-  Local<Value> GetOnMessage(Isolate* isolate) const;
-  // Set the onmessage handler on the worker.
-  void SetOnMessage(Isolate* isolate, Local<Value> callback);
-  // Clear the onmessage handler on the worker.
-  void ClearOnMessage(Isolate* isolate);
   // Synchronously retrieve messages from the worker's outgoing message queue.
   // If there is no message in the queue, block until a message is available.
   // If there are no messages in the queue and the worker is no longer running,
@@ -269,9 +263,6 @@ class Worker : public std::enable_shared_from_this<Worker> {
 
   i::ParkingSemaphore out_semaphore_{0};
   SerializationDataQueue out_queue_;
-  Isolate* on_message_isolate_ = nullptr;
-  Global<Context> on_message_context_;
-  Global<Value> on_message_callback_;
 
   base::Thread* thread_ = nullptr;
   char* script_;
@@ -291,6 +282,7 @@ class Worker : public std::enable_shared_from_this<Worker> {
   // The isolate should only be accessed by the worker itself, or when holding
   // the worker_mutex_ and after checking the worker state.
   Isolate* isolate_ = nullptr;
+  Isolate* parent_isolate_;
 
   // Only accessed by the worker thread.
   Global<Context> context_;
@@ -350,8 +342,13 @@ class PerIsolateData {
   void SetDomNodeCtor(Local<FunctionTemplate> ctor);
 
   bool HasRunningSubscribedWorkers();
-  void RegisterSubscribedWorker(std::shared_ptr<Worker> worker);
-  void UnregisterSubscribedWorker(std::shared_ptr<Worker> worker);
+  void RegisterWorker(std::shared_ptr<Worker> worker);
+  void SubscribeWorkerOnMessage(const std::shared_ptr<Worker>& worker,
+                                Local<Context> context,
+                                Local<Function> callback);
+  std::pair<Local<Context>, Local<Function>> GetWorkerOnMessage(
+      const std::shared_ptr<Worker>& worker) const;
+  void UnregisterWorker(const std::shared_ptr<Worker>& worker);
 
  private:
   friend class Shell;
@@ -371,7 +368,14 @@ class PerIsolateData {
 #endif
   Global<FunctionTemplate> test_api_object_ctor_;
   Global<FunctionTemplate> dom_node_ctor_;
-  std::set<std::shared_ptr<Worker>> subscribed_workers_;
+  // Track workers and their callbacks separately, so that we know both which
+  // workers are still registered, and which of them have callbacks. We can't
+  // rely on Shell::running_workers_ or worker.IsTerminated(), because these are
+  // set concurrently and may race with callback subscription.
+  std::set<std::shared_ptr<Worker>> registered_workers_;
+  std::map<std::shared_ptr<Worker>,
+           std::pair<Global<Context>, Global<Function>>>
+      worker_message_callbacks_;
 
   int RealmIndexOrThrow(const v8::FunctionCallbackInfo<v8::Value>& info,
                         int arg_offset);
@@ -698,6 +702,15 @@ class Shell : public i::AllStatic {
   // the "mkdir -p" command.
   static void MakeDirectory(const v8::FunctionCallbackInfo<v8::Value>& info);
   static void RemoveDirectory(const v8::FunctionCallbackInfo<v8::Value>& info);
+
+#ifdef V8_ENABLE_CONTINUATION_PRESERVED_EMBEDDER_DATA
+  static void GetContinuationPreservedEmbedderData(
+      const v8::FunctionCallbackInfo<v8::Value>& info);
+#endif  // V8_ENABLE_CONTINUATION_PRESERVER_EMBEDDER_DATA
+
+  static void GetExtrasBindingObject(
+      const v8::FunctionCallbackInfo<v8::Value>& info);
+
   static MaybeLocal<Promise> HostImportModuleDynamically(
       Local<Context> context, Local<Data> host_defined_options,
       Local<Value> resource_name, Local<String> specifier,

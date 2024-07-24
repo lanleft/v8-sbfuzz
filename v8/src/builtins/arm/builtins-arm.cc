@@ -554,13 +554,11 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
   __ ldr(r7, MemOperand(r4));
   __ str(r9, MemOperand(r4));
 
-  __ Move(r4,
-          ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(r4, IsolateFieldId::kFastCCallCallerFP);
   __ ldr(r6, MemOperand(r4));
   __ str(r9, MemOperand(r4));
 
-  __ Move(r4,
-          ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+  __ LoadIsolateField(r4, IsolateFieldId::kFastCCallCallerPC);
   __ ldr(r5, MemOperand(r4));
   __ str(r9, MemOperand(r4));
 
@@ -648,12 +646,10 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
 
   // Restore the top frame descriptors from the stack.
   __ ldm(ia_w, sp, {r3, r4, r5});
-  __ Move(scratch,
-          ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(scratch, IsolateFieldId::kFastCCallCallerFP);
   __ str(r4, MemOperand(scratch));
 
-  __ Move(scratch,
-          ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+  __ LoadIsolateField(scratch, IsolateFieldId::kFastCCallCallerPC);
   __ str(r3, MemOperand(scratch));
 
   __ Move(scratch, ExternalReference::Create(IsolateAddressId::kCEntryFPAddress,
@@ -2989,9 +2985,13 @@ void LoadTargetJumpBuffer(MacroAssembler* masm, Register target_continuation,
   LoadJumpBuffer(masm, target_jmpbuf, false, tmp);
 }
 
-void SyncStackLimit(MacroAssembler* masm, const Register& keep1,
-                    const Register& keep2 = no_reg,
-                    const Register& keep3 = no_reg) {
+// Updates the stack limit to match the new active stack.
+// Pass the {finished_continuation} argument to indicate that the stack that we
+// are switching from returned, and in this case return its memory to the stack
+// pool.
+void SwitchStacks(MacroAssembler* masm, Register finished_continuation,
+                  const Register& keep1, const Register& keep2 = no_reg,
+                  const Register& keep3 = no_reg) {
   using ER = ExternalReference;
 
   __ Push(keep1);
@@ -3002,10 +3002,16 @@ void SyncStackLimit(MacroAssembler* masm, const Register& keep1,
     __ Push(keep3);
   }
 
-  {
+  if (finished_continuation != no_reg) {
+    __ PrepareCallCFunction(2);
+    FrameScope scope(masm, StackFrame::MANUAL);
+    __ Move(kCArgRegs[0], ExternalReference::isolate_address(masm->isolate()));
+    __ Move(kCArgRegs[1], finished_continuation);
+    __ CallCFunction(ER::wasm_return_switch(), 2);
+  } else {
     __ PrepareCallCFunction(1);
     FrameScope scope(masm, StackFrame::MANUAL);
-    __ Move(kCArgRegs[0], ER::isolate_address(masm->isolate()));
+    __ Move(kCArgRegs[0], ER::isolate_address());
     __ CallCFunction(ER::wasm_sync_stack_limit(), 1);
   }
 
@@ -3020,7 +3026,7 @@ void SyncStackLimit(MacroAssembler* masm, const Register& keep1,
 
 void ReloadParentContinuation(MacroAssembler* masm, Register return_reg,
                               Register return_value, Register context,
-                              Register tmp1, Register tmp2) {
+                              Register tmp1, Register tmp2, Register tmp3) {
   Register active_continuation = tmp1;
   __ LoadRoot(active_continuation, RootIndex::kActiveContinuation);
 
@@ -3051,9 +3057,9 @@ void ReloadParentContinuation(MacroAssembler* masm, Register return_reg,
          FieldMemOperand(parent, WasmContinuationObject::kJmpbufOffset));
 
   // Switch stack!
-  LoadJumpBuffer(masm, jmpbuf, false, tmp1);
+  LoadJumpBuffer(masm, jmpbuf, false, tmp3);
 
-  SyncStackLimit(masm, return_reg, return_value, context);
+  SwitchStacks(masm, active_continuation, return_reg, return_value, context);
 }
 
 void RestoreParentSuspender(MacroAssembler* masm, Register tmp1,
@@ -3348,7 +3354,7 @@ void Builtins::Generate_WasmSuspend(MacroAssembler* masm) {
   // -------------------------------------------
   // Load jump buffer.
   // -------------------------------------------
-  SyncStackLimit(masm, caller, suspender);
+  SwitchStacks(masm, no_reg, caller, suspender);
   ASSIGN_REG(jmpbuf);
   __ ldr(jmpbuf,
          FieldMemOperand(caller, WasmContinuationObject::kJmpbufOffset));
@@ -3478,7 +3484,7 @@ void Generate_WasmResumeHelper(MacroAssembler* masm, wasm::OnResume on_resume) {
   __ str(target_continuation,
          MemOperand(kRootRegister, active_continuation_offset));
 
-  SyncStackLimit(masm, target_continuation);
+  SwitchStacks(masm, no_reg, target_continuation);
 
   regs.ResetExcept(target_continuation);
 
@@ -3548,7 +3554,7 @@ void SwitchToAllocatedStack(MacroAssembler* masm, RegisterAllocator& regs,
 
   SaveState(masm, parent_continuation, scratch, suspend);
 
-  SyncStackLimit(masm, wasm_instance, wrapper_buffer);
+  SwitchStacks(masm, no_reg, wasm_instance, wrapper_buffer);
 
   FREE_REG(parent_continuation);
   // Save the old stack's fp in x9, and use it to access the parameters in
@@ -3628,6 +3634,7 @@ void SwitchBackAndReturnPromise(MacroAssembler* masm, RegisterAllocator& regs,
   __ Move(return_value, kReturnRegister0);
   DEFINE_SCOPED(tmp);
   DEFINE_SCOPED(tmp2);
+  DEFINE_SCOPED(tmp3);
   __ LoadRoot(promise, RootIndex::kActiveSuspender);
   __ LoadTaggedField(
       promise, FieldMemOperand(promise, WasmSuspenderObject::kPromiseOffset));
@@ -3637,7 +3644,7 @@ void SwitchBackAndReturnPromise(MacroAssembler* masm, RegisterAllocator& regs,
   GetContextFromRef(masm, kContextRegister, tmp);
 
   ReloadParentContinuation(masm, promise, return_value, kContextRegister, tmp,
-                           tmp2);
+                           tmp2, tmp3);
   RestoreParentSuspender(masm, tmp, tmp2);
 
   __ Move(tmp, Operand(1));
@@ -3680,10 +3687,12 @@ void GenerateExceptionHandlingLandingPad(MacroAssembler* masm,
 
   DEFINE_SCOPED(tmp);
   DEFINE_SCOPED(tmp2);
+  DEFINE_SCOPED(tmp3);
   __ ldr(kContextRegister,
          MemOperand(fp, StackSwitchFrameConstants::kRefOffset));
   GetContextFromRef(masm, kContextRegister, tmp);
-  ReloadParentContinuation(masm, promise, reason, kContextRegister, tmp, tmp2);
+  ReloadParentContinuation(masm, promise, reason, kContextRegister, tmp, tmp2,
+                           tmp3);
   RestoreParentSuspender(masm, tmp, tmp2);
 
   __ Move(tmp, Operand(1));
@@ -3832,6 +3841,7 @@ void JSToWasmWrapperHelper(MacroAssembler* masm, bool stack_switch) {
     __ str(scratch, MemOperand(thread_in_wasm_flag_addr, 0));
   }
 
+  __ Zero(MemOperand(fp, StackSwitchFrameConstants::kGCScanSlotCountOffset));
   {
     DEFINE_SCOPED(call_target);
     __ ldr(call_target,
@@ -3957,7 +3967,7 @@ void SwitchToTheCentralStackIfNeeded(MacroAssembler* masm, Register argc_input,
     __ Push(target_input);
     __ Push(argv_input);
     __ PrepareCallCFunction(2);
-    __ Move(kCArgRegs[0], ER::isolate_address(masm->isolate()));
+    __ Move(kCArgRegs[0], ER::isolate_address());
     __ Move(kCArgRegs[1], kOldSPRegister);
     __ CallCFunction(ER::wasm_switch_to_the_central_stack(), 2,
                      SetIsolateDataSlots::kNo);
@@ -3992,7 +4002,7 @@ void SwitchFromTheCentralStackIfNeeded(MacroAssembler* masm) {
   {
     __ Push(kReturnRegister0, kReturnRegister1);
     __ PrepareCallCFunction(1);
-    __ Move(kCArgRegs[0], ER::isolate_address(masm->isolate()));
+    __ Move(kCArgRegs[0], ER::isolate_address());
     __ CallCFunction(ER::wasm_switch_from_the_central_stack(), 1,
                      SetIsolateDataSlots::kNo);
     __ Pop(kReturnRegister0, kReturnRegister1);
@@ -4091,7 +4101,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
   // r0 = argc, r1 = argv, r2 = isolate, r5 = target_fun
   DCHECK_EQ(kCArgRegs[0], argc_input);
   DCHECK_EQ(kCArgRegs[1], argv);
-  __ Move(kCArgRegs[2], ER::isolate_address(masm->isolate()));
+  __ Move(kCArgRegs[2], ER::isolate_address());
   __ StoreReturnAddressAndCall(target_fun);
 
   // Result returned in r0 or r1:r0 - do not destroy these registers!
@@ -4153,7 +4163,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
     __ PrepareCallCFunction(3, 0);
     __ mov(kCArgRegs[0], Operand(0));
     __ mov(kCArgRegs[1], Operand(0));
-    __ Move(kCArgRegs[2], ER::isolate_address(masm->isolate()));
+    __ Move(kCArgRegs[2], ER::isolate_address());
     __ CallCFunction(ER::Create(Runtime::kUnwindAndFindExceptionHandler), 3,
                      SetIsolateDataSlots::kNo);
   }
@@ -4366,7 +4376,7 @@ void Builtins::Generate_CallApiCallbackImpl(MacroAssembler* masm,
   __ str(holder, MemOperand(sp, FCA::kHolderIndex * kSystemPointerSize));
 
   // kIsolate.
-  __ Move(scratch, ER::isolate_address(masm->isolate()));
+  __ Move(scratch, ER::isolate_address());
   __ str(scratch, MemOperand(sp, FCA::kIsolateIndex * kSystemPointerSize));
 
   // kContext.
@@ -4481,7 +4491,7 @@ void Builtins::Generate_CallApiGetter(MacroAssembler* masm) {
   __ LoadRoot(scratch, RootIndex::kUndefinedValue);
   __ Move(smi_zero, Smi::zero());
   __ Push(scratch, smi_zero);  // kReturnValueIndex, kHolderV2Index
-  __ Move(scratch, ER::isolate_address(masm->isolate()));
+  __ Move(scratch, ER::isolate_address());
   __ Push(scratch, holder);  // kIsolateIndex, kHolderIndex
 
   __ ldr(name_arg, FieldMemOperand(callback, AccessorInfo::kNameOffset));
@@ -4638,7 +4648,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
   __ mov(r1, Operand(static_cast<int>(deopt_kind)));
   // r2: code address or 0 already loaded.
   // r3: Fp-to-sp delta already loaded.
-  __ Move(r4, ExternalReference::isolate_address(isolate));
+  __ Move(r4, ExternalReference::isolate_address());
   __ str(r4, MemOperand(sp, 0 * kPointerSize));  // Isolate.
   // Call Deoptimizer::New().
   {
@@ -4679,7 +4689,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
     UseScratchRegisterScope temps(masm);
     Register is_iterable = temps.Acquire();
     Register zero = r4;
-    __ Move(is_iterable, ExternalReference::stack_is_iterable_address(isolate));
+    __ LoadIsolateField(is_iterable, IsolateFieldId::kStackIsIterable);
     __ mov(zero, Operand(0));
     __ strb(zero, MemOperand(is_iterable));
   }
@@ -4752,12 +4762,12 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
   // r1: Deoptimizer::input_ (FrameDescription*).
   // r2: The last output FrameDescription pointer (FrameDescription*).
 
-  // Restore double registers from the input frame description.
+  // Restore double registers from the output frame description.
   {
     UseScratchRegisterScope temps(masm);
     Register scratch = temps.Acquire();
     Register src_location = r6;
-    __ add(src_location, r1, Operand(kSimd128RegsOffset));
+    __ add(src_location, r2, Operand(kSimd128RegsOffset));
     __ RestoreFPRegsFromHeap(src_location, scratch);
   }
 
@@ -4781,9 +4791,11 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
     UseScratchRegisterScope temps(masm);
     Register is_iterable = temps.Acquire();
     Register one = r4;
-    __ Move(is_iterable, ExternalReference::stack_is_iterable_address(isolate));
+    __ push(one);  // Save the value from the output FrameDescription.
+    __ LoadIsolateField(is_iterable, IsolateFieldId::kStackIsIterable);
     __ mov(one, Operand(1));
     __ strb(one, MemOperand(is_iterable));
+    __ pop(one);  // Restore the value from the output FrameDescription.
   }
 
   // Remove sp, lr and pc.
@@ -4793,7 +4805,12 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
     Register scratch = temps.Acquire();
     __ pop(scratch);  // get continuation, leave pc on stack
     __ pop(lr);
+    Label end;
+    __ cmp(scratch, Operand::Zero());
+    __ b(eq, &end);
     __ Jump(scratch);
+    __ bind(&end);
+    __ Ret();
   }
 
   __ stop();

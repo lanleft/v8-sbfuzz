@@ -524,7 +524,7 @@ void JSFunction::EnsureClosureFeedbackCellArray(
 #endif  // V8_ENABLE_WEBASSEMBLY
 
   DirectHandle<SharedFunctionInfo> shared(function->shared(), isolate);
-  DCHECK(function->shared()->HasBytecodeArray());
+  DCHECK(shared->HasBytecodeArray());
 
   const bool has_closure_feedback_cell_array =
       (function->has_closure_feedback_cell_array() ||
@@ -554,6 +554,11 @@ void JSFunction::EnsureClosureFeedbackCellArray(
   if (function->raw_feedback_cell() == isolate->heap()->many_closures_cell()) {
     DirectHandle<FeedbackCell> feedback_cell =
         isolate->factory()->NewOneClosureCell(feedback_cell_array);
+#ifdef V8_ENABLE_LEAPTIERING
+    Tagged<BytecodeArray> bytecode = shared->GetBytecodeArray(isolate);
+    feedback_cell->initialize_dispatch_handle(isolate,
+                                              bytecode->parameter_count());
+#endif  // V8_ENABLE_LEAPTIERING
     function->set_raw_feedback_cell(*feedback_cell, kReleaseStore);
     function->SetInterruptBudget(isolate);
   } else {
@@ -642,7 +647,8 @@ void JSFunction::InitializeFeedbackCell(
       // profile and more precise code coverage.
       v8_flags.log_function_events ||
       !isolate->is_best_effort_code_coverage() ||
-      function->shared()->sparkplug_compiled();
+      function->shared()->cached_tiering_decision() !=
+          CachedTieringDecision::kPending;
 
   if (needs_feedback_vector) {
     CreateAndAttachFeedbackVector(isolate, function, is_compiled_scope);
@@ -652,7 +658,8 @@ void JSFunction::InitializeFeedbackCell(
   }
 #ifdef V8_ENABLE_SPARKPLUG
   // TODO(jgruber): Unduplicate these conditions from tiering-manager.cc.
-  if (function->shared()->sparkplug_compiled() &&
+  if (function->shared()->cached_tiering_decision() !=
+          CachedTieringDecision::kPending &&
       CanCompileWithBaseline(isolate, function->shared()) &&
       function->ActiveTierIsIgnition(isolate)) {
     if (v8_flags.baseline_batch_compilation) {
@@ -666,18 +673,27 @@ void JSFunction::InitializeFeedbackCell(
   }
 #endif  // V8_ENABLE_SPARKPLUG
 
-  if (v8_flags.profile_guided_optimization &&
-      v8_flags.profile_guided_optimization_for_empty_feedback_vector &&
-      function->has_feedback_vector() &&
-      function->feedback_vector()->length() == 0) {
+  if (v8_flags.profile_guided_optimization) {
+    // kEarlyMaglevPending implies the function has been tiered up to Maglev and
+    // has not been tiered up to Turbofan, we set kEarlyMaglev for delaying
+    // turbofan compilation only in this case.
     if (function->shared()->cached_tiering_decision() ==
-        CachedTieringDecision::kEarlyMaglev) {
-      function->MarkForOptimization(isolate, CodeKind::MAGLEV,
-                                    ConcurrencyMode::kConcurrent);
-    } else if (function->shared()->cached_tiering_decision() ==
-               CachedTieringDecision::kEarlyTurbofan) {
-      function->MarkForOptimization(isolate, CodeKind::TURBOFAN,
-                                    ConcurrencyMode::kConcurrent);
+        CachedTieringDecision::kEarlyMaglevPending) {
+      function->shared()->set_cached_tiering_decision(
+          CachedTieringDecision::kEarlyMaglev);
+    }
+    if (v8_flags.profile_guided_optimization_for_empty_feedback_vector &&
+        function->has_feedback_vector() &&
+        function->feedback_vector()->length() == 0) {
+      if (function->shared()->cached_tiering_decision() ==
+          CachedTieringDecision::kEarlyMaglev) {
+        function->MarkForOptimization(isolate, CodeKind::MAGLEV,
+                                      ConcurrencyMode::kConcurrent);
+      } else if (function->shared()->cached_tiering_decision() ==
+                 CachedTieringDecision::kEarlyTurbofan) {
+        function->MarkForOptimization(isolate, CodeKind::TURBOFAN,
+                                      ConcurrencyMode::kConcurrent);
+      }
     }
   }
 }

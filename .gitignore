@@ -14,8 +14,12 @@ core
 
 v8/out
 v8/git_bk
+v8/.git
+v8/test/test262/local-tests
+
 depot_tools/git_bk
 .cache/
+.cipd/
 
 AFLplusplus/git_bk
 

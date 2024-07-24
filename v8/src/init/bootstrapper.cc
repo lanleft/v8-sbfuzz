@@ -771,7 +771,7 @@ Handle<JSFunction> Genesis::CreateEmptyFunction() {
   DirectHandle<Script> script = factory()->NewScript(source);
   script->set_type(Script::Type::kNative);
   DirectHandle<WeakFixedArray> infos = factory()->NewWeakFixedArray(2);
-  script->set_shared_function_infos(*infos);
+  script->set_infos(*infos);
   ReadOnlyRoots roots{isolate()};
   Tagged<SharedFunctionInfo> sfi = empty_function->shared();
   sfi->set_raw_scope_info(roots.empty_function_scope_info());
@@ -2523,6 +2523,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           Builtin::kArrayIsArray, 1, true);
     SimpleInstallFunction(isolate_, array_function, "from", Builtin::kArrayFrom,
                           1, false);
+    SimpleInstallFunction(isolate(), array_function, "fromAsync",
+                          Builtin::kArrayFromAsync, 1, false);
     SimpleInstallFunction(isolate_, array_function, "of", Builtin::kArrayOf, 0,
                           false);
     SetConstructorInstanceType(isolate_, array_function,
@@ -3228,8 +3230,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     InstallFunctionWithBuiltinId(isolate_, promise_fun, "race",
                                  Builtin::kPromiseRace, 1, true);
 
-    InstallFunctionWithBuiltinId(isolate_, promise_fun, "resolve",
-                                 Builtin::kPromiseResolveTrampoline, 1, true);
+    DirectHandle<JSFunction> promise_resolve = InstallFunctionWithBuiltinId(
+        isolate_, promise_fun, "resolve", Builtin::kPromiseResolveTrampoline, 1,
+        true);
+    native_context()->set_promise_resolve(*promise_resolve);
 
     InstallFunctionWithBuiltinId(isolate_, promise_fun, "reject",
                                  Builtin::kPromiseReject, 1, true);
@@ -3939,6 +3943,9 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           Builtin::kLocalePrototypeCaseFirst, true);
       SimpleInstallGetter(isolate(), prototype, factory->collation_string(),
                           Builtin::kLocalePrototypeCollation, true);
+      SimpleInstallGetter(isolate(), prototype,
+                          factory->firstDayOfWeek_string(),
+                          Builtin::kLocalePrototypeFirstDayOfWeek, true);
       SimpleInstallGetter(isolate(), prototype, factory->hourCycle_string(),
                           Builtin::kLocalePrototypeHourCycle, true);
       SimpleInstallGetter(isolate(), prototype, factory->numeric_string(),
@@ -5426,7 +5433,7 @@ void Genesis::InitializeConsole(Handle<JSObject> extras_binding) {
   SimpleInstallFunction(isolate_, console, "timeStamp",
                         Builtin::kConsoleTimeStamp, 0, false, NONE);
   SimpleInstallFunction(isolate_, console, "context", Builtin::kConsoleContext,
-                        1, true, NONE);
+                        1, false, NONE);
   InstallToStringTag(isolate_, console, "console");
 }
 
@@ -5547,6 +5554,15 @@ void Genesis::InitializeGlobal_harmony_iterator_helpers() {
 
 #undef INSTALL_ITERATOR_HELPER
 #undef ITERATOR_HELPERS
+}
+
+void Genesis::InitializeGlobal_js_atomics_pause() {
+  if (!v8_flags.js_atomics_pause) return;
+  Handle<JSGlobalObject> global(native_context()->global_object(), isolate());
+  Handle<JSObject> atomics_object = Cast<JSObject>(
+      JSReceiver::GetProperty(isolate(), global, "Atomics").ToHandleChecked());
+  InstallFunctionWithBuiltinId(isolate(), atomics_object, "pause",
+                               Builtin::kAtomicsPause, 0, false);
 }
 
 void Genesis::InitializeGlobal_js_promise_try() {
@@ -5798,16 +5814,6 @@ void Genesis::InitializeGlobal_harmony_weak_refs_with_cleanup_some() {
                         DONT_ENUM);
 }
 
-void Genesis::InitializeGlobal_harmony_array_from_async() {
-  if (!v8_flags.harmony_array_from_async) return;
-
-  Handle<JSObject> array_function(native_context()->array_function(),
-                                  isolate());
-
-  SimpleInstallFunction(isolate(), array_function, "fromAsync",
-                        Builtin::kArrayFromAsync, 1, false);
-}
-
 void Genesis::InitializeGlobal_js_explicit_resource_management() {
   if (!v8_flags.js_explicit_resource_management) return;
 
@@ -5820,40 +5826,38 @@ void Genesis::InitializeGlobal_js_explicit_resource_management() {
                Builtin::kSuppressedErrorConstructor, 3);
 
   // -- D i s p o s a b l e S t a c k
-  Handle<JSObject> disposable_stack_prototype =
-      factory->NewJSObject(isolate()->object_function(), AllocationType::kOld);
-
-  native_context()->set_initial_disposable_stack_prototype(
-      *disposable_stack_prototype);
-
   DirectHandle<Map> js_disposable_stack_map =
       factory->NewContextfulMapForCurrentContext(
-          JS_DISPOSABLE_STACK_TYPE, JSDisposableStack::kHeaderSize);
-  Map::SetPrototype(isolate(), js_disposable_stack_map,
-                    disposable_stack_prototype);
+          JS_DISPOSABLE_STACK_BASE_TYPE, JSDisposableStackBase::kHeaderSize);
   js_disposable_stack_map->SetConstructor(native_context()->object_function());
   native_context()->set_js_disposable_stack_map(*js_disposable_stack_map);
   LOG(isolate(), MapDetails(*js_disposable_stack_map));
 
-  DirectHandle<JSFunction> disposable_stack_function =
-      InstallFunction(isolate(), global, "DisposableStack", JS_OBJECT_TYPE,
-                      JSObject::kHeaderSize, 0, disposable_stack_prototype,
-                      Builtin::kDisposableStackConstructor);
+  Handle<JSObject> sync_disposable_stack_prototype =
+      factory->NewJSObject(isolate()->object_function(), AllocationType::kOld);
+
+  Handle<JSFunction> disposable_stack_function = InstallFunction(
+      isolate(), global, "DisposableStack", JS_SYNC_DISPOSABLE_STACK_TYPE,
+      JSSyncDisposableStack::kHeaderSize, 0, sync_disposable_stack_prototype,
+      Builtin::kDisposableStackConstructor);
+  InstallWithIntrinsicDefaultProto(isolate(), disposable_stack_function,
+                                   Context::JS_DISPOSABLE_STACK_FUNCTION_INDEX);
   disposable_stack_function->shared()->DontAdaptArguments();
   disposable_stack_function->shared()->set_length(0);
-  SimpleInstallFunction(isolate(), disposable_stack_prototype, "use",
+  SimpleInstallFunction(isolate(), sync_disposable_stack_prototype, "use",
                         Builtin::kDisposableStackPrototypeUse, 1, true);
-  SimpleInstallFunction(isolate(), disposable_stack_prototype, "dispose",
+  SimpleInstallFunction(isolate(), sync_disposable_stack_prototype, "dispose",
                         Builtin::kDisposableStackPrototypeDispose, 0, true);
-  SimpleInstallFunction(isolate(), disposable_stack_prototype, "adopt",
+  SimpleInstallFunction(isolate(), sync_disposable_stack_prototype, "adopt",
                         Builtin::kDisposableStackPrototypeAdopt, 2, true);
-  SimpleInstallFunction(isolate(), disposable_stack_prototype, "defer",
+  SimpleInstallFunction(isolate(), sync_disposable_stack_prototype, "defer",
                         Builtin::kDisposableStackPrototypeDefer, 1, true);
-  SimpleInstallFunction(isolate(), disposable_stack_prototype, "move",
+  SimpleInstallFunction(isolate(), sync_disposable_stack_prototype, "move",
                         Builtin::kDisposableStackPrototypeMove, 0, true);
 
-  InstallToStringTag(isolate(), disposable_stack_prototype, "DisposableStack");
-  SimpleInstallGetter(isolate(), disposable_stack_prototype,
+  InstallToStringTag(isolate(), sync_disposable_stack_prototype,
+                     "DisposableStack");
+  SimpleInstallGetter(isolate(), sync_disposable_stack_prototype,
                       factory->InternalizeUtf8String("disposed"),
                       Builtin::kDisposableStackPrototypeGetDisposed, true);
 }
@@ -6490,6 +6494,18 @@ bool Genesis::InstallExtrasBindings() {
   // binding.trace(phase, category, name, id, data)
   SimpleInstallFunction(isolate(), extras_binding, "trace", Builtin::kTrace, 5,
                         true);
+
+#ifdef V8_ENABLE_CONTINUATION_PRESERVED_EMBEDDER_DATA
+  // binding.getContinuationPreservedEmbedderData()
+  SimpleInstallFunction(
+      isolate(), extras_binding, "getContinuationPreservedEmbedderData",
+      Builtin::kGetContinuationPreservedEmbedderData, 0, true);
+
+  // binding.setContinuationPreservedEmbedderData(value)
+  SimpleInstallFunction(
+      isolate(), extras_binding, "setContinuationPreservedEmbedderData",
+      Builtin::kSetContinuationPreservedEmbedderData, 1, true);
+#endif  // V8_ENABLE_CONTINUATION_PRESERVED_EMBEDDER_DATA
 
   InitializeConsole(extras_binding);
 

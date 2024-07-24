@@ -13,11 +13,6 @@ if "%*" == "/?" (
   exit /b
 )
 
-if not defined AUTONINJA_BUILD_ID (
-  :: Set unique build ID.
-  FOR /f "usebackq tokens=*" %%a in (`%scriptdir%python-bin\python3.bat -c "import uuid; print(uuid.uuid4())"`) do set AUTONINJA_BUILD_ID=%%a
-)
-
 :: If a build performance summary has been requested then also set NINJA_STATUS
 :: to trigger more verbose status updates. In particular this makes it possible
 :: to see how quickly process creation is happening - often a critical clue on
@@ -30,12 +25,9 @@ if "%NINJA_SUMMARIZE_BUILD%" == "1" set "NINJA_STATUS=[%%r processes, %%f/%%t @ 
 
 :: Use call to invoke python script here, because we use python via python3.bat.
 @if "%NINJA_SUMMARIZE_BUILD%" == "1" call %scriptdir%python-bin\python3.bat %scriptdir%post_build_ninja_summary.py %*
-@call %scriptdir%python-bin\python3.bat %scriptdir%ninjalog_uploader_wrapper.py --cmdline %*
 
 exit /b %ERRORLEVEL%
 :buildfailure
-
-@call %scriptdir%python-bin\python3.bat %scriptdir%ninjalog_uploader_wrapper.py --cmdline %*
 
 :: Return an error code of 1 so that if a developer types:
 :: "autoninja chrome && chrome" then chrome won't run if the build fails.

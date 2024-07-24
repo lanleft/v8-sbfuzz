@@ -4602,14 +4602,13 @@ MaybeHandle<SharedFunctionInfo> Script::FindSharedFunctionInfo(
     FunctionLiteral* function_literal) {
   DCHECK(function_literal->shared_function_info().is_null());
   int function_literal_id = function_literal->function_literal_id();
-  CHECK_NE(function_literal_id, kFunctionLiteralIdInvalid);
+  CHECK_NE(function_literal_id, kInvalidInfoId);
   // If this check fails, the problem is most probably the function id
   // renumbering done by AstFunctionLiteralIdReindexer; in particular, that
   // AstTraversalVisitor doesn't recurse properly in the construct which
   // triggers the mismatch.
-  CHECK_LT(function_literal_id, script->shared_function_info_count());
-  Tagged<MaybeObject> shared =
-      script->shared_function_infos()->get(function_literal_id);
+  CHECK_LT(function_literal_id, script->infos()->length());
+  Tagged<MaybeObject> shared = script->infos()->get(function_literal_id);
   Tagged<HeapObject> heap_object;
   if (!shared.GetHeapObject(&heap_object) ||
       IsUndefined(heap_object, isolate)) {
@@ -6184,8 +6183,8 @@ Handle<JSArray> JSWeakCollection::GetEntries(
   return isolate->factory()->NewJSArrayWithElements(entries);
 }
 
-void JSDisposableStack::Initialize(
-    Isolate* isolate, DirectHandle<JSDisposableStack> disposable_stack) {
+void JSDisposableStackBase::InitializeJSDisposableStackBase(
+    Isolate* isolate, DirectHandle<JSDisposableStackBase> disposable_stack) {
   DirectHandle<FixedArray> array = isolate->factory()->NewFixedArray(0);
   disposable_stack->set_stack(*array);
   disposable_stack->set_length(0);

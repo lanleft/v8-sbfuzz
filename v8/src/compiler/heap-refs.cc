@@ -187,7 +187,7 @@ ZoneVector<Address> GetCFunctions(Tagged<FixedArray> function_overloads,
                   FunctionTemplateInfo::kFunctionOverloadEntrySize;
   ZoneVector<Address> c_functions = ZoneVector<Address>(len, zone);
   for (int i = 0; i < len; i++) {
-    c_functions[i] = v8::ToCData<Address>(function_overloads->get(
+    c_functions[i] = v8::ToCData<kCFunctionTag>(function_overloads->get(
         FunctionTemplateInfo::kFunctionOverloadEntrySize * i));
   }
   return c_functions;
@@ -200,8 +200,9 @@ ZoneVector<const CFunctionInfo*> GetCSignatures(
   ZoneVector<const CFunctionInfo*> c_signatures =
       ZoneVector<const CFunctionInfo*>(len, zone);
   for (int i = 0; i < len; i++) {
-    c_signatures[i] = v8::ToCData<const CFunctionInfo*>(function_overloads->get(
-        FunctionTemplateInfo::kFunctionOverloadEntrySize * i + 1));
+    c_signatures[i] = v8::ToCData<const CFunctionInfo*, kCFunctionInfoTag>(
+        function_overloads->get(
+            FunctionTemplateInfo::kFunctionOverloadEntrySize * i + 1));
   }
   return c_signatures;
 }
@@ -284,6 +285,11 @@ namespace {
 
 // Separate function for racy HeapNumber value read, so that we can explicitly
 // suppress it in TSAN (see tools/sanitizers/tsan_suppressions.txt).
+// We prevent inlining of this function in TSAN builds, so that TSAN does indeed
+// see that this is where the race is, and does indeed ignore it.
+#ifdef V8_IS_TSAN
+V8_NOINLINE
+#endif
 uint64_t RacyReadHeapNumberBits(Tagged<HeapNumber> value) {
   return value->value_as_bits();
 }
@@ -1076,24 +1082,33 @@ ObjectData* JSHeapBroker::TryGetOrCreateData(Handle<Object> object,
                                    kUnserializedReadOnlyHeapObject);
   }
 
-#define CREATE_DATA(Name)                                                      \
-  if (i::Is##Name(*object)) {                                                  \
-    entry = refs_->LookupOrInsert(object.address());                           \
-    object_data = zone()->New<ref_traits<Name>::data_type>(                    \
-        this, &entry->value, Cast<Name>(object),                               \
-        ObjectDataKindFor(ref_traits<Name>::ref_serialization_kind));          \
-    /* We use different classes for object types and static_cast the           \
-     * object_data after a Is##Name() check (check out the As##Name()          \
-     * functions). We chose the class here based on in-sandbox data and before \
-     * serializing the map. Ensure that the serialized map fits the object     \
-     * type. See also crbug.com/326700497 for more details. */                 \
-    SBXCHECK(object_data->Is##Name());                                         \
-    /* NOLINTNEXTLINE(readability/braces) */                                   \
+  InstanceType instance_type =
+      Cast<HeapObject>(*object)->map()->instance_type();
+#define CREATE_DATA(Name)                                             \
+  if (i::InstanceTypeChecker::Is##Name(instance_type)) {              \
+    entry = refs_->LookupOrInsert(object.address());                  \
+    object_data = zone()->New<ref_traits<Name>::data_type>(           \
+        this, &entry->value, Cast<Name>(object),                      \
+        ObjectDataKindFor(ref_traits<Name>::ref_serialization_kind)); \
+    /* NOLINTNEXTLINE(readability/braces) */                          \
   } else
   HEAP_BROKER_OBJECT_LIST(CREATE_DATA)
 #undef CREATE_DATA
   {
     UNREACHABLE();
+  }
+
+  // Ensure that the original instance type matches the one of the serialized
+  // object (if the object was serialized). In particular, this is important
+  // for Maps: in GetMapInstanceType we have special handling for maps and will
+  // report MAP_TYPE for objects whose map pointer points back to itself. With
+  // heap corruption, a non-map object can be made to point to itself though,
+  // in which case we may later treat a non-MapData object as a MapData object.
+  // See also crbug.com/326700497 for more details.
+  if (!object_data->should_access_heap()) {
+    SBXCHECK_EQ(
+        instance_type,
+        static_cast<HeapObjectData*>(object_data)->GetMapInstanceType());
   }
 
   // At this point the entry pointer is not guaranteed to be valid as

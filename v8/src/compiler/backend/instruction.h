@@ -582,6 +582,7 @@ class LocationOperand : public InstructionOperand {
       case MachineRepresentation::kBit:
       case MachineRepresentation::kWord8:
       case MachineRepresentation::kWord16:
+      case MachineRepresentation::kFloat16:
       case MachineRepresentation::kNone:
         return false;
       case MachineRepresentation::kMapWord:
@@ -1198,11 +1199,13 @@ class V8_EXPORT_PRIVATE Constant final {
   explicit Constant(int64_t v) : type_(kInt64), value_(v) {}
   explicit Constant(float v)
       : type_(kFloat32), value_(base::bit_cast<int32_t>(v)) {}
+  explicit Constant(Float32 v) : type_(kFloat32), value_(v.get_bits()) {}
   explicit Constant(double v)
       : type_(kFloat64), value_(base::bit_cast<int64_t>(v)) {}
+  explicit Constant(Float64 v) : type_(kFloat64), value_(v.get_bits()) {}
   explicit Constant(ExternalReference ref)
       : type_(kExternalReference),
-        value_(base::bit_cast<intptr_t>(ref.address())) {}
+        value_(base::bit_cast<intptr_t>(ref.raw())) {}
   explicit Constant(Handle<HeapObject> obj, bool is_compressed = false)
       : type_(is_compressed ? kCompressedHeapObject : kHeapObject),
         value_(base::bit_cast<intptr_t>(obj)) {}
@@ -1285,6 +1288,7 @@ class FrameStateDescriptor;
 enum class StateValueKind : uint8_t {
   kArgumentsElements,
   kArgumentsLength,
+  kRestLength,
   kPlain,
   kOptimizedOut,
   kNested,
@@ -1306,6 +1310,10 @@ class StateValueDescriptor {
   }
   static StateValueDescriptor ArgumentsLength() {
     return StateValueDescriptor(StateValueKind::kArgumentsLength,
+                                MachineType::AnyTagged());
+  }
+  static StateValueDescriptor RestLength() {
+    return StateValueDescriptor(StateValueKind::kRestLength,
                                 MachineType::AnyTagged());
   }
   static StateValueDescriptor Plain(MachineType type) {
@@ -1334,6 +1342,7 @@ class StateValueDescriptor {
   bool IsArgumentsLength() const {
     return kind_ == StateValueKind::kArgumentsLength;
   }
+  bool IsRestLength() const { return kind_ == StateValueKind::kRestLength; }
   bool IsPlain() const { return kind_ == StateValueKind::kPlain; }
   bool IsOptimizedOut() const { return kind_ == StateValueKind::kOptimizedOut; }
   bool IsNested() const { return kind_ == StateValueKind::kNested; }
@@ -1433,6 +1442,9 @@ class StateValueList {
   }
   void PushArgumentsLength() {
     fields_.push_back(StateValueDescriptor::ArgumentsLength());
+  }
+  void PushRestLength() {
+    fields_.push_back(StateValueDescriptor::RestLength());
   }
   void PushDuplicate(size_t id) {
     fields_.push_back(StateValueDescriptor::Duplicate(id));
@@ -1818,6 +1830,7 @@ class V8_EXPORT_PRIVATE InstructionSequence final
   int representation_mask() const { return representation_mask_; }
   bool HasFPVirtualRegisters() const {
     constexpr int kFPRepMask =
+        RepresentationBit(MachineRepresentation::kFloat16) |
         RepresentationBit(MachineRepresentation::kFloat32) |
         RepresentationBit(MachineRepresentation::kFloat64) |
         RepresentationBit(MachineRepresentation::kSimd128) |

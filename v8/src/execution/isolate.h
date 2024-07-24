@@ -187,6 +187,10 @@ class Recorder;
 }  // namespace metrics
 
 namespace wasm {
+
+#if V8_ENABLE_DRUMBRAKE
+class WasmExecutionTimer;
+#endif  // V8_ENABLE_DRUMBRAKE
 class WasmCodeLookupCache;
 class WasmOrphanedGlobalHandle;
 }
@@ -1103,14 +1107,14 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   static const int kBMMaxShift = 250;        // See StringSearchBase.
 
   // Accessors.
-#define GLOBAL_ACCESSOR(type, name, initialvalue)                \
-  inline type name() const {                                     \
-    DCHECK(OFFSET_OF(Isolate, name##_) == name##_debug_offset_); \
-    return name##_;                                              \
-  }                                                              \
-  inline void set_##name(type value) {                           \
-    DCHECK(OFFSET_OF(Isolate, name##_) == name##_debug_offset_); \
-    name##_ = value;                                             \
+#define GLOBAL_ACCESSOR(type, name, initialvalue)                 \
+  inline type name() const {                                      \
+    DCHECK_EQ(OFFSET_OF(Isolate, name##_), name##_debug_offset_); \
+    return name##_;                                               \
+  }                                                               \
+  inline void set_##name(type value) {                            \
+    DCHECK_EQ(OFFSET_OF(Isolate, name##_), name##_debug_offset_); \
+    name##_ = value;                                              \
   }
   ISOLATE_INIT_LIST(GLOBAL_ACCESSOR)
 #undef GLOBAL_ACCESSOR
@@ -1194,11 +1198,12 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
 
   IsolateGroup* isolate_group() const { return isolate_group_; }
 
+#ifdef V8_COMPRESS_POINTERS
   VirtualMemoryCage* GetPtrComprCage() const {
     return isolate_group()->GetPtrComprCage();
   }
-
   VirtualMemoryCage* GetPtrComprCodeCageForTesting();
+#endif
 
   // Generated code can embed this address to get access to the isolate-specific
   // data (for example, roots, external references, builtins, etc.).
@@ -1339,6 +1344,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
     return wasm_code_look_up_cache_;
   }
   wasm::WasmOrphanedGlobalHandle* NewWasmOrphanedGlobalHandle();
+  wasm::StackPool& stack_pool() { return stack_pool_; }
 #endif  // V8_ENABLE_WEBASSEMBLY
 
   GlobalHandles* global_handles() const { return global_handles_; }
@@ -1951,11 +1957,12 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
 
   void UpdateLoadStartTime();
 
-  void IsolateInForegroundNotification();
+  void SetPriority(v8::Isolate::Priority priority);
 
-  void IsolateInBackgroundNotification();
-
-  bool is_backgrounded() { return is_backgrounded_; }
+  v8::Isolate::Priority priority() { return priority_; }
+  bool is_backgrounded() {
+    return priority_ == v8::Isolate::Priority::kBestEffort;
+  }
 
   // When efficiency mode is enabled we can favor single core throughput without
   // latency requirements. Any decision based on this flag must be quickly
@@ -2146,6 +2153,14 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
 
   GlobalSafepoint* global_safepoint() const { return global_safepoint_.get(); }
 
+#if V8_ENABLE_DRUMBRAKE
+  void initialize_wasm_execution_timer();
+
+  wasm::WasmExecutionTimer* wasm_execution_timer() const {
+    return wasm_execution_timer_.get();
+  }
+#endif  // V8_ENABLE_DRUMBRAKE
+
   bool owns_shareable_data() { return owns_shareable_data_; }
 
   bool log_object_relocation() const { return log_object_relocation_; }
@@ -2162,7 +2177,9 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
 
 #ifdef V8_ENABLE_WEBASSEMBLY
   bool IsOnCentralStack();
-  std::vector<wasm::StackMemory*>& wasm_stacks() { return wasm_stacks_; }
+  std::vector<std::unique_ptr<wasm::StackMemory>>& wasm_stacks() {
+    return wasm_stacks_;
+  }
   // Update the thread local's Stack object so that it is aware of the new stack
   // start and the inactive stacks.
   void UpdateCentralStackInfo();
@@ -2183,8 +2200,6 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   Tagged<Object> LocalsBlockListCacheGet(Handle<ScopeInfo> scope_info);
 
   void VerifyStaticRoots();
-
-  bool allow_compile_hints_magic() const { return allow_compile_hints_magic_; }
 
   class EnableRoAllocationForSnapshotScope final {
    public:
@@ -2214,7 +2229,8 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   std::list<std::unique_ptr<detail::WaiterQueueNode>>&
   async_waiter_queue_nodes();
 
-  void ReportExceptionFunctionCallback(Handle<FunctionTemplateInfo> function,
+  void ReportExceptionFunctionCallback(Handle<JSReceiver> receiver,
+                                       Handle<FunctionTemplateInfo> function,
                                        v8::ExceptionContext callback_kind);
   void ReportExceptionPropertyCallback(Handle<JSReceiver> holder,
                                        Handle<Name> name,
@@ -2474,9 +2490,10 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   // True if short builtin calls optimization is enabled.
   bool is_short_builtin_calls_enabled_ = false;
 
-  // True if the isolate is in background. This flag is used
-  // to prioritize between memory usage and latency.
-  std::atomic<bool> is_backgrounded_ = false;
+  // The isolate current's priority. This flag is used to prioritize
+  // between memory usage and latency.
+  std::atomic<v8::Isolate::Priority> priority_ =
+      v8::Isolate::Priority::kUserBlocking;
 
   // Indicates whether the isolate owns shareable data.
   // Only false for client isolates attached to a shared isolate.
@@ -2640,10 +2657,6 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
 
   bool allow_atomics_wait_ = true;
 
-  // Cache for the JavaScriptCompileHintsMagic origin trial.
-  // TODO(v8:13917): Remove when the origin trial is removed.
-  std::atomic<bool> allow_compile_hints_magic_ = false;
-
   base::Mutex managed_ptr_destructors_mutex_;
   ManagedPtrDestructor* managed_ptr_destructors_head_ = nullptr;
 
@@ -2708,8 +2721,12 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
 
 #ifdef V8_ENABLE_WEBASSEMBLY
   wasm::WasmCodeLookupCache* wasm_code_look_up_cache_ = nullptr;
-  std::vector<wasm::StackMemory*> wasm_stacks_;
+  std::vector<std::unique_ptr<wasm::StackMemory>> wasm_stacks_;
+#if V8_ENABLE_DRUMBRAKE
+  std::unique_ptr<wasm::WasmExecutionTimer> wasm_execution_timer_;
+#endif  // V8_ENABLE_DRUMBRAKE
   wasm::WasmOrphanedGlobalHandle* wasm_orphaned_handle_ = nullptr;
+  wasm::StackPool stack_pool_;
 #endif
 
   // Enables the host application to provide a mechanism for recording a

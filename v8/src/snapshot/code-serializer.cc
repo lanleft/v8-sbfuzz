@@ -402,7 +402,8 @@ void BaselineBatchCompileIfSparkplugCompiled(Isolate* isolate,
     SharedFunctionInfo::ScriptIterator iter(isolate, script);
     for (Tagged<SharedFunctionInfo> info = iter.Next(); !info.is_null();
          info = iter.Next()) {
-      if (info->sparkplug_compiled() && CanCompileWithBaseline(isolate, info)) {
+      if (info->cached_tiering_decision() != CachedTieringDecision::kPending &&
+          CanCompileWithBaseline(isolate, info)) {
         isolate->baseline_batch_compiler()->EnqueueSFI(info);
       }
     }
@@ -617,8 +618,9 @@ MaybeHandle<SharedFunctionInfo> CodeSerializer::FinishOffThreadDeserialize(
   if (background_merge_task &&
       background_merge_task->HasPendingForegroundWork()) {
     DCHECK_EQ(data.scripts.size(), 1);
-    Handle<Script> script = data.scripts[0];
-    result = background_merge_task->CompleteMergeInForeground(isolate, script);
+    Handle<Script> new_script = data.scripts[0];
+    result =
+        background_merge_task->CompleteMergeInForeground(isolate, new_script);
     DCHECK(Object::StrictEquals(Cast<Script>(result->script())->source(),
                                 *source));
     DCHECK(isolate->factory()->script_list()->Contains(

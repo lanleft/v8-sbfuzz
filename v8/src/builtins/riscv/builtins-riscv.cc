@@ -609,10 +609,11 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
   // JS frames on top.
   __ StoreWord(zero_reg, MemOperand(s5));
 
-  __ li(s1, ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(s1, IsolateFieldId::kFastCCallCallerFP);
   __ LoadWord(s2, MemOperand(s1, 0));
   __ StoreWord(zero_reg, MemOperand(s1, 0));
-  __ li(s1, ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+
+  __ LoadIsolateField(s1, IsolateFieldId::kFastCCallCallerPC);
   __ LoadWord(s3, MemOperand(s1, 0));
   __ StoreWord(zero_reg, MemOperand(s1, 0));
   __ Push(s2, s3);
@@ -728,9 +729,9 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
   __ bind(&non_outermost_js_2);
 
   __ Pop(s2, s3);
-  __ li(s1, ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(s1, IsolateFieldId::kFastCCallCallerFP);
   __ StoreWord(s2, MemOperand(s1, 0));
-  __ li(s1, ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+  __ LoadIsolateField(s1, IsolateFieldId::kFastCCallCallerPC);
   __ StoreWord(s3, MemOperand(s1, 0));
   // Restore the top frame descriptors from the stack.
   __ pop(a5);
@@ -3215,7 +3216,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
     __ PrepareCallCFunction(3, 0, a0);
     __ Move(a0, zero_reg);
     __ Move(a1, zero_reg);
-    __ li(a2, ER::isolate_address(masm->isolate()));
+    __ li(a2, ER::isolate_address());
     __ CallCFunction(find_handler, 3, SetIsolateDataSlots::kNo);
   }
 
@@ -4370,7 +4371,7 @@ void Builtins::Generate_CallApiCallbackImpl(MacroAssembler* masm,
   __ StoreWord(holder, MemOperand(sp, FCA::kHolderIndex * kSystemPointerSize));
 
   // kIsolate.
-  __ li(scratch, ER::isolate_address(masm->isolate()));
+  __ li(scratch, ER::isolate_address());
   __ StoreWord(scratch,
                MemOperand(sp, FCA::kIsolateIndex * kSystemPointerSize));
 
@@ -4484,7 +4485,7 @@ void Builtins::Generate_CallApiGetter(MacroAssembler* masm) {
                MemOperand(sp, (PCA::kReturnValueIndex)*kSystemPointerSize));
   __ StoreWord(zero_reg,
                MemOperand(sp, (PCA::kHolderV2Index)*kSystemPointerSize));
-  __ li(scratch, ER::isolate_address(masm->isolate()));
+  __ li(scratch, ER::isolate_address());
   __ StoreWord(scratch,
                MemOperand(sp, (PCA::kIsolateIndex)*kSystemPointerSize));
   __ StoreWord(holder, MemOperand(sp, (PCA::kHolderIndex)*kSystemPointerSize));
@@ -4631,7 +4632,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
   __ li(a1, Operand(static_cast<int64_t>(deopt_kind)));
   // a2: code object address
   // a3: fp-to-sp delta
-  __ li(a4, ExternalReference::isolate_address(isolate));
+  __ li(a4, ExternalReference::isolate_address());
 
   // Call Deoptimizer::New().
   {

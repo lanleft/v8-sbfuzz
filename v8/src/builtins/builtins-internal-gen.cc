@@ -85,7 +85,7 @@ TF_BUILTIN(DebugBreakTrampoline, CodeStubAssembler) {
   TNode<ExternalReference> f =
       ExternalConstant(ExternalReference::debug_break_at_entry_function());
   TNode<ExternalReference> isolate_ptr =
-      ExternalConstant(ExternalReference::isolate_address(isolate()));
+      ExternalConstant(ExternalReference::isolate_address());
   TNode<SharedFunctionInfo> shared =
       CAST(LoadObjectField(function, JSFunction::kSharedFunctionInfoOffset));
   TNode<IntPtrT> result = UncheckedCast<IntPtrT>(
@@ -130,19 +130,10 @@ class WriteBarrierCodeStubAssembler : public CodeStubAssembler {
   }
 
   TNode<BoolT> UsesSharedHeap() {
-    TNode<ExternalReference> uses_shared_heap_addr = ExternalConstant(
-        ExternalReference::uses_shared_heap_flag_address(this->isolate()));
+    TNode<ExternalReference> uses_shared_heap_addr =
+        IsolateField(IsolateFieldId::kUsesSharedHeapFlag);
     return Word32NotEqual(Load<Uint8T>(uses_shared_heap_addr),
                           Int32Constant(0));
-  }
-
-  TNode<BoolT> IsPageFlagSet(TNode<IntPtrT> object, int mask) {
-    TNode<IntPtrT> header = MemoryChunkFromAddress(object);
-    TNode<IntPtrT> flags = UncheckedCast<IntPtrT>(
-        Load(MachineType::Pointer(), header,
-             IntPtrConstant(MemoryChunkLayout::kFlagsOffset)));
-    return WordNotEqual(WordAnd(flags, IntPtrConstant(mask)),
-                        IntPtrConstant(0));
   }
 
   TNode<BoolT> IsUnmarked(TNode<IntPtrT> object) {
@@ -577,7 +568,7 @@ class WriteBarrierCodeStubAssembler : public CodeStubAssembler {
     TNode<ExternalReference> function = ExternalConstant(
         ExternalReference::ephemeron_key_write_barrier_function());
     TNode<ExternalReference> isolate_constant =
-        ExternalConstant(ExternalReference::isolate_address(isolate()));
+        ExternalConstant(ExternalReference::isolate_address());
     // In this method we limit the allocatable registers so we have to use
     // UncheckedParameter. Parameter does not work because the checked cast
     // needs more registers.

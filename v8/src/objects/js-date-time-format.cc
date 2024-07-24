@@ -1201,9 +1201,8 @@ Maybe<DateTimeValueRecord> HandleDateTimeOthers(
     x = Object::NumberValue(*x_obj);
   }
   // 6. Set x to TimeClip(x).
-  x = DateCache::TimeClip(x);
   // 7. If x is NaN, throw a RangeError exception.
-  if (std::isnan(x)) {
+  if (!DateCache::TryTimeClip(&x)) {
     THROW_NEW_ERROR_RETURN_VALUE(
         isolate, NewRangeError(MessageTemplate::kInvalidTimeValue),
         Nothing<DateTimeValueRecord>());
@@ -1440,13 +1439,12 @@ icu::UnicodeString CallICUFormat(const icu::SimpleDateFormat& date_format,
 MaybeHandle<String> FormatDateTime(Isolate* isolate,
                                    const icu::SimpleDateFormat& date_format,
                                    double x) {
-  double date_value = DateCache::TimeClip(x);
-  if (std::isnan(date_value)) {
+  if (!DateCache::TryTimeClip(&x)) {
     THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kInvalidTimeValue));
   }
 
   icu::UnicodeString result;
-  date_format.format(date_value, result);
+  date_format.format(x, result);
 
   // Revert ICU 72 change that introduced U+202F instead of U+0020
   // to separate time from AM/PM. See https://crbug.com/1414292.
@@ -1548,7 +1546,7 @@ MaybeHandle<String> JSDateTimeFormat::ToLocaleDateTime(
                     NewTypeError(MessageTemplate::kMethodInvokedOnWrongType,
                                  factory->Date_string()));
   }
-  double const x = Object::NumberValue(Cast<JSDate>(date)->value());
+  double const x = Cast<JSDate>(date)->value();
   // 2. If x is NaN, return "Invalid Date"
   if (std::isnan(x)) {
     return factory->Invalid_Date_string();
@@ -1944,8 +1942,8 @@ std::unique_ptr<icu::DateIntervalFormat> LazyCreateDateIntervalFormat(
     return date_interval_format;
   }
   DirectHandle<Managed<icu::DateIntervalFormat>> managed_interval_format =
-      Managed<icu::DateIntervalFormat>::FromUniquePtr(
-          isolate, 0, std::move(date_interval_format));
+      Managed<icu::DateIntervalFormat>::From(isolate, 0,
+                                             std::move(date_interval_format));
   date_time_format->set_icu_date_interval_format(*managed_interval_format);
   return std::unique_ptr<icu::DateIntervalFormat>(
       managed_interval_format->raw()->clone());
@@ -2631,14 +2629,15 @@ MaybeHandle<JSDateTimeFormat> JSDateTimeFormat::CreateDateTimeFormat(
           maybe_locale_str.FromJust().c_str());
 
   DirectHandle<Managed<icu::Locale>> managed_locale =
-      Managed<icu::Locale>::FromRawPtr(isolate, 0, icu_locale.clone());
+      Managed<icu::Locale>::From(
+          isolate, 0, std::shared_ptr<icu::Locale>{icu_locale.clone()});
 
   DirectHandle<Managed<icu::SimpleDateFormat>> managed_format =
-      Managed<icu::SimpleDateFormat>::FromUniquePtr(isolate, 0,
-                                                    std::move(icu_date_format));
+      Managed<icu::SimpleDateFormat>::From(isolate, 0,
+                                           std::move(icu_date_format));
 
   DirectHandle<Managed<icu::DateIntervalFormat>> managed_interval_format =
-      Managed<icu::DateIntervalFormat>::FromRawPtr(isolate, 0, nullptr);
+      Managed<icu::DateIntervalFormat>::From(isolate, 0, nullptr);
 
   // Now all properties are ready, so we can allocate the result object.
   Handle<JSDateTimeFormat> date_time_format = Cast<JSDateTimeFormat>(
@@ -2796,8 +2795,8 @@ MaybeHandle<JSArray> JSDateTimeFormat::FormatToParts(
     ASSIGN_RETURN_ON_EXCEPTION(isolate, x, Object::ToNumber(isolate, x));
   }
 
-  double date_value = DateCache::TimeClip(Object::NumberValue(*x));
-  if (std::isnan(date_value)) {
+  double date_value = Object::NumberValue(*x);
+  if (!DateCache::TryTimeClip(&date_value)) {
     THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kInvalidTimeValue));
   }
   return FormatMillisecondsToArray(
@@ -3006,15 +3005,13 @@ base::Optional<MaybeHandle<T>> PartitionDateTimeRangePattern(
     Isolate* isolate, DirectHandle<JSDateTimeFormat> date_time_format, double x,
     double y, const char* method_name) {
   // 1. Let x be TimeClip(x).
-  x = DateCache::TimeClip(x);
   // 2. If x is NaN, throw a RangeError exception.
-  if (std::isnan(x)) {
+  if (!DateCache::TryTimeClip(&x)) {
     THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kInvalidTimeValue));
   }
   // 3. Let y be TimeClip(y).
-  y = DateCache::TimeClip(y);
   // 4. If y is NaN, throw a RangeError exception.
-  if (std::isnan(y)) {
+  if (!DateCache::TryTimeClip(&y)) {
     THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kInvalidTimeValue));
   }
 

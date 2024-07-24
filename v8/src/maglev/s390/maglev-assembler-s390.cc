@@ -51,7 +51,7 @@ void AllocateRaw(MaglevAssembler* masm, Isolate* isolate,
   Register new_top = object;
   // Check if there is enough space.
   __ LoadU64(object, __ ExternalReferenceAsOperand(top, scratch));
-  __ AddU64(object, Operand(size_in_bytes));
+  __ AddU64(object, size_in_bytes);
   __ LoadU64(scratch, __ ExternalReferenceAsOperand(limit, scratch));
   __ CmpU64(new_top, scratch);
   // Otherwise call runtime.
@@ -400,7 +400,6 @@ void MaglevAssembler::StringCharCodeOrCodePointAt(
     ShiftLeftU64(scratch, index, Operand(1));
     AddU64(scratch,
            Operand(OFFSET_OF_DATA_START(SeqTwoByteString) - kHeapObjectTag));
-    LoadU16(result, MemOperand(string, scratch));
 
     if (mode == BuiltinStringPrototypeCharCodeOrCodePointAt::kCharCodeAt) {
       LoadU16(result, MemOperand(string, scratch));

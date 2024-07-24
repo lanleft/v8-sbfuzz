@@ -51,7 +51,9 @@ class FunctionTemplateInfo;
 class Isolate;
 class JSArrayBufferView;
 class JSDataView;
-class JSDisposableStack;
+class JSDisposableStackBase;
+class JSSyncDisposableStack;
+class JSAsyncDisposableStack;
 class JSGeneratorObject;
 class JSMap;
 class JSMapIterator;
@@ -82,6 +84,10 @@ class WeakCell;
 
 #if V8_ENABLE_WEBASSEMBLY
 namespace wasm {
+#if V8_ENABLE_DRUMBRAKE
+class WasmInterpreterRuntime;
+#endif  // V8_ENABLE_DRUMBRAKE
+
 class ArrayType;
 class StructType;
 struct WasmElemSegment;
@@ -91,6 +97,7 @@ enum Suspend : int;
 enum Promise : int;
 class ValueType;
 using FunctionSig = Signature<ValueType>;
+class StackMemory;
 }  // namespace wasm
 #endif
 
@@ -468,6 +475,8 @@ class V8_EXPORT_PRIVATE Factory : public FactoryBase<Factory> {
   Handle<Foreign> NewForeign(
       Address addr, AllocationType allocation_type = AllocationType::kYoung);
 
+  Handle<TrustedForeign> NewTrustedForeign(Address addr);
+
   Handle<Cell> NewCell(Tagged<Smi> value);
   Handle<Cell> NewCell();
 
@@ -715,14 +724,17 @@ class V8_EXPORT_PRIVATE Factory : public FactoryBase<Factory> {
       DirectHandle<NativeContext> creation_context,
       DirectHandle<Object> target);
 
-  Handle<JSDisposableStack> NewJSDisposableStack();
+  Handle<JSDisposableStackBase> NewJSDisposableStackBase();
+  Handle<JSSyncDisposableStack> NewJSSyncDisposableStack(DirectHandle<Map> map);
+  Handle<JSAsyncDisposableStack> NewJSAsyncDisposableStack(
+      DirectHandle<Map> map);
 
 #if V8_ENABLE_WEBASSEMBLY
   Handle<WasmTypeInfo> NewWasmTypeInfo(
       Address type_address, Handle<Map> opt_parent,
-      DirectHandle<WasmInstanceObject> opt_instance, uint32_t type_index);
+      DirectHandle<WasmTrustedInstanceData> opt_instance, uint32_t type_index);
   Handle<WasmInternalFunction> NewWasmInternalFunction(
-      DirectHandle<ExposedTrustedObject> ref, int function_index,
+      DirectHandle<TrustedObject> ref, int function_index,
       uintptr_t signature_hash);
   Handle<WasmFuncRef> NewWasmFuncRef(
       DirectHandle<WasmInternalFunction> internal_function,
@@ -747,12 +759,12 @@ class V8_EXPORT_PRIVATE Factory : public FactoryBase<Factory> {
       DirectHandle<WasmApiFunctionRef> ref);
 
   Handle<WasmFastApiCallData> NewWasmFastApiCallData(
-      DirectHandle<HeapObject> signature);
+      DirectHandle<HeapObject> signature, DirectHandle<Object> callback_data);
 
   // {opt_call_target} is kNullAddress for JavaScript functions, and
   // non-null for exported Wasm functions.
   Handle<WasmJSFunctionData> NewWasmJSFunctionData(
-      DirectHandle<JSReceiver> callable,
+      uint32_t canonical_sig_index, DirectHandle<JSReceiver> callable,
       DirectHandle<PodArray<wasm::ValueType>> serialized_sig,
       DirectHandle<Code> wrapper_code, DirectHandle<Map> rtt,
       wasm::Suspend suspend, wasm::Promise promise, uintptr_t signature_hash);
@@ -778,8 +790,7 @@ class V8_EXPORT_PRIVATE Factory : public FactoryBase<Factory> {
       uint32_t segment_index, uint32_t start_offset, uint32_t length,
       DirectHandle<Map> map);
   Handle<WasmContinuationObject> NewWasmContinuationObject(
-      Address jmpbuf, DirectHandle<Foreign> managed_stack,
-      DirectHandle<HeapObject> parent,
+      Address jmpbuf, wasm::StackMemory* stack, DirectHandle<HeapObject> parent,
       AllocationType allocation = AllocationType::kYoung);
 
   Handle<SharedFunctionInfo> NewSharedFunctionInfoForWasmExportedFunction(
@@ -1330,6 +1341,18 @@ class V8_EXPORT_PRIVATE Factory : public FactoryBase<Factory> {
   // {DisallowGarbageCollection} scope until initialization.
   Tagged<WasmArray> NewWasmArrayUninitialized(uint32_t length,
                                               DirectHandle<Map> map);
+
+#if V8_ENABLE_DRUMBRAKE
+  // The resulting struct will be uninitialized, which means GC might fail for
+  // reference structs until initialization. Follow this up with a
+  // {DisallowGarbageCollection} scope until initialization.
+  Handle<WasmStruct> NewWasmStructUninitialized(const wasm::StructType* type,
+                                                Handle<Map> map);
+
+  // WasmInterpreterRuntime needs to call NewWasmStructUninitialized and
+  // NewWasmArrayUninitialized.
+  friend class wasm::WasmInterpreterRuntime;
+#endif  // V8_ENABLE_DRUMBRAKE
 #endif  // V8_ENABLE_WEBASSEMBLY
 };
 

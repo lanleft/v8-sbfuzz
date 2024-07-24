@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 #include "src/base/platform/platform.h"
+#include "src/base/vector.h"
 #include "src/execution/isolate.h"
 #include "src/heap/factory-inl.h"
 #include "src/init/v8.h"
@@ -37,44 +38,53 @@ class ConversionsTest : public TestWithIsolate {
 };
 
 TEST_F(ConversionsTest, Hex) {
-  CHECK_EQ(0.0, StringToDouble("0x0", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.0, StringToDouble("0X0", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(1.0, StringToDouble("0x1", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(16.0, StringToDouble("0x10", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(255.0, StringToDouble("0xFF", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(175.0, StringToDouble("0xAF", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-
   CHECK_EQ(0.0, StringToDouble("0x0", ALLOW_HEX));
   CHECK_EQ(0.0, StringToDouble("0X0", ALLOW_HEX));
   CHECK_EQ(1.0, StringToDouble("0x1", ALLOW_HEX));
   CHECK_EQ(16.0, StringToDouble("0x10", ALLOW_HEX));
   CHECK_EQ(255.0, StringToDouble("0xFF", ALLOW_HEX));
   CHECK_EQ(175.0, StringToDouble("0xAF", ALLOW_HEX));
+
+  CHECK_EQ(0.0, HexStringToDouble(base::OneByteVector("0x0")));
+  CHECK_EQ(0.0, HexStringToDouble(base::OneByteVector("0X0")));
+  CHECK_EQ(1.0, HexStringToDouble(base::OneByteVector("0x1")));
+  CHECK_EQ(16.0, HexStringToDouble(base::OneByteVector("0x10")));
+  CHECK_EQ(255.0, HexStringToDouble(base::OneByteVector("0xFF")));
+  CHECK_EQ(175.0, HexStringToDouble(base::OneByteVector("0xAF")));
 }
 
 TEST_F(ConversionsTest, Octal) {
-  CHECK_EQ(0.0, StringToDouble("0o0", ALLOW_OCTAL | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.0, StringToDouble("0O0", ALLOW_OCTAL | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(1.0, StringToDouble("0o1", ALLOW_OCTAL | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(7.0, StringToDouble("0o7", ALLOW_OCTAL | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(8.0, StringToDouble("0o10", ALLOW_OCTAL | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(63.0, StringToDouble("0o77", ALLOW_OCTAL | ALLOW_IMPLICIT_OCTAL));
-
   CHECK_EQ(0.0, StringToDouble("0o0", ALLOW_OCTAL));
   CHECK_EQ(0.0, StringToDouble("0O0", ALLOW_OCTAL));
   CHECK_EQ(1.0, StringToDouble("0o1", ALLOW_OCTAL));
   CHECK_EQ(7.0, StringToDouble("0o7", ALLOW_OCTAL));
   CHECK_EQ(8.0, StringToDouble("0o10", ALLOW_OCTAL));
   CHECK_EQ(63.0, StringToDouble("0o77", ALLOW_OCTAL));
+
+  CHECK_EQ(0.0, OctalStringToDouble(base::OneByteVector("0o0")));
+  CHECK_EQ(0.0, OctalStringToDouble(base::OneByteVector("0O0")));
+  CHECK_EQ(1.0, OctalStringToDouble(base::OneByteVector("0o1")));
+  CHECK_EQ(7.0, OctalStringToDouble(base::OneByteVector("0o7")));
+  CHECK_EQ(8.0, OctalStringToDouble(base::OneByteVector("0o10")));
+  CHECK_EQ(63.0, OctalStringToDouble(base::OneByteVector("0o77")));
+
+  const double x = 010000000000;  // Power of 2, no rounding errors.
+  CHECK_EQ(x * x * x * x * x,
+           OctalStringToDouble(base::OneByteVector("0o01"
+                                                   "0000000000"
+                                                   "0000000000"
+                                                   "0000000000"
+                                                   "0000000000"
+                                                   "0000000000")));
 }
 
 TEST_F(ConversionsTest, ImplicitOctal) {
-  CHECK_EQ(0.0, StringToDouble("0", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.0, StringToDouble("00", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(1.0, StringToDouble("01", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(7.0, StringToDouble("07", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(8.0, StringToDouble("010", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(63.0, StringToDouble("077", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
+  CHECK_EQ(0.0, ImplicitOctalStringToDouble(base::OneByteVector("0")));
+  CHECK_EQ(0.0, ImplicitOctalStringToDouble(base::OneByteVector("00")));
+  CHECK_EQ(1.0, ImplicitOctalStringToDouble(base::OneByteVector("01")));
+  CHECK_EQ(7.0, ImplicitOctalStringToDouble(base::OneByteVector("07")));
+  CHECK_EQ(8.0, ImplicitOctalStringToDouble(base::OneByteVector("010")));
+  CHECK_EQ(63.0, ImplicitOctalStringToDouble(base::OneByteVector("077")));
 
   CHECK_EQ(0.0, StringToDouble("0", ALLOW_HEX));
   CHECK_EQ(0.0, StringToDouble("00", ALLOW_HEX));
@@ -84,45 +94,30 @@ TEST_F(ConversionsTest, ImplicitOctal) {
   CHECK_EQ(77.0, StringToDouble("077", ALLOW_HEX));
 
   const double x = 010000000000;  // Power of 2, no rounding errors.
-  CHECK_EQ(x * x * x * x * x, StringToDouble("01"
-                                             "0000000000"
-                                             "0000000000"
-                                             "0000000000"
-                                             "0000000000"
-                                             "0000000000",
-                                             ALLOW_IMPLICIT_OCTAL));
+  CHECK_EQ(x * x * x * x * x,
+           ImplicitOctalStringToDouble(base::OneByteVector("01"
+                                                           "0000000000"
+                                                           "0000000000"
+                                                           "0000000000"
+                                                           "0000000000"
+                                                           "0000000000")));
 }
 
 TEST_F(ConversionsTest, Binary) {
-  CHECK_EQ(0.0, StringToDouble("0b0", ALLOW_BINARY | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.0, StringToDouble("0B0", ALLOW_BINARY | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(1.0, StringToDouble("0b1", ALLOW_BINARY | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(2.0, StringToDouble("0b10", ALLOW_BINARY | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(3.0, StringToDouble("0b11", ALLOW_BINARY | ALLOW_IMPLICIT_OCTAL));
-
   CHECK_EQ(0.0, StringToDouble("0b0", ALLOW_BINARY));
   CHECK_EQ(0.0, StringToDouble("0B0", ALLOW_BINARY));
   CHECK_EQ(1.0, StringToDouble("0b1", ALLOW_BINARY));
   CHECK_EQ(2.0, StringToDouble("0b10", ALLOW_BINARY));
   CHECK_EQ(3.0, StringToDouble("0b11", ALLOW_BINARY));
+
+  CHECK_EQ(0.0, BinaryStringToDouble(base::OneByteVector("0b0")));
+  CHECK_EQ(0.0, BinaryStringToDouble(base::OneByteVector("0B0")));
+  CHECK_EQ(1.0, BinaryStringToDouble(base::OneByteVector("0b1")));
+  CHECK_EQ(2.0, BinaryStringToDouble(base::OneByteVector("0b10")));
+  CHECK_EQ(3.0, BinaryStringToDouble(base::OneByteVector("0b11")));
 }
 
 TEST_F(ConversionsTest, MalformedOctal) {
-  CHECK_EQ(8.0, StringToDouble("08", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(81.0, StringToDouble("081", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(78.0, StringToDouble("078", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-
-  CHECK(std::isnan(StringToDouble("07.7", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL)));
-  CHECK(std::isnan(StringToDouble("07.8", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL)));
-  CHECK(std::isnan(StringToDouble("07e8", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL)));
-  CHECK(std::isnan(StringToDouble("07e7", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL)));
-
-  CHECK_EQ(8.7, StringToDouble("08.7", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(8e7, StringToDouble("08e7", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-
-  CHECK_EQ(0.001, StringToDouble("0.001", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.713, StringToDouble("0.713", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-
   CHECK_EQ(8.0, StringToDouble("08", ALLOW_HEX));
   CHECK_EQ(81.0, StringToDouble("081", ALLOW_HEX));
   CHECK_EQ(78.0, StringToDouble("078", ALLOW_HEX));
@@ -141,12 +136,8 @@ TEST_F(ConversionsTest, MalformedOctal) {
 
 TEST_F(ConversionsTest, TrailingJunk) {
   CHECK_EQ(8.0, StringToDouble("8q", ALLOW_TRAILING_JUNK));
-  CHECK_EQ(63.0, StringToDouble("077qqq",
-                                ALLOW_IMPLICIT_OCTAL | ALLOW_TRAILING_JUNK));
-  CHECK_EQ(10.0,
-           StringToDouble("10e", ALLOW_IMPLICIT_OCTAL | ALLOW_TRAILING_JUNK));
-  CHECK_EQ(10.0,
-           StringToDouble("10e-", ALLOW_IMPLICIT_OCTAL | ALLOW_TRAILING_JUNK));
+  CHECK_EQ(10.0, StringToDouble("10e", ALLOW_TRAILING_JUNK));
+  CHECK_EQ(10.0, StringToDouble("10e-", ALLOW_TRAILING_JUNK));
 }
 
 TEST_F(ConversionsTest, NonStrDecimalLiteral) {
@@ -172,12 +163,12 @@ TEST_F(ConversionsTest, IntegerStrLiteral) {
   CHECK(std::isnan(StringToDouble("  -  1  ", NO_CONVERSION_FLAGS)));
   CHECK(std::isnan(StringToDouble("  +  1  ", NO_CONVERSION_FLAGS)));
 
-  CHECK_EQ(0.0, StringToDouble("0e0", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.0, StringToDouble("0e1", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.0, StringToDouble("0e-1", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.0, StringToDouble("0e-100000", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.0, StringToDouble("0e+100000", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
-  CHECK_EQ(0.0, StringToDouble("0.", ALLOW_HEX | ALLOW_IMPLICIT_OCTAL));
+  CHECK_EQ(0.0, StringToDouble("0e0", ALLOW_HEX));
+  CHECK_EQ(0.0, StringToDouble("0e1", ALLOW_HEX));
+  CHECK_EQ(0.0, StringToDouble("0e-1", ALLOW_HEX));
+  CHECK_EQ(0.0, StringToDouble("0e-100000", ALLOW_HEX));
+  CHECK_EQ(0.0, StringToDouble("0e+100000", ALLOW_HEX));
+  CHECK_EQ(0.0, StringToDouble("0.", ALLOW_HEX));
 }
 
 TEST_F(ConversionsTest, LongNumberStr) {

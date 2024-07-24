@@ -27,6 +27,13 @@ namespace internal {
 namespace wasm {
 
 // Helper Functions.
+bool IsSameNan(uint16_t expected, uint16_t actual) {
+  // Sign is non-deterministic.
+  uint16_t expected_bits = expected & ~0x8000;
+  uint16_t actual_bits = actual & ~0x8000;
+  return (expected_bits == actual_bits);
+}
+
 bool IsSameNan(float expected, float actual) {
   // Sign is non-deterministic.
   uint32_t expected_bits = base::bit_cast<uint32_t>(expected) & ~0x80000000;
@@ -227,8 +234,10 @@ void TestingModuleBuilder::InitializeWrapperCache() {
       static_cast<int>(test_module_->types.size()));
   for (uint32_t index = 0; index < test_module_->types.size(); index++) {
     // TODO(14616): Support shared types.
-    CreateMapForType(isolate_, test_module_.get(), index, instance_object_,
-                     maps);
+    CreateMapForType(
+        isolate_, test_module_.get(), index,
+        handle(instance_object_->trusted_data(isolate()), isolate()),
+        instance_object_, maps);
   }
   trusted_instance_data_->set_managed_object_maps(*maps);
 }
@@ -283,8 +292,7 @@ void TestingModuleBuilder::AddIndirectFunctionTable(
           ? Handle<HeapObject>{isolate_->factory()->null_value()}
           : Handle<HeapObject>{isolate_->factory()->wasm_null()});
 
-  WasmTableObject::AddUse(isolate_, table_obj, trusted_instance_data_,
-                          table_index);
+  WasmTableObject::AddUse(isolate_, table_obj, instance_object_, table_index);
 
   if (function_indexes) {
     for (uint32_t i = 0; i < table_size; ++i) {
@@ -293,8 +301,14 @@ void TestingModuleBuilder::AddIndirectFunctionTable(
           test_module_->isorecursive_canonical_type_ids[function.sig_index];
       FunctionTargetAndRef entry(isolate_, trusted_instance_data_,
                                  function.func_index);
+#if !V8_ENABLE_DRUMBRAKE
       trusted_instance_data_->dispatch_table(table_index)
           ->Set(i, *entry.ref(), entry.call_target(), sig_id);
+#else   // !V8_ENABLE_DRUMBRAKE
+      trusted_instance_data_->dispatch_table(table_index)
+          ->Set(i, *entry.ref(), entry.call_target(), sig_id,
+                function.func_index);
+#endif  // !V8_ENABLE_DRUMBRAKE
       WasmTableObject::SetFunctionTablePlaceholder(
           isolate_, table_obj, i, trusted_instance_data_, function_indexes[i]);
     }
@@ -426,8 +440,7 @@ Handle<WasmInstanceObject> TestingModuleBuilder::InitInstanceObject() {
   // Asm.js modules are expected to have "normal" scripts, not Wasm scripts.
   if (is_asmjs_module(native_module->module())) {
     script->set_type(Script::Type::kNormal);
-    script->set_shared_function_infos(
-        ReadOnlyRoots{isolate_}.empty_weak_fixed_array());
+    script->set_infos(ReadOnlyRoots{isolate_}.empty_weak_fixed_array());
   }
 
   DirectHandle<WasmModuleObject> module_object =
@@ -436,7 +449,9 @@ Handle<WasmInstanceObject> TestingModuleBuilder::InitInstanceObject() {
   native_module_->ReserveCodeTableForTesting(kMaxFunctions);
 
   DirectHandle<WasmTrustedInstanceData> trusted_data =
-      WasmTrustedInstanceData::New(isolate_, module_object);
+      WasmTrustedInstanceData::New(isolate_, module_object, false);
+  // TODO(42204563): Avoid crashing if the instance object is not available.
+  CHECK(trusted_data->has_instance_object());
   Handle<WasmInstanceObject> instance_object =
       handle(trusted_data->instance_object(), isolate_);
   trusted_data->set_tags_table(ReadOnlyRoots{isolate_}.empty_fixed_array());
@@ -519,6 +534,8 @@ void WasmFunctionCompiler::Build(base::Vector<const uint8_t> bytes) {
     }
     env.module->set_function_validated(function_->func_index);
   }
+
+  if (v8_flags.wasm_jitless) return;
 
   base::Optional<WasmCompilationResult> result;
   if (builder_->test_execution_tier() ==

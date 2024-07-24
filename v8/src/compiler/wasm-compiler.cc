@@ -2318,6 +2318,7 @@ Node* WasmGraphBuilder::Throw(uint32_t tag_index, const wasm::WasmTag* tag,
         break;
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kVoid:
       case wasm::kBottom:
         UNREACHABLE();
@@ -2463,6 +2464,7 @@ Node* WasmGraphBuilder::GetExceptionValues(Node* except_obj,
         break;
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kVoid:
       case wasm::kBottom:
         UNREACHABLE();
@@ -2987,11 +2989,11 @@ Node* WasmGraphBuilder::BuildIndirectCall(uint32_t table_index,
 
   // Skip check if table type matches declared signature.
   if (needs_type_check) {
-    Node* isorecursive_canonical_types =
-        LOAD_INSTANCE_FIELD(IsorecursiveCanonicalTypes, MachineType::Pointer());
-    Node* expected_sig_id = gasm_->LoadImmutable(
-        MachineType::Uint32(), isorecursive_canonical_types,
-        gasm_->IntPtrConstant(sig_index * kInt32Size));
+    // Embed the expected signature ID as a relocatable constant.
+    uint32_t canonical_sig_id =
+        env_->module->isorecursive_canonical_type_ids[sig_index];
+    Node* expected_sig_id = mcgraph()->RelocatableInt32Constant(
+        canonical_sig_id, RelocInfo::WASM_CANONICAL_SIG_ID);
 
     Node* loaded_sig = gasm_->LoadFromObject(
         MachineType::Int32(), dispatch_table,
@@ -3359,7 +3361,7 @@ Node* WasmGraphBuilder::MemStart(uint32_t mem_index) {
   DCHECK_NOT_NULL(instance_cache_);
   V8_ASSUME(cached_memory_index_ == kNoCachedMemoryIndex ||
             cached_memory_index_ >= 0);
-  if (mem_index == static_cast<uint8_t>(cached_memory_index_)) {
+  if (mem_index == static_cast<uint32_t>(cached_memory_index_)) {
     return instance_cache_->mem_start;
   }
   return LoadMemStart(mem_index);
@@ -3369,7 +3371,7 @@ Node* WasmGraphBuilder::MemSize(uint32_t mem_index) {
   DCHECK_NOT_NULL(instance_cache_);
   V8_ASSUME(cached_memory_index_ == kNoCachedMemoryIndex ||
             cached_memory_index_ >= 0);
-  if (mem_index == static_cast<uint8_t>(cached_memory_index_)) {
+  if (mem_index == static_cast<uint32_t>(cached_memory_index_)) {
     return instance_cache_->mem_size;
   }
 
@@ -5489,6 +5491,7 @@ Node* WasmGraphBuilder::DefaultValue(wasm::ValueType type) {
       return Int32Constant(0);
     case wasm::kI64:
       return Int64Constant(0);
+    case wasm::kF16:
     case wasm::kF32:
       return Float32Constant(0);
     case wasm::kF64:
@@ -5995,6 +5998,7 @@ void WasmGraphBuilder::ArrayCopy(Node* dst_array, Node* dst_index,
     case wasm::kI16:
       array_copy_max_loop_length = 20;
       break;
+    case wasm::kF16:
     case wasm::kF32:
     case wasm::kF64:
       array_copy_max_loop_length = 35;
@@ -6109,6 +6113,8 @@ Node* WasmGraphBuilder::StoreInInt64StackSlot(Node* value,
                               mcgraph()->machine()->ChangeInt32ToInt64(), value)
                         : value;
       break;
+    case wasm::kF16:
+      UNIMPLEMENTED();
     case wasm::kRtt:
     case wasm::kVoid:
     case wasm::kBottom:
@@ -7313,6 +7319,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
       case wasm::kRtt:
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kS128:
       case wasm::kVoid:
       case wasm::kBottom:
@@ -7444,6 +7451,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
       case wasm::kS128:
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kBottom:
       case wasm::kVoid:
         // If this is reached, then IsJSCompatibleSignature() is too permissive.
@@ -7499,6 +7507,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
       case wasm::kS128:
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kBottom:
       case wasm::kVoid:
         UNREACHABLE();
@@ -7622,6 +7631,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
         case wasm::kS128:
         case wasm::kI8:
         case wasm::kI16:
+        case wasm::kF16:
         case wasm::kBottom:
         case wasm::kVoid:
           return false;
@@ -7672,6 +7682,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
       case wasm::kS128:
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kBottom:
       case wasm::kVoid:
         UNREACHABLE();
@@ -7701,6 +7712,15 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
       TerminateThrow(effect(), control());
       return;
     }
+
+#if V8_ENABLE_DRUMBRAKE
+    if (v8_flags.wasm_enable_exec_time_histograms && v8_flags.slow_histograms &&
+        !v8_flags.wasm_jitless) {
+      Node* runtime_call = BuildCallToRuntimeWithContext(
+          Runtime::kWasmTraceBeginExecution, js_context, nullptr, 0);
+      SetControl(runtime_call);
+    }
+#endif  // V8_ENABLE_DRUMBRAKE
 
     const int args_count = wasm_param_count + 1;  // +1 for wasm_code.
 
@@ -7735,6 +7755,16 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
       Node* jsval =
           BuildCallAndReturn(js_context, function_data, args, do_conversion,
                              frame_state, set_in_wasm_flag);
+
+#if V8_ENABLE_DRUMBRAKE
+      if (v8_flags.wasm_enable_exec_time_histograms &&
+          v8_flags.slow_histograms && !v8_flags.wasm_jitless) {
+        Node* runtime_call = BuildCallToRuntimeWithContext(
+            Runtime::kWasmTraceEndExecution, js_context, nullptr, 0);
+        SetControl(runtime_call);
+      }
+#endif  // V8_ENABLE_DRUMBRAKE
+
       gasm_->Goto(&done, jsval);
       gasm_->Bind(&slow_path);
     }
@@ -7763,6 +7793,16 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     Node* jsval =
         BuildCallAndReturn(js_context, function_data, args, do_conversion,
                            frame_state, set_in_wasm_flag);
+
+#if V8_ENABLE_DRUMBRAKE
+    if (v8_flags.wasm_enable_exec_time_histograms && v8_flags.slow_histograms &&
+        !v8_flags.wasm_jitless) {
+      Node* runtime_call = BuildCallToRuntimeWithContext(
+          Runtime::kWasmTraceEndExecution, js_context, nullptr, 0);
+      SetControl(runtime_call);
+    }
+#endif  // V8_ENABLE_DRUMBRAKE
+
     // If both the default and a fast transformation paths are present,
     // get the return value based on the path used.
     if (include_fast_path) {
@@ -7862,9 +7902,9 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     gasm_->Call(then_call_desc, then_target, value, on_fulfilled, on_rejected,
                 UndefinedValue(), native_context);
 
-    BuildSwitchBackFromCentralStack(*old_sp, suspender);
+    BuildSwitchBackFromCentralStack(*old_sp);
     Node* resolved = gasm_->Call(call_descriptor, call_target, suspender);
-    BuildSwitchToTheCentralStack(suspender);
+    BuildSwitchToTheCentralStack();
     gasm_->Goto(&resume, resolved, *old_sp);
 
     gasm_->Bind(&bad_suspender);
@@ -7876,7 +7916,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     return resume.PhiAt(0);
   }
 
-  Node* BuildSwitchToTheCentralStack(Node* receiver) {
+  Node* BuildSwitchToTheCentralStack() {
     Node* stack_limit_slot = gasm_->IntPtrAdd(
         gasm_->LoadFramePointer(),
         gasm_->IntPtrConstant(
@@ -7888,8 +7928,10 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
                           MachineType::Pointer()};
     MachineSignature sig(1, 2, reps);
 
-    Node* central_stack_sp =
-        BuildCCall(&sig, do_switch, receiver, stack_limit_slot);
+    Node* central_stack_sp = BuildCCall(
+        &sig, do_switch,
+        gasm_->ExternalConstant(ExternalReference::isolate_address()),
+        stack_limit_slot);
     Node* old_sp = gasm_->LoadStackPointer();
     // Temporarily disallow sp-relative offsets.
     gasm_->SetStackPointer(central_stack_sp);
@@ -7901,7 +7943,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     return old_sp;
   }
 
-  void BuildSwitchBackFromCentralStack(Node* old_sp, Node* receiver) {
+  void BuildSwitchBackFromCentralStack(Node* old_sp) {
     Node* stack_limit = gasm_->Load(
         MachineType::Pointer(), gasm_->LoadFramePointer(),
         WasmImportWrapperFrameConstants::kSecondaryStackLimitOffset);
@@ -7910,7 +7952,9 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
         ExternalReference::wasm_switch_from_the_central_stack_for_js());
     MachineType reps[] = {MachineType::Pointer(), MachineType::Pointer()};
     MachineSignature sig(0, 2, reps);
-    BuildCCall(&sig, do_switch, receiver, stack_limit);
+    BuildCCall(&sig, do_switch,
+               gasm_->ExternalConstant(ExternalReference::isolate_address()),
+               stack_limit);
     gasm_->Store(StoreRepresentation(MachineType::PointerRepresentation(),
                                      kNoWriteBarrier),
                  gasm_->LoadFramePointer(),
@@ -7919,7 +7963,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     gasm_->SetStackPointer(old_sp);
   }
 
-  Node* BuildSwitchToTheCentralStackIfNeeded(Node* receiver) {
+  Node* BuildSwitchToTheCentralStackIfNeeded() {
     // If the current stack is a secondary stack, switch to the central stack.
     auto end = gasm_->MakeLabel(MachineRepresentation::kTaggedPointer);
     Node* isolate_root = BuildLoadIsolateRoot();
@@ -7929,7 +7973,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     gasm_->GotoIf(is_on_central_stack_flag, &end, BranchHint::kTrue,
                   gasm_->IntPtrConstant(0));
 
-    Node* old_sp = BuildSwitchToTheCentralStack(receiver);
+    Node* old_sp = BuildSwitchToTheCentralStack();
     gasm_->Goto(&end, old_sp);
 
     gasm_->Bind(&end);
@@ -7960,10 +8004,19 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
       return;
     }
 
+#if V8_ENABLE_DRUMBRAKE
+    if (v8_flags.wasm_enable_exec_time_histograms && v8_flags.slow_histograms &&
+        !v8_flags.wasm_jitless) {
+      Node* runtime_call = BuildCallToRuntimeWithContext(
+          Runtime::kWasmTraceEndExecution, native_context, nullptr, 0);
+      SetControl(runtime_call);
+    }
+#endif  // V8_ENABLE_DRUMBRAKE
+
     Node* callable_node = gasm_->Load(
         MachineType::TaggedPointer(), Param(0),
         wasm::ObjectAccess::ToTagged(WasmApiFunctionRef::kCallableOffset));
-    Node* old_sp = BuildSwitchToTheCentralStackIfNeeded(callable_node);
+    Node* old_sp = BuildSwitchToTheCentralStackIfNeeded();
 
     Node* undefined_node = UndefinedValue();
     Node* call = nullptr;
@@ -8053,6 +8106,15 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     SetSourcePosition(call, 0);
     DCHECK_NOT_NULL(call);
 
+#if V8_ENABLE_DRUMBRAKE
+    if (v8_flags.wasm_enable_exec_time_histograms && v8_flags.slow_histograms &&
+        !v8_flags.wasm_jitless) {
+      Node* runtime_call = BuildCallToRuntimeWithContext(
+          Runtime::kWasmTraceBeginExecution, native_context, nullptr, 0);
+      SetControl(runtime_call);
+    }
+#endif  // V8_ENABLE_DRUMBRAKE
+
     if (suspend == wasm::kSuspend) {
       Node* active_suspender =
           LOAD_MUTABLE_ROOT(ActiveSuspender, active_suspender);
@@ -8082,7 +8144,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     auto done = gasm_->MakeLabel();
     gasm_->GotoIf(gasm_->IntPtrEqual(old_sp, gasm_->IntPtrConstant(0)), &done,
                   BranchHint::kTrue);
-    BuildSwitchBackFromCentralStack(old_sp, callable_node);
+    BuildSwitchBackFromCentralStack(old_sp);
     gasm_->Goto(&done);
     gasm_->Bind(&done);
 
@@ -8310,8 +8372,10 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
                 "(https://crbug.com/v8/14260)");
           }
 
+          START_ALLOW_USE_DEPRECATED()
           constexpr int kSize = sizeof(FastApiTypedArray<uint8_t>);
           constexpr int kAlign = alignof(FastApiTypedArray<uint8_t>);
+          END_ALLOW_USE_DEPRECATED()
 
           Node* stack_slot = gasm_->StackSlot(kSize, kAlign);
 
@@ -8829,6 +8893,8 @@ MaybeHandle<Code> CompileWasmToJSWrapper(Isolate* isolate,
                                          wasm::ImportCallKind kind,
                                          int expected_arity,
                                          wasm::Suspend suspend) {
+  DCHECK(!v8_flags.wasm_jitless);
+
   // Build a name in the form "wasm-to-js-<kind>-<signature>".
   constexpr size_t kMaxNameLen = 128;
   constexpr size_t kNamePrefixLen = 11;
@@ -8903,6 +8969,8 @@ MaybeHandle<Code> CompileWasmToJSWrapper(Isolate* isolate,
 
 Handle<Code> CompileCWasmEntry(Isolate* isolate, const wasm::FunctionSig* sig,
                                const wasm::WasmModule* module) {
+  DCHECK(!v8_flags.wasm_jitless);
+
   std::unique_ptr<Zone> zone = std::make_unique<Zone>(
       isolate->allocator(), ZONE_NAME, kCompressGraphZone);
   Graph* graph = zone->New<Graph>(zone.get());

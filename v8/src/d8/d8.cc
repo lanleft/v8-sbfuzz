@@ -683,7 +683,7 @@ MaybeLocal<T> Shell::CompileString(Isolate* isolate, Local<Context> context,
   }
 
   ScriptCompiler::CachedData* cached_code = nullptr;
-  if (options.compile_options == ScriptCompiler::kConsumeCodeCache) {
+  if (options.compile_options & ScriptCompiler::kConsumeCodeCache) {
     cached_code = LookupCodeCache(isolate, source);
   }
   ScriptCompiler::Source script_source(source, origin, cached_code);
@@ -781,8 +781,9 @@ std::shared_ptr<ModuleEmbedderData> InitializeModuleEmbedderData(
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(context->GetIsolate());
   const size_t kModuleEmbedderDataEstimate = 4 * 1024;  // module map.
   i::Handle<i::Managed<ModuleEmbedderData>> module_data_managed =
-      i::Managed<ModuleEmbedderData>::Allocate(
-          i_isolate, kModuleEmbedderDataEstimate, context->GetIsolate());
+      i::Managed<ModuleEmbedderData>::From(
+          i_isolate, kModuleEmbedderDataEstimate,
+          std::make_shared<ModuleEmbedderData>(context->GetIsolate()));
   v8::Local<v8::Value> module_data = Utils::ToLocal(module_data_managed);
   context->SetEmbedderData(kModuleEmbedderDataIndex, module_data);
   return module_data_managed->get();
@@ -892,7 +893,7 @@ bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
             i_isolate, true, i::construct_language_mode(i::v8_flags.use_strict),
             i::REPLMode::kNo, ScriptType::kClassic, i::v8_flags.lazy);
 
-    if (options.compile_options == v8::ScriptCompiler::kEagerCompile) {
+    if (options.compile_options & v8::ScriptCompiler::kEagerCompile) {
       flags.set_is_eager(true);
     }
 
@@ -956,7 +957,7 @@ bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
     delete cached_data;
   }
   if (options.compile_only) return true;
-  if (options.compile_options == ScriptCompiler::kConsumeCodeCache) {
+  if (options.compile_options & ScriptCompiler::kConsumeCodeCache) {
     i::DirectHandle<i::Script> i_script(
         i::Cast<i::Script>(
             Utils::OpenDirectHandle(*script)->shared()->script()),
@@ -1729,16 +1730,44 @@ void PerIsolateData::SetDomNodeCtor(Local<FunctionTemplate> ctor) {
 }
 
 bool PerIsolateData::HasRunningSubscribedWorkers() {
-  return !subscribed_workers_.empty();
+  // Only consider subscribed workers, so that code that spawns a worker and
+  // never subscribes to message events will quit.
+  return !worker_message_callbacks_.empty();
 }
 
-void PerIsolateData::RegisterSubscribedWorker(std::shared_ptr<Worker> worker) {
-  subscribed_workers_.insert(std::move(worker));
+void PerIsolateData::RegisterWorker(std::shared_ptr<Worker> worker) {
+  registered_workers_.insert(std::move(worker));
 }
 
-void PerIsolateData::UnregisterSubscribedWorker(
-    std::shared_ptr<Worker> worker) {
-  subscribed_workers_.erase(std::move(worker));
+void PerIsolateData::SubscribeWorkerOnMessage(
+    const std::shared_ptr<Worker>& worker, Local<Context> context,
+    Local<Function> callback) {
+  if (!registered_workers_.contains(worker)) {
+    // The worker has already terminated, so it won't be posting any more
+    // messages. Don't try to subscribe to its events.
+    fprintf(
+        stderr,
+        "Trying to subscribe to message events from a terminated worker -- "
+        "consider registering the event handler before the event loop runs.\n");
+    return;
+  }
+  worker_message_callbacks_.emplace(
+      worker, std::make_pair(Global<Context>(isolate_, context),
+                             Global<Function>(isolate_, callback)));
+}
+
+std::pair<Local<Context>, Local<Function>> PerIsolateData::GetWorkerOnMessage(
+    const std::shared_ptr<Worker>& worker) const {
+  auto it = worker_message_callbacks_.find(worker);
+  if (it == worker_message_callbacks_.end()) {
+    return {};
+  }
+  return {it->second.first.Get(isolate_), it->second.second.Get(isolate_)};
+}
+
+void PerIsolateData::UnregisterWorker(const std::shared_ptr<Worker>& worker) {
+  registered_workers_.erase(worker);
+  worker_message_callbacks_.erase(worker);
 }
 
 PerIsolateData::RealmScope::RealmScope(Isolate* isolate,
@@ -2818,6 +2847,20 @@ void Shell::SetTimeout(const v8::FunctionCallbackInfo<v8::Value>& info) {
       std::make_unique<SetTimeoutTask>(isolate, context, callback));
 }
 
+#ifdef V8_ENABLE_CONTINUATION_PRESERVED_EMBEDDER_DATA
+void Shell::GetContinuationPreservedEmbedderData(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  info.GetReturnValue().Set(
+      info.GetIsolate()->GetContinuationPreservedEmbedderData());
+}
+#endif  // V8_ENABLE_CONTINUATION_PRESERVED_EMBEDDER_DATA
+
+void Shell::GetExtrasBindingObject(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  Local<Context> context = info.GetIsolate()->GetCurrentContext();
+  info.GetReturnValue().Set(context->GetExtrasBindingObject());
+}
+
 void Shell::ReadCodeTypeAndArguments(
     const v8::FunctionCallbackInfo<v8::Value>& info, int index,
     CodeType* code_type, Local<Value>* arguments) {
@@ -2993,19 +3036,20 @@ void Shell::WorkerNew(const v8::FunctionCallbackInfo<v8::Value>& info) {
     // The C++ worker object's lifetime is shared between the Managed<Worker>
     // object on the heap, which the JavaScript object points to, and an
     // internal std::shared_ptr in the worker thread itself.
-    auto worker = std::make_shared<Worker>(*script);
+    auto worker = std::make_shared<Worker>(isolate, *script);
     i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
     const size_t kWorkerSizeEstimate = 4 * 1024 * 1024;  // stack + heap.
-    i::Handle<i::Object> managed = i::Managed<Worker>::FromSharedPtr(
-        i_isolate, kWorkerSizeEstimate, worker);
+    i::Handle<i::Object> managed =
+        i::Managed<Worker>::From(i_isolate, kWorkerSizeEstimate, worker);
     info.This()->SetInternalField(0, Utils::ToLocal(managed));
     base::Thread::Priority priority =
         options.apply_priority ? base::Thread::Priority::kUserBlocking
                                : base::Thread::Priority::kDefault;
-    if (!Worker::StartWorkerThread(isolate, std::move(worker), priority)) {
+    if (!Worker::StartWorkerThread(isolate, worker, priority)) {
       ThrowError(isolate, "Can't start thread");
       return;
     }
+    PerIsolateData::Get(isolate)->RegisterWorker(worker);
   }
 }
 
@@ -3112,23 +3156,30 @@ class OnMessageFromWorkerTask : public v8::Task {
 class CheckMessageFromWorkerTask : public v8::Task {
  public:
   CheckMessageFromWorkerTask(v8::Isolate* isolate,
-                             std::shared_ptr<Worker> worker,
-                             const v8::Global<v8::Context>& context,
-                             const v8::Global<v8::Value>& callback)
-      : isolate_(isolate),
-        worker_(std::move(worker)),
-        context_(context),
-        callback_(callback) {}
+                             std::shared_ptr<Worker> worker)
+      : isolate_(isolate), worker_(std::move(worker)) {}
 
   void Run() override {
     HandleScope scope(isolate_);
+
+    // Get the callback for onmessage events from this worker. It's important to
+    // do this here, and not in OnMessageFromWorkerTask, because we may get a
+    // CleanUpWorkerTask scheduled before the posted OnMessageFromWorkerTask
+    // executes, which will
+    auto callback_pair =
+        PerIsolateData::Get(isolate_)->GetWorkerOnMessage(worker_);
+    // Bail out if there's no callback -- leave the message queue untouched so
+    // that we don't lose the messages and can read them with GetMessage later.
+    // This is slightly different to browser behaviour, where events can be
+    // missed, but it's helpful for d8's GetMessage behaviour.
+    if (callback_pair.second.IsEmpty()) return;
 
     std::unique_ptr<SerializationData> result;
     while ((result = worker_->TryGetMessage())) {
       // Each onmessage callback call is posted as a separate task.
       g_platform->GetForegroundTaskRunner(isolate_)->PostTask(
           std::make_unique<OnMessageFromWorkerTask>(
-              isolate_, context_.Get(isolate_), callback_.Get(isolate_),
+              isolate_, callback_pair.first, callback_pair.second,
               std::move(result)));
     }
   }
@@ -3136,23 +3187,19 @@ class CheckMessageFromWorkerTask : public v8::Task {
  private:
   v8::Isolate* isolate_;
   std::shared_ptr<Worker> worker_;
-  const v8::Global<v8::Context>& context_;
-  const v8::Global<v8::Value>& callback_;
 };
 
 // Unregister the given isolate from message events from the given worker.
 // This must be done before the isolate or worker are destroyed, so that the
 // global handles for context and callback are cleaned up correctly -- thus the
 // event loop blocks until all workers are unregistered.
-class UnsubscribeWorkerTask : public v8::Task {
+class CleanUpWorkerTask : public v8::Task {
  public:
-  UnsubscribeWorkerTask(v8::Isolate* isolate, std::shared_ptr<Worker> worker)
+  CleanUpWorkerTask(v8::Isolate* isolate, std::shared_ptr<Worker> worker)
       : isolate_(isolate), worker_(std::move(worker)) {}
 
   void Run() override {
-    worker_->ClearOnMessage(isolate_);
-    PerIsolateData::Get(isolate_)->UnregisterSubscribedWorker(
-        std::move(worker_));
+    PerIsolateData::Get(isolate_)->UnregisterWorker(std::move(worker_));
   }
 
  private:
@@ -3171,7 +3218,12 @@ void Shell::WorkerOnMessageGetter(
   if (!worker.get()) {
     return;
   }
-  info.GetReturnValue().Set(worker->GetOnMessage(isolate));
+  Local<Function> callback =
+      PerIsolateData::Get(isolate)->GetWorkerOnMessage(worker).second;
+
+  if (!callback.IsEmpty()) {
+    info.GetReturnValue().Set(callback);
+  }
 }
 
 void Shell::WorkerOnMessageSetter(
@@ -3192,9 +3244,10 @@ void Shell::WorkerOnMessageSetter(
   }
 
   Local<Value> callback = info[0];
+  if (!callback->IsFunction()) return;
 
-  PerIsolateData::Get(isolate)->RegisterSubscribedWorker(worker);
-  worker->SetOnMessage(isolate, callback);
+  PerIsolateData::Get(isolate)->SubscribeWorkerOnMessage(
+      worker, isolate->GetCurrentContext(), Local<Function>::Cast(callback));
 }
 
 void Shell::WorkerTerminate(const v8::FunctionCallbackInfo<v8::Value>& info) {
@@ -3788,8 +3841,15 @@ Local<ObjectTemplate> Shell::CreateD8Template(Isolate* isolate) {
         FunctionTemplate::New(isolate, ProfilerTriggerSample));
     d8_template->Set(isolate, "profiler", profiler_template);
   }
+#ifdef V8_ENABLE_CONTINUATION_PRESERVED_EMBEDDER_DATA
+  d8_template->Set(
+      isolate, "getContinuationPreservedEmbedderDataViaAPIForTesting",
+      FunctionTemplate::New(isolate, GetContinuationPreservedEmbedderData));
+#endif  // V8_ENABLE_CONTINUATION_PRESERVED_EMBEDDER_DATA
   d8_template->Set(isolate, "terminate",
                    FunctionTemplate::New(isolate, Terminate));
+  d8_template->Set(isolate, "getExtrasBindingObject",
+                   FunctionTemplate::New(isolate, GetExtrasBindingObject));
   if (!options.omit_quit) {
     d8_template->Set(isolate, "quit", FunctionTemplate::New(isolate, Quit));
   }
@@ -4766,7 +4826,8 @@ void SerializationDataQueue::Clear() {
   data_.clear();
 }
 
-Worker::Worker(const char* script) : script_(i::StrDup(script)) {
+Worker::Worker(Isolate* parent_isolate, const char* script)
+    : script_(i::StrDup(script)), parent_isolate_(parent_isolate) {
   state_.store(State::kReady);
 }
 
@@ -4848,37 +4909,6 @@ class TerminateTask : public i::CancelableTask {
  private:
   std::shared_ptr<Worker> worker_;
 };
-
-Local<Value> Worker::GetOnMessage(Isolate* isolate) const {
-  if (on_message_isolate_ == nullptr) return Undefined(isolate);
-  return on_message_callback_.Get(isolate);
-}
-
-void Worker::SetOnMessage(Isolate* isolate, Local<Value> callback) {
-  Local<Context> context = isolate->GetCurrentContext();
-
-  {
-    base::MutexGuard lock_guard(&worker_mutex_);
-
-    on_message_isolate_ = isolate;
-    on_message_context_ = Global<Context>(isolate, context);
-    on_message_callback_ = Global<Value>(isolate, callback);
-  }
-  g_platform->GetForegroundTaskRunner(isolate)->PostTask(
-      std::make_unique<CheckMessageFromWorkerTask>(
-          on_message_isolate_, this->shared_from_this(), on_message_context_,
-          on_message_callback_));
-}
-
-void Worker::ClearOnMessage(Isolate* isolate) {
-  {
-    base::MutexGuard lock_guard(&worker_mutex_);
-
-    on_message_isolate_ = nullptr;
-    on_message_context_.Reset();
-    on_message_callback_.Reset();
-  }
-}
 
 std::unique_ptr<SerializationData> Worker::GetMessage(Isolate* requester) {
   std::unique_ptr<SerializationData> result;
@@ -5126,17 +5156,11 @@ void Worker::ExecuteInThread() {
   // Post nullptr to wake the thread waiting on GetMessage() if there is one.
   out_queue_.Enqueue(nullptr);
   out_semaphore_.Signal();
-  // Also post an unsubscribe task in case a thread is subscribed to messages,
-  // so that it sees that this worker is terminated and can clean up its
-  // subscription.
-  {
-    base::MutexGuard lock_guard(&worker_mutex_);
-    if (on_message_isolate_ != nullptr) {
-      g_platform->GetForegroundTaskRunner(on_message_isolate_)
-          ->PostTask(std::make_unique<UnsubscribeWorkerTask>(
-              on_message_isolate_, this->shared_from_this()));
-    }
-  }
+  // Also post an cleanup task to the parent isolate, so that it sees that this
+  // worker is terminated and can clean it up in a thread-safe way.
+  g_platform->GetForegroundTaskRunner(parent_isolate_)
+      ->PostTask(std::make_unique<CleanUpWorkerTask>(parent_isolate_,
+                                                     this->shared_from_this()));
 }
 
 void Worker::PostMessageOut(const v8::FunctionCallbackInfo<v8::Value>& info) {
@@ -5160,15 +5184,9 @@ void Worker::PostMessageOut(const v8::FunctionCallbackInfo<v8::Value>& info) {
 
     worker->out_queue_.Enqueue(std::move(data));
     worker->out_semaphore_.Signal();
-    {
-      base::MutexGuard lock_guard(&worker->worker_mutex_);
-      if (worker->on_message_isolate_ != nullptr) {
-        g_platform->GetForegroundTaskRunner(worker->on_message_isolate_)
-            ->PostTask(std::make_unique<CheckMessageFromWorkerTask>(
-                worker->on_message_isolate_, worker->shared_from_this(),
-                worker->on_message_context_, worker->on_message_callback_));
-      }
-    }
+    g_platform->GetForegroundTaskRunner(worker->parent_isolate_)
+        ->PostTask(std::make_unique<CheckMessageFromWorkerTask>(
+            worker->parent_isolate_, worker->shared_from_this()));
   }
 }
 
@@ -5505,6 +5523,7 @@ bool Shell::SetOptions(int argc, char* argv[]) {
 
   // Set up isolated source groups.
   options.isolate_sources = new SourceGroup[options.num_isolates];
+  internal::g_num_isolates_for_testing = options.num_isolates;
   SourceGroup* current = options.isolate_sources;
   current->Begin(argv, 1);
   for (int i = 1; i < argc; i++) {
@@ -6170,6 +6189,8 @@ int Shell::Main(int argc, char* argv[]) {
     tracing->Initialize(trace_buffer);
 #endif  // V8_USE_PERFETTO
   }
+
+  v8::SandboxHardwareSupport::InitializeBeforeThreadCreation();
 
   platform::tracing::TracingController* tracing_controller = tracing.get();
   if (i::v8_flags.single_threaded) {

@@ -14,6 +14,8 @@ does handle import statements, but it can't handle conditional setting of build
 settings.
 """
 
+import uuid
+import logging
 import json
 import multiprocessing
 import os
@@ -30,16 +32,18 @@ import warnings
 import google.auth
 from google.auth.transport.requests import AuthorizedSession
 
+import build_telemetry
 import gn_helper
 import ninja
-import ninja_reclient
+import ninjalog_uploader
 import reclient_helper
 import siso
 
 if sys.platform in ["darwin", "linux"]:
     import resource
 
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+_SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+_NINJALOG_UPLOADER = os.path.join(_SCRIPT_DIR, "ninjalog_uploader.py")
 
 # See [1] and [2] for the painful details of this next section, which handles
 # escaping command lines so that they can be copied and pasted into a cmd
@@ -133,7 +137,7 @@ def _is_google_corp_machine_using_external_account():
     if not _is_google_corp_machine():
         return False
 
-    with shelve.open(os.path.join(SCRIPT_DIR, ".autoninja")) as db:
+    with shelve.open(os.path.join(_SCRIPT_DIR, ".autoninja")) as db:
         last_false = db.get("last_false")
         now = time.time()
         if last_false is not None and now < last_false + 12 * 60 * 60:
@@ -183,7 +187,7 @@ def _print_cmd(cmd):
     print(*[shell_quoter(arg) for arg in cmd], file=sys.stderr)
 
 
-def main(args):
+def _main_inner(input_args, should_collect_logs=False):
     # if user doesn't set PYTHONPYCACHEPREFIX and PYTHONDONTWRITEBYTECODE
     # set PYTHONDONTWRITEBYTECODE=1 not to create many *.pyc in workspace
     # and keep workspace clean.
@@ -194,17 +198,7 @@ def main(args):
     j_specified = False
     offline = False
     output_dir = "."
-    input_args = args
     summarize_build = os.environ.get("NINJA_SUMMARIZE_BUILD") == "1"
-    # On Windows the autoninja.bat script passes along the arguments enclosed in
-    # double quotes. This prevents multiple levels of parsing of the special '^'
-    # characters needed when compiling a single file but means that this script
-    # gets called with a single argument containing all of the actual arguments,
-    # separated by spaces. When this case is detected we need to do argument
-    # splitting ourselves. This means that arguments containing actual spaces
-    # are not supported by autoninja, but that is not a real limitation.
-    if sys.platform.startswith("win") and len(args) == 2:
-        input_args = args[:1] + args[1].split()
 
     # Ninja uses getopt_long, which allow to intermix non-option arguments.
     # To leave non supported parameters untouched, we do not use getopt.
@@ -285,19 +279,16 @@ def main(args):
                 return 1
             if use_remoteexec:
                 if use_reclient:
-                    with reclient_helper.build_context(input_args,
-                                                       'autosiso') as ret_code:
-                        if ret_code:
-                            return ret_code
-                        return siso.main([
+                    return reclient_helper.run_siso(
+                        [
                             'siso',
                             'ninja',
                             # Do not authenticate when using Reproxy.
                             '-project=',
                             '-reapi_instance=',
-                        ] + input_args[1:])
-                else:
-                    return siso.main(["siso", "ninja"] + input_args[1:])
+                        ] + input_args[1:],
+                        should_collect_logs)
+                return siso.main(["siso", "ninja"] + input_args[1:])
             return siso.main(["siso", "ninja", "--offline"] + input_args[1:])
 
         if os.path.exists(siso_marker):
@@ -349,20 +340,11 @@ def main(args):
             fileno_limit, hard_limit = resource.getrlimit(
                 resource.RLIMIT_NOFILE)
 
-    # Call ninja.py so that it can find ninja binary installed by DEPS or one in
-    # PATH.
-    ninja_path = os.path.join(SCRIPT_DIR, "ninja.py")
-    # If using remoteexec, use ninja_reclient.py which wraps ninja.py with
-    # starting and stopping reproxy.
-    if use_remoteexec:
-        ninja_path = os.path.join(SCRIPT_DIR, "ninja_reclient.py")
-
-    args = [sys.executable, ninja_path]
-
+    ninja_args = ['ninja']
     num_cores = multiprocessing.cpu_count()
     if not j_specified and not t_specified:
         if not offline and use_remoteexec:
-            args.append("-j")
+            ninja_args.append("-j")
             default_core_multiplier = 80
             if platform.machine() in ("x86_64", "AMD64"):
                 # Assume simultaneous multithreading and therefore half as many
@@ -388,32 +370,72 @@ def main(args):
             if sys.platform in ["darwin", "linux"]:
                 j_value = min(j_value, int(fileno_limit * 0.8))
 
-            args.append("%d" % j_value)
+            ninja_args.append("%d" % j_value)
         else:
             j_value = num_cores
             # Ninja defaults to |num_cores + 2|
             j_value += int(os.environ.get("NINJA_CORE_ADDITION", "2"))
-            args.append("-j")
-            args.append("%d" % j_value)
+            ninja_args.append("-j")
+            ninja_args.append("%d" % j_value)
 
     if summarize_build:
         # Enable statistics collection in Ninja.
-        args += ["-d", "stats"]
+        ninja_args += ["-d", "stats"]
 
-    args += input_args[1:]
+    ninja_args += input_args[1:]
 
     if summarize_build:
         # Print the command-line to reassure the user that the right settings
         # are being used.
-        _print_cmd(args)
+        _print_cmd(ninja_args)
 
-    if use_remoteexec:
-        return ninja_reclient.main(args[1:])
-    return ninja.main(args[1:])
+    if use_reclient:
+        return reclient_helper.run_ninja(ninja_args, should_collect_logs)
+    return ninja.main(ninja_args)
+
+
+def _upload_ninjalog(args):
+    # Run upload script without wait.
+    creationflags = 0
+    if platform.system() == "Windows":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(
+        [sys.executable, _NINJALOG_UPLOADER, "--cmdline"] + args[1:],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+
+
+def main(args):
+    # Generate Build ID randomly.
+    # This ID is expected to be used consistently in all build tools.
+    build_id = os.environ.get("AUTONINJA_BUILD_ID")
+    if not build_id:
+        build_id = str(uuid.uuid4())
+        os.environ.setdefault("AUTONINJA_BUILD_ID", build_id)
+
+    # Check the log collection opt-in/opt-out status, and display notice if necessary.
+    should_collect_logs = build_telemetry.enabled()
+    # On Windows the autoninja.bat script passes along the arguments enclosed in
+    # double quotes. This prevents multiple levels of parsing of the special '^'
+    # characters needed when compiling a single file but means that this script
+    # gets called with a single argument containing all of the actual arguments,
+    # separated by spaces. When this case is detected we need to do argument
+    # splitting ourselves. This means that arguments containing actual spaces
+    # are not supported by autoninja, but that is not a real limitation.
+    input_args = args
+    if sys.platform.startswith("win") and len(args) == 2:
+        input_args = args[:1] + args[1].split()
+    try:
+        exit_code = _main_inner(input_args, should_collect_logs)
+    except KeyboardInterrupt:
+        exit_code = 1
+    finally:
+        if should_collect_logs:
+            _upload_ninjalog(input_args)
+    return exit_code
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main(sys.argv))
-    except KeyboardInterrupt:
-        sys.exit(1)
+    sys.exit(main(sys.argv))

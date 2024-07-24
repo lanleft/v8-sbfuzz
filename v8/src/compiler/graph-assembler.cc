@@ -119,6 +119,10 @@ Node* GraphAssembler::ExternalConstant(ExternalReference ref) {
   return AddClonedNode(mcgraph()->ExternalConstant(ref));
 }
 
+Node* GraphAssembler::IsolateField(IsolateFieldId id) {
+  return ExternalConstant(ExternalReference::Create(id));
+}
+
 Node* GraphAssembler::Parameter(int index) {
   return AddNode(
       graph()->NewNode(common()->Parameter(index), graph()->start()));
@@ -479,6 +483,13 @@ Node* JSGraphAssembler::Assert(Node* cond, const char* condition_string,
       cond, effect(), control()));
 }
 
+void JSGraphAssembler::Assert(TNode<Word32T> cond, const char* condition_string,
+                              const char* file, int line) {
+  AddNode(graph()->NewNode(
+      common()->Assert(BranchSemantics::kMachine, condition_string, file, line),
+      cond, effect(), control()));
+}
+
 TNode<Boolean> JSGraphAssembler::NumberIsFloat64Hole(TNode<Number> value) {
   return AddNode<Boolean>(
       graph()->NewNode(simplified()->NumberIsFloat64Hole(), value));
@@ -673,17 +684,20 @@ class ArrayBufferViewAccessBuilder {
           AccessBuilder::ForJSArrayBufferViewByteOffset(), view,
           UseInfo::Word());
 
-      return a
-          .MachineSelectIf<UintPtrT>(
-              a.UintPtrLessThanOrEqual(byte_offset, byte_length))
-          .Then([&]() {
-            // length = floor((byte_length - byte_offset) / element_size)
-            return a.UintPtrDiv(a.UintPtrSub(byte_length, byte_offset),
-                                a.ChangeUint32ToUintPtr(element_size));
-          })
-          .Else([&]() { return a.UintPtrConstant(0); })
-          .ExpectTrue()
-          .Value();
+      // return a
+      //     .MachineSelectIf<UintPtrT>(
+      //         a.UintPtrLessThanOrEqual(byte_offset, byte_length))
+      //     .Then([&]() {
+      //       // length = floor((byte_length - byte_offset) / element_size)
+      //       return a.UintPtrDiv(a.UintPtrSub(byte_length, byte_offset),
+      //                           a.ChangeUint32ToUintPtr(element_size));
+      //     })
+      //     .Else([&]() { return a.UintPtrConstant(0); })
+      //     .ExpectTrue()
+      //     .Value();
+
+      return a.UintPtrDiv(a.UintPtrSub(byte_length, byte_offset),
+                          a.ChangeUint32ToUintPtr(element_size));
     };
 
     return a.MachineSelectIf<UintPtrT>(length_tracking_bit)

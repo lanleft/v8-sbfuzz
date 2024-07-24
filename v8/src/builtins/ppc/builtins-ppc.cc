@@ -956,14 +956,12 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
   __ StoreU64(r0, MemOperand(ip));
   __ push(r3);
 
-  __ Move(ip,
-          ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(ip, IsolateFieldId::kFastCCallCallerFP);
   __ LoadU64(r3, MemOperand(ip));
   __ StoreU64(r0, MemOperand(ip));
   __ push(r3);
 
-  __ Move(ip,
-          ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+  __ LoadIsolateField(ip, IsolateFieldId::kFastCCallCallerPC);
   __ LoadU64(r3, MemOperand(ip));
   __ StoreU64(r0, MemOperand(ip));
   __ push(r3);
@@ -1050,13 +1048,11 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
 
   // Restore the top frame descriptors from the stack.
   __ pop(r6);
-  __ Move(scratch,
-          ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+  __ LoadIsolateField(scratch, IsolateFieldId::kFastCCallCallerPC);
   __ StoreU64(r6, MemOperand(scratch));
 
   __ pop(r6);
-  __ Move(scratch,
-          ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(scratch, IsolateFieldId::kFastCCallCallerFP);
   __ StoreU64(r6, MemOperand(scratch));
 
   __ pop(r6);
@@ -3532,7 +3528,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
   }
 
   // Call C built-in.
-  __ Move(isolate_reg, ExternalReference::isolate_address(masm->isolate()));
+  __ Move(isolate_reg, ER::isolate_address());
   __ StoreReturnAddressAndCall(target_fun);
 
   // If return value is on the stack, pop it to registers.
@@ -3597,7 +3593,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
     __ PrepareCallCFunction(3, 0, r3);
     __ li(kCArgRegs[0], Operand::Zero());
     __ li(kCArgRegs[1], Operand::Zero());
-    __ Move(kCArgRegs[2], ExternalReference::isolate_address(masm->isolate()));
+    __ Move(kCArgRegs[2], ER::isolate_address());
     __ CallCFunction(ER::Create(Runtime::kUnwindAndFindExceptionHandler), 3,
                      SetIsolateDataSlots::kNo);
   }
@@ -3844,7 +3840,7 @@ void Builtins::Generate_CallApiCallbackImpl(MacroAssembler* masm,
   __ StoreU64(holder, MemOperand(sp, FCA::kHolderIndex * kSystemPointerSize));
 
   // kIsolate.
-  __ Move(scratch, ER::isolate_address(masm->isolate()));
+  __ Move(scratch, ER::isolate_address());
   __ StoreU64(scratch, MemOperand(sp, FCA::kIsolateIndex * kSystemPointerSize));
 
   // kContext
@@ -3964,7 +3960,7 @@ void Builtins::Generate_CallApiGetter(MacroAssembler* masm) {
   __ LoadRoot(scratch, RootIndex::kUndefinedValue);
   __ Move(smi_zero, Smi::zero());
   __ Push(scratch, smi_zero);  // kReturnValueIndex, kHolderV2Index
-  __ Move(scratch, ER::isolate_address(masm->isolate()));
+  __ Move(scratch, ER::isolate_address());
   __ Push(scratch, holder);  // kIsolateIndex, kHolderIndex
 
   __ LoadTaggedField(name_arg,
@@ -4102,7 +4098,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
   __ li(r4, Operand(static_cast<int>(deopt_kind)));
   // r5: code address or 0 already loaded.
   // r6: Fp-to-sp delta already loaded.
-  __ Move(r7, ExternalReference::isolate_address(isolate));
+  __ Move(r7, ExternalReference::isolate_address());
   // Call Deoptimizer::New().
   {
     AllowExternalCallThatCantCauseGC scope(masm);
@@ -4140,7 +4136,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
     UseScratchRegisterScope temps(masm);
     Register is_iterable = temps.Acquire();
     Register zero = r7;
-    __ Move(is_iterable, ExternalReference::stack_is_iterable_address(isolate));
+    __ LoadIsolateField(is_iterable, IsolateFieldId::kStackIsIterable);
     __ li(zero, Operand(0));
     __ stb(zero, MemOperand(is_iterable));
   }
@@ -4246,7 +4242,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
     UseScratchRegisterScope temps(masm);
     Register is_iterable = temps.Acquire();
     Register one = r7;
-    __ Move(is_iterable, ExternalReference::stack_is_iterable_address(isolate));
+    __ LoadIsolateField(is_iterable, IsolateFieldId::kStackIsIterable);
     __ li(one, Operand(1));
     __ stb(one, MemOperand(is_iterable));
   }

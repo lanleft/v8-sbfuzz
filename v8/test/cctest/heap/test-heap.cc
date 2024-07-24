@@ -1782,7 +1782,7 @@ void CompilationCacheRegeneration(bool retain_root_sfi, bool flush_root_sfi,
     DirectHandle<Script> script(Cast<Script>(lazy_sfi->script()), isolate);
     bool root_sfi_still_exists = false;
     Tagged<MaybeObject> maybe_root_sfi =
-        script->shared_function_infos()->get(kFunctionLiteralIdTopLevel);
+        script->infos()->get(kFunctionLiteralIdTopLevel);
     if (Tagged<HeapObject> sfi_or_undefined;
         maybe_root_sfi.GetHeapObject(&sfi_or_undefined)) {
       root_sfi_still_exists = !IsUndefined(sfi_or_undefined);
@@ -3460,7 +3460,8 @@ TEST(ReleaseOverReservedPages) {
   heap::InvokeMajorGC(heap);
   CHECK_GE(overall_page_count, old_space->CountTotalPages());
   heap::InvokeMajorGC(heap);
-  CHECK_GE(overall_page_count, old_space->CountTotalPages() * 2);
+  CHECK_GE(number_of_test_pages,
+           (old_space->CountTotalPages() - initial_page_count) * 2);
 
   // Triggering a last-resort GC should cause all pages to be released to the
   // OS so that other processes can seize the memory.  If we get a failure here
@@ -3569,7 +3570,7 @@ static void CheckVectorIC(DirectHandle<JSFunction> f, int slot_index,
       Handle<FeedbackVector>(f->feedback_vector(), f->GetIsolate());
   FeedbackVectorHelper helper(vector);
   FeedbackSlot slot = helper.slot(slot_index);
-  FeedbackNexus nexus(vector, slot);
+  FeedbackNexus nexus(CcTest::i_isolate(), vector, slot);
   CHECK(nexus.ic_state() == desired_state);
 }
 
@@ -4938,7 +4939,7 @@ void CheckIC(DirectHandle<JSFunction> function, int slot_index,
              InlineCacheState state) {
   Tagged<FeedbackVector> vector = function->feedback_vector();
   FeedbackSlot slot(slot_index);
-  FeedbackNexus nexus(vector, slot);
+  FeedbackNexus nexus(CcTest::i_isolate(), vector, slot);
   CHECK_EQ(nexus.ic_state(), state);
 }
 
@@ -6728,7 +6729,7 @@ UNINITIALIZED_TEST(OutOfMemoryIneffectiveGCRunningJS) {
   if (!v8_flags.detect_ineffective_gcs_near_heap_limit) return;
   if (v8_flags.stress_incremental_marking) return;
 
-  v8_flags.max_old_space_size = 5;
+  v8_flags.max_old_space_size = 10;
   v8::Isolate::CreateParams create_params;
   create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
   v8::Isolate* isolate = v8::Isolate::New(create_params);
@@ -6983,8 +6984,8 @@ TEST(Regress8014) {
   {
     HandleScope scope(isolate);
     for (int i = 0; i < 10000; i++) {
-      auto handle = Managed<DeleteNative>::FromRawPtr(isolate, 1000000,
-                                                      new DeleteNative());
+      auto handle = Managed<DeleteNative>::From(
+          isolate, 1000000, std::make_shared<DeleteNative>());
       USE(handle);
     }
   }

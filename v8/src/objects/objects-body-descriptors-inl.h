@@ -332,6 +332,22 @@ class JSObject::FastBodyDescriptor final : public BodyDescriptorBase {
   }
 };
 
+class JSDate::BodyDescriptor final : public BodyDescriptorBase {
+ public:
+  template <typename ObjectVisitor>
+  static inline void IterateBody(Tagged<Map> map, Tagged<HeapObject> obj,
+                                 int object_size, ObjectVisitor* v) {
+    IteratePointers(obj, JSObject::BodyDescriptor::kStartOffset,
+                    JSDate::kValueOffset, v);
+    IterateJSObjectBodyImpl(map, obj, JSDate::kStartOfStrongFieldsOffset,
+                            object_size, v);
+  }
+
+  static inline int SizeOf(Tagged<Map> map, Tagged<HeapObject> object) {
+    return map->instance_size();
+  }
+};
+
 class WeakCell::BodyDescriptor final : public BodyDescriptorBase {
  public:
   template <typename ObjectVisitor>
@@ -848,32 +864,20 @@ class JSSynchronizationPrimitive::BodyDescriptor final
   }
 };
 
-class Foreign::BodyDescriptor final : public BodyDescriptorBase {
- public:
-  template <typename ObjectVisitor>
-  static inline void IterateBody(Tagged<Map> map, Tagged<HeapObject> obj,
-                                 int object_size, ObjectVisitor* v) {
-    v->VisitExternalPointer(obj, obj->RawExternalPointerField(
-                                     kForeignAddressOffset, kAnyForeignTag));
-  }
-
-  static inline int SizeOf(Tagged<Map> map, Tagged<HeapObject> object) {
-    return kSize;
-  }
-};
-
 #if V8_ENABLE_WEBASSEMBLY
 class WasmTypeInfo::BodyDescriptor final : public BodyDescriptorBase {
  public:
   template <typename ObjectVisitor>
   static inline void IterateBody(Tagged<Map> map, Tagged<HeapObject> obj,
                                  int object_size, ObjectVisitor* v) {
-    IteratePointer(obj, kInstanceOffset, v);
-    IteratePointers(obj, kSupertypesOffset, SizeOf(map, obj), v);
-
     v->VisitExternalPointer(
         obj, obj->RawExternalPointerField(kNativeTypeOffset,
                                           kWasmTypeInfoNativeTypeTag));
+
+    IterateTrustedPointer(obj, kTrustedDataOffset, v,
+                          IndirectPointerMode::kStrong,
+                          kWasmTrustedInstanceDataIndirectPointerTag);
+    IteratePointers(obj, kSupertypesOffset, SizeOf(map, obj), v);
   }
 
   static inline int SizeOf(Tagged<Map> map, Tagged<HeapObject> object) {
@@ -892,7 +896,6 @@ class WasmInstanceObject::BodyDescriptor final : public BodyDescriptorBase {
                           IndirectPointerMode::kStrong,
                           kWasmTrustedInstanceDataIndirectPointerTag);
     IteratePointer(obj, kModuleObjectOffset, v);
-    IteratePointer(obj, kSharedPartOffset, v);
     IteratePointer(obj, kExportsObjectOffset, v);
     IterateJSObjectBodyImpl(map, obj, kHeaderSize, object_size, v);
   }
@@ -1345,13 +1348,13 @@ auto BodyDescriptorApply(InstanceType type, Args&&... args) {
     case JS_ARRAY_ITERATOR_PROTOTYPE_TYPE:
     case JS_ARRAY_ITERATOR_TYPE:
     case JS_ARRAY_TYPE:
+    case JS_ASYNC_DISPOSABLE_STACK_TYPE:
     case JS_ASYNC_FROM_SYNC_ITERATOR_TYPE:
     case JS_ASYNC_FUNCTION_OBJECT_TYPE:
     case JS_ASYNC_GENERATOR_OBJECT_TYPE:
     case JS_BOUND_FUNCTION_TYPE:
     case JS_CONTEXT_EXTENSION_OBJECT_TYPE:
-    case JS_DATE_TYPE:
-    case JS_DISPOSABLE_STACK_TYPE:
+    case JS_DISPOSABLE_STACK_BASE_TYPE:
     case JS_ERROR_TYPE:
     case JS_FINALIZATION_REGISTRY_TYPE:
     case JS_GENERATOR_OBJECT_TYPE:
@@ -1386,6 +1389,7 @@ auto BodyDescriptorApply(InstanceType type, Args&&... args) {
     case JS_SHARED_STRUCT_TYPE:
     case JS_STRING_ITERATOR_PROTOTYPE_TYPE:
     case JS_STRING_ITERATOR_TYPE:
+    case JS_SYNC_DISPOSABLE_STACK_TYPE:
     case JS_TEMPORAL_CALENDAR_TYPE:
     case JS_TEMPORAL_DURATION_TYPE:
     case JS_TEMPORAL_INSTANT_TYPE:
@@ -1422,6 +1426,9 @@ auto BodyDescriptorApply(InstanceType type, Args&&... args) {
     case WASM_VALUE_OBJECT_TYPE:
 #endif  // V8_ENABLE_WEBASSEMBLY
       return CALL_APPLY(JSObject);
+
+    case JS_DATE_TYPE:
+      return CALL_APPLY(JSDate);
 
     case JS_API_OBJECT_TYPE:
     case JS_GLOBAL_OBJECT_TYPE:
@@ -1736,6 +1743,24 @@ class ObjectBoilerplateDescription::BodyDescriptor final
   static inline int SizeOf(Tagged<Map> map, Tagged<HeapObject> raw_object) {
     return UncheckedCast<ObjectBoilerplateDescription>(raw_object)
         ->AllocatedSize();
+  }
+};
+
+class FeedbackCell::BodyDescriptor final : public BodyDescriptorBase {
+ public:
+  template <typename ObjectVisitor>
+  static inline void IterateBody(Tagged<Map> map, Tagged<HeapObject> obj,
+                                 int object_size, ObjectVisitor* v) {
+    IteratePointer(obj, kValueOffset, v);
+
+#ifdef V8_ENABLE_LEAPTIERING
+    v->VisitJSDispatchTableEntry(
+        obj, obj->ReadField<JSDispatchHandle>(kDispatchHandleOffset));
+#endif
+  }
+
+  static inline int SizeOf(Tagged<Map> map, Tagged<HeapObject> object) {
+    return kAlignedSize;
   }
 };
 

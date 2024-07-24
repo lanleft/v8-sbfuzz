@@ -12,6 +12,7 @@
 #include "src/codegen/interface-descriptors-inl.h"
 #include "src/codegen/machine-type.h"
 #include "src/codegen/macro-assembler-inl.h"
+#include "src/codegen/register-configuration.h"
 #include "src/compiler/access-builder.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/logging/counters.h"
@@ -2042,6 +2043,7 @@ class LiftoffCompiler {
         CheckNan(dst, pinned, result_kind);
       } else if (result_kind == ValueKind::kS128 &&
                  (result_lane_kind == kF32 || result_lane_kind == kF64)) {
+        // TODO(irezvov): Add NaN detection for F16.
         CheckS128Nan(dst, pinned, result_lane_kind);
       }
     }
@@ -3614,8 +3616,13 @@ class LiftoffCompiler {
   void LoadMem(FullDecoder* decoder, LoadType type,
                const MemoryAccessImmediate& imm, const Value& index_val,
                Value* result) {
+    DCHECK_EQ(type.value_type().kind(), result->type.kind());
+    bool needs_f16_to_f32_conv = false;
+    if (type.value() == LoadType::kF32LoadF16) {
+      needs_f16_to_f32_conv = true;
+      type = LoadType::kI32Load16U;
+    }
     ValueKind kind = type.value_type().kind();
-    DCHECK_EQ(kind, result->type.kind());
     if (!CheckSupportedType(decoder, kind, "load")) return;
 
     uintptr_t offset = imm.offset;
@@ -3635,7 +3642,15 @@ class LiftoffCompiler {
       Register mem = pinned.set(GetMemoryStart(imm.memory->index, pinned));
       LiftoffRegister value = pinned.set(__ GetUnusedRegister(rc, pinned));
       __ Load(value, mem, no_reg, offset, type, nullptr, true, i64_offset);
-      __ PushRegister(kind, value);
+      if (needs_f16_to_f32_conv) {
+        LiftoffRegister dst = __ GetUnusedRegister(kFpReg, {});
+        auto conv_ref = ExternalReference::wasm_float16_to_float32();
+        GenerateCCallWithStackBuffer(&dst, kVoid, kF32,
+                                     {VarState{kI16, value, 0}}, conv_ref);
+        __ PushRegister(kF32, dst);
+      } else {
+        __ PushRegister(kind, value);
+      }
     } else {
       LiftoffRegister full_index = __ PopToRegister();
       index =
@@ -3656,7 +3671,15 @@ class LiftoffCompiler {
       if (imm.memory->bounds_checks == kTrapHandler) {
         RegisterProtectedInstruction(decoder, protected_load_pc);
       }
-      __ PushRegister(kind, value);
+      if (needs_f16_to_f32_conv) {
+        LiftoffRegister dst = __ GetUnusedRegister(kFpReg, {});
+        auto conv_ref = ExternalReference::wasm_float16_to_float32();
+        GenerateCCallWithStackBuffer(&dst, kVoid, kF32,
+                                     {VarState{kI16, value, 0}}, conv_ref);
+        __ PushRegister(kF32, dst);
+      } else {
+        __ PushRegister(kind, value);
+      }
     }
 
     if (V8_UNLIKELY(v8_flags.trace_wasm_memory)) {
@@ -3769,6 +3792,17 @@ class LiftoffCompiler {
 
     LiftoffRegList pinned;
     LiftoffRegister value = pinned.set(__ PopToRegister());
+
+    if (type.value() == StoreType::kF32StoreF16) {
+      type = StoreType::kI32Store16;
+      // {value} is always a float, so can't alias with {i16}.
+      DCHECK_EQ(kF32, kind);
+      LiftoffRegister i16 = pinned.set(__ GetUnusedRegister(kGpReg, {}));
+      auto conv_ref = ExternalReference::wasm_float32_to_float16();
+      GenerateCCallWithStackBuffer(&i16, kVoid, kI16,
+                                   {VarState{kF32, value, 0}}, conv_ref);
+      value = i16;
+    }
 
     uintptr_t offset = imm.offset;
     Register index = no_reg;
@@ -4193,7 +4227,12 @@ class LiftoffCompiler {
     DCHECK(lane_width == 8 || lane_width == 32 || lane_width == 64);
 #if defined(V8_TARGET_ARCH_IA32) || defined(V8_TARGET_ARCH_X64)
     if (!CpuFeatures::IsSupported(AVX)) {
+#if defined(V8_TARGET_ARCH_IA32)
+      // On ia32 xmm0 is not a cached register.
+      LiftoffRegister mask = LiftoffRegister::from_uncached(xmm0);
+#else
       LiftoffRegister mask(xmm0);
+#endif
       __ PopToFixedRegister(mask);
       LiftoffRegister src2 = __ PopToModifiableRegister(LiftoffRegList{mask});
       LiftoffRegister src1 = __ PopToRegister(LiftoffRegList{src2, mask});
@@ -4256,6 +4295,31 @@ class LiftoffCompiler {
     __ PushRegister(kS128, dst);
   }
 
+  template <ValueKind result_lane_kind, bool swap_lhs_rhs = false>
+  void EmitSimdFloatBinOpWithCFallback(
+      bool (LiftoffAssembler::*emit_fn)(LiftoffRegister, LiftoffRegister,
+                                        LiftoffRegister),
+      ExternalReference (*ext_ref)()) {
+    static constexpr RegClass rc = reg_class_for(kS128);
+    LiftoffRegister src2 = __ PopToRegister();
+    LiftoffRegister src1 = __ PopToRegister(LiftoffRegList{src2});
+    LiftoffRegister dst = __ GetUnusedRegister(rc, {src1, src2}, {});
+
+    if (swap_lhs_rhs) std::swap(src1, src2);
+
+    if (!(asm_.*emit_fn)(dst, src1, src2)) {
+      // Return v128 via stack for ARM.
+      GenerateCCallWithStackBuffer(
+          &dst, kVoid, kS128,
+          {VarState{kS128, src1, 0}, VarState{kS128, src2, 0}}, ext_ref());
+    }
+    if (V8_UNLIKELY(nondeterminism_)) {
+      LiftoffRegList pinned{dst};
+      CheckS128Nan(dst, pinned, result_lane_kind);
+    }
+    __ PushRegister(kS128, dst);
+  }
+
   template <ValueKind result_lane_kind, typename EmitFn>
   void EmitSimdFmaOp(EmitFn emit_fn) {
     LiftoffRegList pinned;
@@ -4291,6 +4355,18 @@ class LiftoffCompiler {
         return EmitUnOp<kI32, kS128>(&LiftoffAssembler::emit_i32x4_splat);
       case wasm::kExprI64x2Splat:
         return EmitUnOp<kI64, kS128>(&LiftoffAssembler::emit_i64x2_splat);
+      case wasm::kExprF16x8Splat: {
+        auto emit_with_c_fallback = [this](LiftoffRegister dst,
+                                           LiftoffRegister src) {
+          if (asm_.emit_f16x8_splat(dst, src)) return;
+          LiftoffRegister value = __ GetUnusedRegister(kGpReg, {});
+          auto conv_ref = ExternalReference::wasm_float32_to_float16();
+          GenerateCCallWithStackBuffer(&value, kVoid, kI16,
+                                       {VarState{kF32, src, 0}}, conv_ref);
+          __ emit_i16x8_splat(dst, value);
+        };
+        return EmitUnOp<kF32, kS128>(emit_with_c_fallback);
+      }
       case wasm::kExprF32x4Splat:
         return EmitUnOp<kF32, kS128, kF32>(&LiftoffAssembler::emit_f32x4_splat);
       case wasm::kExprF64x2Splat:
@@ -4381,6 +4457,24 @@ class LiftoffCompiler {
             &LiftoffAssembler::emit_i64x2_ge_s);
       case wasm::kExprI64x2GeS:
         return EmitBinOp<kS128, kS128>(&LiftoffAssembler::emit_i64x2_ge_s);
+      case wasm::kExprF16x8Eq:
+        return EmitSimdFloatBinOpWithCFallback<kI16>(
+            &LiftoffAssembler::emit_f16x8_eq, ExternalReference::wasm_f16x8_eq);
+      case wasm::kExprF16x8Ne:
+        return EmitSimdFloatBinOpWithCFallback<kI16>(
+            &LiftoffAssembler::emit_f16x8_ne, ExternalReference::wasm_f16x8_ne);
+      case wasm::kExprF16x8Lt:
+        return EmitSimdFloatBinOpWithCFallback<kI16>(
+            &LiftoffAssembler::emit_f16x8_lt, ExternalReference::wasm_f16x8_lt);
+      case wasm::kExprF16x8Gt:
+        return EmitSimdFloatBinOpWithCFallback<kI16, true>(
+            &LiftoffAssembler::emit_f16x8_lt, ExternalReference::wasm_f16x8_lt);
+      case wasm::kExprF16x8Le:
+        return EmitSimdFloatBinOpWithCFallback<kI16>(
+            &LiftoffAssembler::emit_f16x8_le, ExternalReference::wasm_f16x8_le);
+      case wasm::kExprF16x8Ge:
+        return EmitSimdFloatBinOpWithCFallback<kI16, true>(
+            &LiftoffAssembler::emit_f16x8_le, ExternalReference::wasm_f16x8_le);
       case wasm::kExprF32x4Eq:
         return EmitBinOp<kS128, kS128>(&LiftoffAssembler::emit_f32x4_eq);
       case wasm::kExprF32x4Ne:
@@ -4605,6 +4699,66 @@ class LiftoffCompiler {
       case wasm::kExprI64x2UConvertI32x4High:
         return EmitUnOp<kS128, kS128>(
             &LiftoffAssembler::emit_i64x2_uconvert_i32x4_high);
+      case wasm::kExprF16x8Abs:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_abs,
+            &ExternalReference::wasm_f16x8_abs);
+      case wasm::kExprF16x8Neg:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_neg,
+            &ExternalReference::wasm_f16x8_neg);
+      case wasm::kExprF16x8Sqrt:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_sqrt,
+            &ExternalReference::wasm_f16x8_sqrt);
+      case wasm::kExprF16x8Ceil:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_ceil,
+            &ExternalReference::wasm_f16x8_ceil);
+      case wasm::kExprF16x8Floor:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_floor,
+            ExternalReference::wasm_f16x8_floor);
+      case wasm::kExprF16x8Trunc:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_trunc,
+            ExternalReference::wasm_f16x8_trunc);
+      case wasm::kExprF16x8NearestInt:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_nearest_int,
+            ExternalReference::wasm_f16x8_nearest_int);
+      case wasm::kExprF16x8Add:
+        return EmitSimdFloatBinOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_add,
+            ExternalReference::wasm_f16x8_add);
+      case wasm::kExprF16x8Sub:
+        return EmitSimdFloatBinOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_sub,
+            ExternalReference::wasm_f16x8_sub);
+      case wasm::kExprF16x8Mul:
+        return EmitSimdFloatBinOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_mul,
+            ExternalReference::wasm_f16x8_mul);
+      case wasm::kExprF16x8Div:
+        return EmitSimdFloatBinOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_div,
+            ExternalReference::wasm_f16x8_div);
+      case wasm::kExprF16x8Min:
+        return EmitSimdFloatBinOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_min,
+            ExternalReference::wasm_f16x8_min);
+      case wasm::kExprF16x8Max:
+        return EmitSimdFloatBinOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_max,
+            ExternalReference::wasm_f16x8_max);
+      case wasm::kExprF16x8Pmin:
+        return EmitSimdFloatBinOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_pmin,
+            ExternalReference::wasm_f16x8_pmin);
+      case wasm::kExprF16x8Pmax:
+        return EmitSimdFloatBinOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_pmax,
+            ExternalReference::wasm_f16x8_pmax);
       case wasm::kExprF32x4Abs:
         return EmitUnOp<kS128, kS128, kF32>(&LiftoffAssembler::emit_f32x4_abs);
       case wasm::kExprF32x4Neg:
@@ -4913,6 +5067,19 @@ class LiftoffCompiler {
       CASE_SIMD_EXTRACT_LANE_OP(F32x4ExtractLane, F32, f32x4_extract_lane)
       CASE_SIMD_EXTRACT_LANE_OP(F64x2ExtractLane, F64, f64x2_extract_lane)
 #undef CASE_SIMD_EXTRACT_LANE_OP
+      case wasm::kExprF16x8ExtractLane:
+        EmitSimdExtractLaneOp<kS128, kF32>(
+            [this](LiftoffRegister dst, LiftoffRegister lhs,
+                   uint8_t imm_lane_idx) {
+              if (asm_.emit_f16x8_extract_lane(dst, lhs, imm_lane_idx)) return;
+              LiftoffRegister value = __ GetUnusedRegister(kGpReg, {});
+              __ emit_i16x8_extract_lane_u(value, lhs, imm_lane_idx);
+              auto conv_ref = ExternalReference::wasm_float16_to_float32();
+              GenerateCCallWithStackBuffer(
+                  &dst, kVoid, kF32, {VarState{kI16, value, 0}}, conv_ref);
+            },
+            imm);
+        break;
 #define CASE_SIMD_REPLACE_LANE_OP(opcode, kind, fn)          \
   case wasm::kExpr##opcode:                                  \
     EmitSimdReplaceLaneOp<k##kind>(                          \
@@ -4929,6 +5096,24 @@ class LiftoffCompiler {
       CASE_SIMD_REPLACE_LANE_OP(F32x4ReplaceLane, F32, f32x4_replace_lane)
       CASE_SIMD_REPLACE_LANE_OP(F64x2ReplaceLane, F64, f64x2_replace_lane)
 #undef CASE_SIMD_REPLACE_LANE_OP
+      case wasm::kExprF16x8ReplaceLane: {
+        EmitSimdReplaceLaneOp<kI32>(
+            [this](LiftoffRegister dst, LiftoffRegister src1,
+                   LiftoffRegister src2, uint8_t imm_lane_idx) {
+              if (asm_.emit_f16x8_replace_lane(dst, src1, src2, imm_lane_idx)) {
+                return;
+              }
+              __ PushRegister(kS128, src1);
+              LiftoffRegister value = __ GetUnusedRegister(kGpReg, {});
+              auto conv_ref = ExternalReference::wasm_float32_to_float16();
+              GenerateCCallWithStackBuffer(&value, kVoid, kI16,
+                                           {VarState{kF32, src2, 0}}, conv_ref);
+              __ PopToFixedRegister(src1);
+              __ emit_i16x8_replace_lane(dst, src1, value, imm_lane_idx);
+            },
+            imm);
+        break;
+      }
       default:
         UNREACHABLE();
     }
@@ -5114,6 +5299,7 @@ class LiftoffCompiler {
       }
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kVoid:
       case wasm::kBottom:
         UNREACHABLE();
@@ -5170,6 +5356,7 @@ class LiftoffCompiler {
       }
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kVoid:
       case wasm::kBottom:
         UNREACHABLE();
@@ -8423,7 +8610,7 @@ class LiftoffCompiler {
                 LoadType::ForValueKind(kIntPtrKind));
       }
 
-      if (v8_flags.experimental_wasm_inlining_call_indirect) {
+      if (v8_flags.wasm_inlining_call_indirect) {
         SCOPED_CODE_COMMENT("Feedback collection for speculative inlining");
 
         ScopedTempRegister vector{std::move(dispatch_table_base)};
@@ -8511,6 +8698,23 @@ class LiftoffCompiler {
   }
 
   void EmitDeoptPoint(FullDecoder* decoder) {
+#if defined(DEBUG) and !defined(V8_TARGET_ARCH_ARM)
+    // Liftoff may only use "allocatable registers" as defined by the
+    // RegisterConfiguration. (The deoptimizer will not handle non-allocatable
+    // registers).
+    // Note that this DCHECK is skipped for arm 32 bit as its deoptimizer
+    // decides to handle all available double / simd registers.
+    const RegisterConfiguration* config = RegisterConfiguration::Default();
+    DCHECK_LE(kLiftoffAssemblerFpCacheRegs.Count(),
+              config->num_allocatable_simd128_registers());
+    for (DoubleRegister reg : kLiftoffAssemblerFpCacheRegs) {
+      const int* end = config->allocatable_simd128_codes() +
+                       config->num_allocatable_simd128_registers();
+      DCHECK(std::find(config->allocatable_simd128_codes(), end, reg.code()) !=
+             end);
+    }
+#endif
+
     LiftoffAssembler::CacheState initial_state(zone_);
     initial_state.Split(*__ cache_state());
     // TODO(mliedtke): The deopt point should be in out-of-line-code.
@@ -8770,6 +8974,7 @@ class LiftoffCompiler {
         return __ LoadConstant(reg, WasmValue(int32_t{0}));
       case kI64:
         return __ LoadConstant(reg, WasmValue(int64_t{0}));
+      case kF16:
       case kF32:
         return __ LoadConstant(reg, WasmValue(float{0.0}));
       case kF64:

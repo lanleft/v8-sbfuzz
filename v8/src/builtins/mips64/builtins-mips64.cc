@@ -542,10 +542,10 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
   // JS frames on top.
   __ Sd(zero_reg, MemOperand(s5));
 
-  __ li(s1, ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(s1, IsolateFieldId::kFastCCallCallerFP);
   __ Ld(s2, MemOperand(s1, 0));
   __ Sd(zero_reg, MemOperand(s1, 0));
-  __ li(s1, ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+  __ LoadIsolateField(s1, IsolateFieldId::kFastCCallCallerPC);
   __ Ld(s3, MemOperand(s1, 0));
   __ Sd(zero_reg, MemOperand(s1, 0));
   __ Push(s2, s3);
@@ -659,9 +659,9 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
 
   // Restore the top frame descriptors from the stack.
   __ Pop(a4, a5);
-  __ li(a6, ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(a6, IsolateFieldId::kFastCCallCallerFP);
   __ Sd(a4, MemOperand(a6, 0));
-  __ li(a6, ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+  __ LoadIsolateField(a6, IsolateFieldId::kFastCCallCallerPC);
   __ Sd(a5, MemOperand(a6, 0));
 
   __ pop(a5);
@@ -3053,7 +3053,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
   // a0 = argc, a1 = argv, a2 = isolate, s1 = target_fun
   DCHECK_EQ(kCArgRegs[0], argc_input);
   DCHECK_EQ(kCArgRegs[1], argv);
-  __ li(kCArgRegs[2], ExternalReference::isolate_address(masm->isolate()));
+  __ li(kCArgRegs[2], ER::isolate_address());
 
   __ StoreReturnAddressAndCall(target_fun);
 
@@ -3110,7 +3110,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
     __ PrepareCallCFunction(3, 0, a0);
     __ mov(kCArgRegs[0], zero_reg);
     __ mov(kCArgRegs[1], zero_reg);
-    __ li(kCArgRegs[2], ER::isolate_address(masm->isolate()));
+    __ li(kCArgRegs[2], ER::isolate_address());
     __ CallCFunction(ER::Create(Runtime::kUnwindAndFindExceptionHandler), 3,
                      SetIsolateDataSlots::kNo);
   }
@@ -3353,7 +3353,7 @@ void Builtins::Generate_CallApiCallbackImpl(MacroAssembler* masm,
   __ Sd(holder, MemOperand(sp, FCA::kHolderIndex * kSystemPointerSize));
 
   // kIsolate.
-  __ li(scratch, ER::isolate_address(masm->isolate()));
+  __ li(scratch, ER::isolate_address());
   __ Sd(scratch, MemOperand(sp, FCA::kIsolateIndex * kSystemPointerSize));
 
   // kContext.
@@ -3469,7 +3469,7 @@ void Builtins::Generate_CallApiGetter(MacroAssembler* masm) {
 
   __ Ld(scratch, FieldMemOperand(callback, AccessorInfo::kDataOffset));
   __ LoadRoot(undef, RootIndex::kUndefinedValue);
-  __ li(scratch2, ER::isolate_address(masm->isolate()));
+  __ li(scratch2, ER::isolate_address());
   Register holderV2 = zero_reg;
   __ Push(receiver, scratch,  // kThisIndex, kDataIndex
           undef, holderV2);   // kReturnValueIndex, kHolderV2Index
@@ -3642,7 +3642,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
   __ li(a1, Operand(static_cast<int>(deopt_kind)));
   // a2: code address or 0 already loaded.
   // a3: already has fp-to-sp delta.
-  __ li(a4, ExternalReference::isolate_address(isolate));
+  __ li(a4, ExternalReference::isolate_address());
 
   // Call Deoptimizer::New().
   {

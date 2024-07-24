@@ -141,11 +141,6 @@ declare_args() {
   # Enable code-generation-time checking of types in the CodeStubAssembler.
   v8_enable_verify_csa = false
 
-  # Enable pointer compression (sets -dV8_COMPRESS_POINTERS).
-  v8_enable_pointer_compression = ""
-  v8_enable_pointer_compression_shared_cage = ""
-  v8_enable_31bit_smis_on_64bit_arch = false
-
   # Sets -dOBJECT_PRINT.
   v8_enable_object_print = ""
 
@@ -391,6 +386,19 @@ declare_args() {
   # This is only used by nodejs.
   v8_scriptormodule_legacy_lifetime = false
 
+  # WebAssembly interpreter (DrumBrake)  build flag.
+  v8_enable_drumbrake = false
+
+  # Enable Wasm interpreter tracing.
+  v8_enable_drumbrake_tracing = false
+
+  # On non-Desktop platforms, enable explicit bounds checks in the Wasm
+  # interpreter, where the bounds checking is done in the instruction handler,
+  # not using an unhandled exception filter (which also doesn't work with Win-ASAN).
+  v8_drumbrake_bounds_checks =
+      (is_win && (is_asan || is_ubsan || is_msan || is_tsan)) ||
+      !(is_win || is_linux || is_mac) || v8_current_cpu != "x64"
+
   # Enables pointer compression for 8GB heaps.
   # Sets -DV8_COMPRESS_POINTERS_8GB.
   v8_enable_pointer_compression_8gb = ""
@@ -431,11 +439,16 @@ declare_args() {
 
   # Use sticky mark-bits for separating object generations.
   v8_enable_sticky_mark_bits = false
+
+  # Use the experimental TSA-based definition for some builtins.
+  v8_enable_experimental_tsa_builtins = false
+
+  v8_dcheck_always_on = dcheck_always_on
 }
 
 # Derived defaults.
 if (cppgc_enable_verify_heap == "") {
-  cppgc_enable_verify_heap = v8_enable_debugging_features || dcheck_always_on
+  cppgc_enable_verify_heap = v8_enable_debugging_features || v8_dcheck_always_on
 }
 if (v8_enable_verify_heap == "") {
   v8_enable_verify_heap = v8_enable_debugging_features
@@ -450,14 +463,14 @@ if (v8_enable_trace_maps == "") {
   v8_enable_trace_maps = v8_enable_debugging_features
 }
 if (v8_enable_test_features == "") {
-  v8_enable_test_features = v8_enable_debugging_features || dcheck_always_on
+  v8_enable_test_features = v8_enable_debugging_features || v8_dcheck_always_on
 }
 if (v8_enable_v8_checks == "") {
   v8_enable_v8_checks = v8_enable_debugging_features
 }
 if (v8_enable_heap_snapshot_verify == "") {
   v8_enable_heap_snapshot_verify =
-      v8_enable_debugging_features || dcheck_always_on
+      v8_enable_debugging_features || v8_dcheck_always_on
 }
 if (v8_enable_snapshot_code_comments) {
   assert(v8_code_comments == true || v8_code_comments == "",
@@ -472,9 +485,11 @@ if (v8_enable_debug_code == "") {
 if (v8_enable_snapshot_native_code_counters == "") {
   v8_enable_snapshot_native_code_counters = v8_enable_debugging_features
 }
-if (v8_enable_pointer_compression == "") {
-  v8_enable_pointer_compression =
-      v8_current_cpu == "arm64" || v8_current_cpu == "x64"
+
+if (v8_enable_drumbrake && v8_enable_webassembly) {
+  assert(
+      is_drumbrake_supported,
+      "DrumBrake is only available on x64, arm64 on Windows, Linux and MacOS.")
 }
 
 # Toggle pointer compression for correctness fuzzing when building the
@@ -556,7 +571,7 @@ assert(!v8_enable_trace_ignition || v8_enable_trace_unoptimized,
 assert(!v8_enable_trace_baseline_exec || v8_enable_trace_unoptimized,
        "Baseline tracing requires unoptimized tracing to be enabled.")
 assert(
-    v8_enable_debugging_features == true || dcheck_always_on ||
+    v8_enable_debugging_features == true || v8_dcheck_always_on ||
         !v8_enable_slow_dchecks,
     "v8_enable_slow_dchecks requires v8_enable_debugging_features or dcheck_always_on.")
 
@@ -622,7 +637,7 @@ if (v8_builtins_profiling_log_file == "default") {
   # * `v8_enable_webassembly` because it changes the set of opcodes which
   #   affects graphs hashes.
   if (v8_enable_builtins_optimization && !v8_enable_builtins_profiling &&
-      !is_debug && !dcheck_always_on && v8_enable_webassembly) {
+      !is_debug && !v8_dcheck_always_on && v8_enable_webassembly) {
     # This is about function arguments evaluation order on the machine building
     # mksnapshot, which makes node IDs not predictable for subgraphs like
     # Op1(Op2(), Op3()) and as a result different graph hashes.
@@ -1253,6 +1268,15 @@ config("features") {
   if (v8_advanced_bigint_algorithms) {
     defines += [ "V8_ADVANCED_BIGINT_ALGORITHMS" ]
   }
+  if (v8_enable_drumbrake) {
+    defines += [ "V8_ENABLE_DRUMBRAKE" ]
+    if (v8_enable_drumbrake_tracing) {
+      defines += [ "V8_ENABLE_DRUMBRAKE_TRACING" ]
+    }
+    if (v8_drumbrake_bounds_checks) {
+      defines += [ "V8_DRUMBRAKE_BOUNDS_CHECKS" ]
+    }
+  }
   if (v8_enable_memory_corruption_api) {
     defines += [ "V8_ENABLE_MEMORY_CORRUPTION_API" ]
   }
@@ -1297,6 +1321,9 @@ config("features") {
   }
   if (v8_enable_sticky_mark_bits) {
     defines += [ "V8_ENABLE_STICKY_MARK_BITS" ]
+  }
+  if (v8_enable_experimental_tsa_builtins) {
+    defines += [ "V8_ENABLE_EXPERIMENTAL_TSA_BUILTINS" ]
   }
 }
 
@@ -1467,7 +1494,7 @@ config("toolchain") {
   # TODO(infra): Support v8_enable_prof on Windows.
   # TODO(infra): Add support for compiling with simulators.
 
-  if (v8_enable_debugging_features || dcheck_always_on) {
+  if (v8_enable_debugging_features || v8_dcheck_always_on) {
     defines += [ "DEBUG" ]
     if (v8_enable_slow_dchecks) {
       defines += [ "ENABLE_SLOW_DCHECKS" ]
@@ -2659,7 +2686,7 @@ if (v8_verify_builtins_compatibility) {
 action("v8_dump_build_config") {
   script = "tools/testrunner/utils/dump_build_config.py"
   outputs = [ "$root_out_dir/v8_build_config.json" ]
-  is_DEBUG_defined = v8_enable_debugging_features || dcheck_always_on
+  is_DEBUG_defined = v8_enable_debugging_features || v8_dcheck_always_on
   is_full_debug = v8_enable_debugging_features && !v8_optimized_debug
 
   arch = v8_target_cpu
@@ -2706,7 +2733,7 @@ action("v8_dump_build_config") {
     "concurrent_marking=$v8_enable_concurrent_marking",
     "conservative_stack_scanning=$v8_enable_conservative_stack_scanning",
     "current_cpu=\"$current_cpu\"",
-    "dcheck_always_on=$dcheck_always_on",
+    "dcheck_always_on=$v8_dcheck_always_on",
     "debug_code=$v8_enable_debug_code",
     "DEBUG_defined=$is_DEBUG_defined",
     "debugging_features=$v8_enable_debugging_features",
@@ -2720,6 +2747,7 @@ action("v8_dump_build_config") {
     "has_maglev=$v8_enable_maglev",
     "has_turbofan=$v8_enable_turbofan",
     "has_webassembly=$v8_enable_webassembly",
+    "has_wasm_interpreter=$v8_enable_drumbrake",
     "i18n=$v8_enable_i18n_support",
     "is_android=$is_android",
     "is_ios=$is_ios",
@@ -2911,6 +2939,7 @@ v8_source_set("v8_initializers") {
     "src/builtins/builtins-sharedarraybuffer-gen.cc",
     "src/builtins/builtins-string-gen.cc",
     "src/builtins/builtins-string-gen.h",
+    "src/builtins/builtins-string-tsa.cc",
     "src/builtins/builtins-temporal-gen.cc",
     "src/builtins/builtins-typed-array-gen.cc",
     "src/builtins/builtins-typed-array-gen.h",
@@ -2924,8 +2953,8 @@ v8_source_set("v8_initializers") {
     "src/codegen/code-stub-assembler-inl.h",
     "src/codegen/code-stub-assembler.cc",
     "src/codegen/code-stub-assembler.h",
-    "src/codegen/turboshaft-builtin-assembler.cc",
-    "src/codegen/turboshaft-builtin-assembler.h",
+    "src/codegen/heap-object-list.h",
+    "src/codegen/turboshaft-builtins-assembler-inl.h",
     "src/heap/setup-heap-internal.cc",
     "src/ic/accessor-assembler.cc",
     "src/ic/accessor-assembler.h",
@@ -2951,6 +2980,15 @@ v8_source_set("v8_initializers") {
       "src/builtins/builtins-wasm-gen.cc",
       "src/builtins/builtins-wasm-gen.h",
     ]
+
+    if (v8_enable_drumbrake) {
+      if (v8_current_cpu == "x64") {
+        sources += [ "src/wasm/interpreter/x64/interpreter-builtins-x64.cc" ]
+      } else if (v8_current_cpu == "arm64") {
+        sources +=
+            [ "src/wasm/interpreter/arm64/interpreter-builtins-arm64.cc" ]
+      }
+    }
   }
 
   if (v8_current_cpu == "x86") {
@@ -3442,6 +3480,7 @@ v8_header_set("v8_internal_headers") {
     "src/compiler/state-values-utils.h",
     "src/compiler/string-builder-optimizer.h",
     "src/compiler/turbofan.h",
+    "src/compiler/turboshaft/access-builder.h",
     "src/compiler/turboshaft/analyzer-iterator.h",
     "src/compiler/turboshaft/assembler.h",
     "src/compiler/turboshaft/assert-types-reducer.h",
@@ -4091,6 +4130,7 @@ v8_header_set("v8_internal_headers") {
     "src/runtime/runtime.h",
     "src/sandbox/bounded-size-inl.h",
     "src/sandbox/bounded-size.h",
+    "src/sandbox/check.h",
     "src/sandbox/code-entrypoint-tag.h",
     "src/sandbox/code-pointer-inl.h",
     "src/sandbox/code-pointer-table-inl.h",
@@ -4112,11 +4152,14 @@ v8_header_set("v8_internal_headers") {
     "src/sandbox/external-pointer-table-inl.h",
     "src/sandbox/external-pointer-table.h",
     "src/sandbox/external-pointer.h",
+    "src/sandbox/hardware-support.h",
     "src/sandbox/indirect-pointer-inl.h",
     "src/sandbox/indirect-pointer-tag.h",
     "src/sandbox/indirect-pointer.h",
     "src/sandbox/isolate-inl.h",
     "src/sandbox/isolate.h",
+    "src/sandbox/js-dispatch-table-inl.h",
+    "src/sandbox/js-dispatch-table.h",
     "src/sandbox/sandbox.h",
     "src/sandbox/sandboxed-pointer-inl.h",
     "src/sandbox/sandboxed-pointer.h",
@@ -4252,6 +4295,8 @@ v8_header_set("v8_internal_headers") {
       "src/maglev/maglev-ir.h",
       "src/maglev/maglev-phi-representation-selector.h",
       "src/maglev/maglev-pipeline-statistics.h",
+      "src/maglev/maglev-post-hoc-optimizations-processors.h",
+      "src/maglev/maglev-pre-regalloc-codegen-processors.h",
       "src/maglev/maglev-regalloc-data.h",
       "src/maglev/maglev-regalloc.h",
       "src/maglev/maglev-register-frame-array.h",
@@ -4321,6 +4366,7 @@ v8_header_set("v8_internal_headers") {
       "src/wasm/constant-expression-interface.h",
       "src/wasm/constant-expression.h",
       "src/wasm/decoder.h",
+      "src/wasm/float16.h",
       "src/wasm/function-body-decoder-impl.h",
       "src/wasm/function-body-decoder.h",
       "src/wasm/function-compiler.h",
@@ -4378,6 +4424,18 @@ v8_header_set("v8_internal_headers") {
       "src/wasm/wasm-value.h",
       "src/wasm/well-known-imports.h",
     ]
+
+    if (v8_enable_drumbrake) {
+      sources += [
+        "src/wasm/interpreter/instruction-handlers.h",
+        "src/wasm/interpreter/wasm-interpreter-inl.h",
+        "src/wasm/interpreter/wasm-interpreter-objects-inl.h",
+        "src/wasm/interpreter/wasm-interpreter-objects.h",
+        "src/wasm/interpreter/wasm-interpreter-runtime-inl.h",
+        "src/wasm/interpreter/wasm-interpreter-runtime.h",
+        "src/wasm/interpreter/wasm-interpreter.h",
+      ]
+    }
   }
 
   if (v8_enable_wasm_simd256_revec) {
@@ -5270,6 +5328,7 @@ v8_source_set("v8_base_without_compiler") {
     "src/builtins/builtins-api.cc",
     "src/builtins/builtins-array.cc",
     "src/builtins/builtins-arraybuffer.cc",
+    "src/builtins/builtins-async-disposable-stack.cc",
     "src/builtins/builtins-async-module.cc",
     "src/builtins/builtins-atomics-synchronization.cc",
     "src/builtins/builtins-bigint.cc",
@@ -5663,6 +5722,8 @@ v8_source_set("v8_base_without_compiler") {
     "src/sandbox/cppheap-pointer-table.cc",
     "src/sandbox/external-buffer-table.cc",
     "src/sandbox/external-pointer-table.cc",
+    "src/sandbox/hardware-support.cc",
+    "src/sandbox/js-dispatch-table.cc",
     "src/sandbox/sandbox.cc",
     "src/sandbox/testing.cc",
     "src/sandbox/trusted-pointer-table.cc",
@@ -5839,6 +5900,15 @@ v8_source_set("v8_base_without_compiler") {
       sources += [
         ### gcmole(all) ###
         "src/wasm/fuzzing/random-module-generation.cc",
+      ]
+    }
+
+    if (v8_enable_drumbrake) {
+      sources += [
+        "src/wasm/interpreter/wasm-interpreter-objects.cc",
+        "src/wasm/interpreter/wasm-interpreter-runtime.cc",
+        "src/wasm/interpreter/wasm-interpreter-simd.cc",
+        "src/wasm/interpreter/wasm-interpreter.cc",
       ]
     }
   }

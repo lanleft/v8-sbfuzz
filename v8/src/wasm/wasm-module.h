@@ -37,6 +37,9 @@ using WasmName = base::Vector<const char>;
 
 struct AsmJsOffsets;
 class ErrorThrower;
+#if V8_ENABLE_DRUMBRAKE
+class WasmInterpreterRuntime;
+#endif  // V8_ENABLE_DRUMBRAKE
 class WellKnownImportsList;
 
 // Reference to a string in the wire bytes.
@@ -601,14 +604,15 @@ struct FunctionTypeFeedback {
 
   static constexpr uint32_t kCallRef = 0xFFFFFFFF;
   static constexpr uint32_t kCallIndirect = kCallRef - 1;
-  static_assert(kV8MaxWasmFunctions < kCallIndirect);
+  static_assert(kV8MaxWasmTotalFunctions < kCallIndirect);
 };
 
 struct TypeFeedbackStorage {
   std::unordered_map<uint32_t, FunctionTypeFeedback> feedback_for_function;
-  // Accesses to {feedback_for_function} are guarded by this mutex.
-  // Multiple reads are allowed (shared lock), but only exclusive writes.
-  // Currently known users of the mutex are:
+  std::unordered_map<uint32_t, uint32_t> deopt_count_for_function;
+  // Accesses to {feedback_for_function} and {deopt_count_for_function} are
+  // guarded by this mutex. Multiple reads are allowed (shared lock), but only
+  // exclusive writes. Currently known users of the mutex are:
   // - LiftoffCompiler: writes {call_targets}.
   // - TransitiveTypeFeedbackProcessor: reads {call_targets},
   //   writes {feedback_vector}, reads {feedback_vector.size()}.
@@ -618,10 +622,10 @@ struct TypeFeedbackStorage {
   // - PGO ProfileGenerator: reads everything.
   // - PGO deserializer: writes everything, currently not locked, relies on
   //   being called before multi-threading enters the picture.
+  // - Deoptimizer: sets needs_reprocessing_after_deopt.
   mutable base::SharedMutex mutex;
 
   WellKnownImportsList well_known_imports;
-  bool has_magic_string_constants{false};
 
   size_t EstimateCurrentMemoryConsumption() const;
 };
@@ -641,7 +645,11 @@ struct WasmTable {
 // Static representation of a module.
 struct V8_EXPORT_PRIVATE WasmModule {
   // ================ Fields ===================================================
-  Zone signature_zone;
+  // The signature zone is also used to store the signatures of C++ functions
+  // called with the V8 fast API. These signatures are added during
+  // instantiation, so the `signature_zone` may be changed even when the
+  // `WasmModule` is already `const`.
+  mutable Zone signature_zone;
   int start_function_index = -1;   // start function, >= 0 if any
 
   // Size of the buffer required for all globals that are not imported and
@@ -848,6 +856,16 @@ struct V8_EXPORT_PRIVATE WasmModule {
   base::Vector<const WasmFunction> declared_functions() const {
     return base::VectorOf(functions) + num_imported_functions;
   }
+
+#if V8_ENABLE_DRUMBRAKE
+  void SetWasmInterpreter(
+      std::shared_ptr<WasmInterpreterRuntime> interpreter) const {
+    base::MutexGuard lock(&interpreter_mutex_);
+    interpreter_ = interpreter;
+  }
+  mutable std::weak_ptr<WasmInterpreterRuntime> interpreter_;
+  mutable base::Mutex interpreter_mutex_;
+#endif  // V8_ENABLE_DRUMBRAKE
 
   size_t EstimateStoredSize() const;                // No tracing.
   size_t EstimateCurrentMemoryConsumption() const;  // With tracing.

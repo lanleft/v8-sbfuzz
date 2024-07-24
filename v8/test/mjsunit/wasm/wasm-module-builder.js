@@ -118,6 +118,7 @@ let kWasmF64 = 0x7c;
 let kWasmS128 = 0x7b;
 let kWasmI8 = 0x78;
 let kWasmI16 = 0x77;
+let kWasmF16 = 0x76;
 
 // These are defined as negative integers to distinguish them from positive type
 // indices.
@@ -525,10 +526,6 @@ let kExprRefCast = 0x16;
 let kExprRefCastNull = 0x17;
 let kExprBrOnCast = 0x18;
 let kExprBrOnCastFail = 0x19;
-// TODO(mliedtke): Drop by 07/2024 or later.
-// (Just keeping it temporarily for bisection.)
-let kExprBrOnCastGeneric = kExprBrOnCast;
-let kExprBrOnCastFailGeneric = kExprBrOnCastFail;
 let kExprAnyConvertExtern = 0x1a;
 let kExprExternConvertAny = 0x1b;
 let kExprRefI31 = 0x1c;

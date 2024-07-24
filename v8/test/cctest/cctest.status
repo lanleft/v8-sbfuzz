@@ -221,7 +221,7 @@
 ##############################################################################
 ['variant == stress_concurrent_allocation', {
   # https://crbug.com/42204548
-  'test-mark-compact/MarkCompactCollector': [PASS, ['tsan', SKIP]],
+  'test-mark-compact/MarkCompactCollector': [PASS, SKIP],
 }],  # variant == stress_concurrent_allocation
 
 ##############################################################################
@@ -523,6 +523,7 @@
   'test-jump-table-assembler/*': [SKIP],
   'test-gc/*': [SKIP],
   'test-grow-memory/*': [SKIP],
+  'test-heap-profiler/HeapSnapshotWithWasmInstance': [SKIP],
   'test-js-to-wasm/*': [SKIP],
   'test-liftoff-for-fuzzing/*': [SKIP],
   'test-liftoff-inspection/*': [SKIP],
@@ -538,6 +539,16 @@
   'test-wasm-trap-position/*': [SKIP],
   'wasm-run-utils/*': [SKIP],
 }],  # not has_webassembly or variant == jitless
+
+##############################################################################
+['has_wasm_interpreter', {
+  # Skip tests that require Wasm experimental features not supported by the
+  # Wasm interpreter.
+
+  # --experimental-wasm-memory64
+  'test-run-wasm-memory64/*': [SKIP],
+
+ }],  # has_wasm_interpreter
 
 ##############################################################################
 ['lite_mode or variant == jitless', {
@@ -645,6 +656,10 @@
   'test-macro-assembler-arm/ReplaceLane': [PASS, ['arch == arm and not simulator_run', SKIP]],
 }], # variant == jitless
 
+##############################################################################
+['variant == stress_regexp_jit or variant == always_sparkplug_and_stress_regexp_jit', {
+  'test-regexp/InterruptAndTransitionSubjectFromTwoByteToOneByte': [SKIP],
+}],  # variant == stress_regexp_jit or variant == always_sparkplug_and_stress_regexp_jit
 
 ################################################################################
 ['variant == stress_snapshot', {
@@ -656,6 +671,7 @@
   'test-run-wasm-relaxed-simd/*': [SKIP],
   'test-run-wasm-simd-liftoff/*': [SKIP],
   'test-run-wasm-simd/*': [SKIP],
+  'test-run-wasm-f16/*': [SKIP],
   'test-gc/RunWasmLiftoff_RefTrivialCasts': [SKIP],
   'test-gc/RunWasmTurbofan_RefTrivialCasts': [SKIP],
   'test-gc/RunWasmLiftoff_RefTrivialCastsStatic': [SKIP],
@@ -1053,7 +1069,7 @@
 }], # third_party_heap
 
 ################################################################################
-['variant == always_sparkplug', {
+['variant == always_sparkplug or variant == always_sparkplug_and_stress_regexp_jit', {
   # %ObserveNode tests rely on TurboFan.
   'test-calls-with-arraylike-or-spread/*': [SKIP],
 }],

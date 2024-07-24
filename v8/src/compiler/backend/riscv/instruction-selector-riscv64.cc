@@ -449,6 +449,7 @@ void InstructionSelectorT<Adapter>::VisitLoad(node_t node) {
       case MachineRepresentation::kSimd256:  // Fall through.
       case MachineRepresentation::kMapWord:  // Fall through.
       case MachineRepresentation::kIndirectPointer:  // Fall through.
+      case MachineRepresentation::kFloat16:          // Fall through.
       case MachineRepresentation::kNone:
         UNREACHABLE();
     }
@@ -565,6 +566,7 @@ void InstructionSelectorT<Adapter>::VisitStore(typename Adapter::node_t node) {
       case MachineRepresentation::kMapWord:  // Fall through.
       case MachineRepresentation::kNone:
       case MachineRepresentation::kProtectedPointer:
+      case MachineRepresentation::kFloat16:
         UNREACHABLE();
     }
 
@@ -1041,7 +1043,8 @@ void InstructionSelectorT<TurbofanAdapter>::VisitInt64Mul(Node* node) {
 template <typename Adapter>
 void InstructionSelectorT<Adapter>::VisitInt32Div(node_t node) {
   if constexpr (Adapter::IsTurboshaft) {
-    VisitRRR(this, kRiscvDiv32, node);
+    VisitRRR(this, kRiscvDiv32, node,
+             OperandGenerator::RegisterUseKind::kUseUniqueRegister);
   } else {
   RiscvOperandGeneratorT<Adapter> g(this);
   Int32BinopMatcher m(node);
@@ -1061,13 +1064,15 @@ void InstructionSelectorT<Adapter>::VisitInt32Div(node_t node) {
     }
   }
   Emit(kRiscvDiv32, g.DefineSameAsFirst(node), g.UseRegister(m.left().node()),
-       g.UseRegister(m.right().node()));
+       g.UseRegister(m.right().node(),
+                     OperandGenerator::RegisterUseKind::kUseUniqueRegister));
   }
 }
 
 template <typename Adapter>
 void InstructionSelectorT<Adapter>::VisitUint32Div(node_t node) {
-  VisitRRR(this, kRiscvDivU32, node);
+  VisitRRR(this, kRiscvDivU32, node,
+           OperandGenerator::RegisterUseKind::kUseUniqueRegister);
 }
 
 template <typename Adapter>
@@ -1104,12 +1109,14 @@ void InstructionSelectorT<Adapter>::VisitUint32Mod(node_t node) {
 
 template <typename Adapter>
 void InstructionSelectorT<Adapter>::VisitInt64Div(node_t node) {
-  VisitRRR(this, kRiscvDiv64, node);
+  VisitRRR(this, kRiscvDiv64, node,
+           OperandGenerator::RegisterUseKind::kUseUniqueRegister);
 }
 
 template <typename Adapter>
 void InstructionSelectorT<Adapter>::VisitUint64Div(node_t node) {
-  VisitRRR(this, kRiscvDivU64, node);
+  VisitRRR(this, kRiscvDivU64, node,
+           OperandGenerator::RegisterUseKind::kUseUniqueRegister);
 }
 
 template <typename Adapter>
@@ -1910,6 +1917,7 @@ void InstructionSelectorT<Adapter>::VisitUnalignedLoad(node_t node) {
       case MachineRepresentation::kMapWord:            // Fall through.
       case MachineRepresentation::kIndirectPointer:    // Fall through.
       case MachineRepresentation::kProtectedPointer:   // Fall through.
+      case MachineRepresentation::kFloat16:            // Fall through.
       case MachineRepresentation::kNone:
         UNREACHABLE();
     }
@@ -1983,6 +1991,7 @@ void InstructionSelectorT<Adapter>::VisitUnalignedStore(node_t node) {
       case MachineRepresentation::kMapWord:            // Fall through.
       case MachineRepresentation::kIndirectPointer:    // Fall through.
       case MachineRepresentation::kProtectedPointer:   // Fall through.
+      case MachineRepresentation::kFloat16:
       case MachineRepresentation::kNone:
         UNREACHABLE();
     }

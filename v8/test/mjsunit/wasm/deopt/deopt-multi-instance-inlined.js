@@ -4,12 +4,11 @@
 
 // Flags: --wasm-deopt --allow-natives-syntax --no-jit-fuzzing --liftoff
 // Flags: --turboshaft-wasm-instruction-selection-staged
-// Flags: --experimental-wasm-inlining-call-indirect
 // Flags: --wasm-inlining-ignore-call-counts --wasm-inlining-factor=15
 
 d8.file.execute('test/mjsunit/wasm/wasm-module-builder.js');
 
-(function TestWithMultipleFrames() {
+(function TestMultipleModulesUninlineableTargets() {
   const builder = new WasmModuleBuilder();
   let calleeSig = builder.addType(makeSig([], [kWasmI32]));
   let mainSig = builder.addType(makeSig([wasmRefType(calleeSig)], [kWasmI32]));
@@ -39,20 +38,29 @@ d8.file.execute('test/mjsunit/wasm/wasm-module-builder.js');
   assertEquals(84, instance.exports.main(instance.exports.callee_0));
   %WasmTierUpFunction(instance.exports.main);
   assertEquals(84, instance.exports.main(instance.exports.callee_0));
-  assertTrue(%IsTurboFanFunction(instance.exports.main));
+  if (%IsolateCountForTesting() == 1) {
+    assertTrue(%IsTurboFanFunction(instance.exports.main));
+  }
 
   const instance2 = builder.instantiate({});
-  assertTrue(%IsTurboFanFunction(instance2.exports.main));
+  if (%IsolateCountForTesting() == 1) {
+    assertTrue(%IsTurboFanFunction(instance2.exports.main));
+  }
   assertEquals(84, instance2.exports.main(instance.exports.callee_0));
-  assertFalse(%IsTurboFanFunction(instance2.exports.main));
+  if (%IsolateCountForTesting() == 1) {
+    assertFalse(%IsTurboFanFunction(instance2.exports.main));
+  }
+  // Run it one more time, so that the call count to inlinee is > 0 for
+  // instance2 as otherwise the feedback doesn't get updated.
+  assertEquals(84, instance2.exports.main(instance.exports.callee_0));
   %WasmTierUpFunction(instance2.exports.main);
   assertEquals(84, instance2.exports.main(instance.exports.callee_0));
-  // TODO(mliedtke): Right now there isn't any feedback collection to indicate
-  // that the callee was non-inlineable causing deopt loops...
-  assertFalse(%IsTurboFanFunction(instance2.exports.main));
+  if (%IsolateCountForTesting() == 1) {
+    assertTrue(%IsTurboFanFunction(instance2.exports.main));
+  }
 })();
 
-(function TestWithRecursiveFrames() {
+(function TestMultipleModulesUninlineableTargetsRecursiveFrames() {
   const builder = new WasmModuleBuilder();
   let calleeSig = builder.addType(makeSig([], [kWasmI32]));
   let mainSig =
@@ -86,13 +94,21 @@ d8.file.execute('test/mjsunit/wasm/wasm-module-builder.js');
   assertEquals(42, instance.exports.main(7, instance.exports.callee_0));
   %WasmTierUpFunction(instance.exports.main);
   assertEquals(42, instance.exports.main(7, instance.exports.callee_0));
-  assertTrue(%IsTurboFanFunction(instance.exports.main));
+  if (%IsolateCountForTesting() == 1) {
+    assertTrue(%IsTurboFanFunction(instance.exports.main));
+  }
 
   const instance2 = builder.instantiate({});
-  assertTrue(%IsTurboFanFunction(instance2.exports.main));
+  if (%IsolateCountForTesting() == 1) {
+    assertTrue(%IsTurboFanFunction(instance2.exports.main));
+  }
   assertEquals(42, instance2.exports.main(7, instance.exports.callee_0));
-  assertFalse(%IsTurboFanFunction(instance2.exports.main));
+  if (%IsolateCountForTesting() == 1) {
+    assertFalse(%IsTurboFanFunction(instance2.exports.main));
+  }
   %WasmTierUpFunction(instance2.exports.main);
   assertEquals(42, instance2.exports.main(7, instance.exports.callee_0));
-  assertTrue(%IsTurboFanFunction(instance2.exports.main));
+  if (%IsolateCountForTesting() == 1) {
+    assertTrue(%IsTurboFanFunction(instance2.exports.main));
+  }
 })();

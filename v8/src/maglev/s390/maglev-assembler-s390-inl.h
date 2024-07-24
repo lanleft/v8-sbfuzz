@@ -524,6 +524,16 @@ inline void MaglevAssembler::AddInt32(Register reg, int amount) {
   AddS32(reg, Operand(amount));
 }
 
+inline void MaglevAssembler::AndInt32(Register reg, int mask) {
+  And(reg, Operand(mask));
+  LoadU32(reg, reg);
+}
+
+inline void MaglevAssembler::OrInt32(Register reg, int mask) {
+  Or(reg, Operand(mask));
+  LoadU32(reg, reg);
+}
+
 inline void MaglevAssembler::ShiftLeft(Register reg, int amount) {
   ShiftLeftU32(reg, reg, Operand(amount));
 }
@@ -617,10 +627,13 @@ void MaglevAssembler::MoveTagged(Register dst, Handle<HeapObject> obj) {
 }
 
 inline void MaglevAssembler::LoadFloat32(DoubleRegister dst, MemOperand src) {
-  MacroAssembler::LoadF32(dst, src);
+  MacroAssembler::LoadF32AsF64(dst, src);
 }
 inline void MaglevAssembler::StoreFloat32(MemOperand dst, DoubleRegister src) {
-  MacroAssembler::StoreF32(src, dst);
+  MaglevAssembler::ScratchRegisterScope temps(this);
+  DoubleRegister double_scratch = temps.AcquireDouble();
+  ledbr(double_scratch, src);
+  MacroAssembler::StoreF32(double_scratch, dst);
 }
 inline void MaglevAssembler::LoadFloat64(DoubleRegister dst, MemOperand src) {
   MacroAssembler::LoadF64(dst, src);

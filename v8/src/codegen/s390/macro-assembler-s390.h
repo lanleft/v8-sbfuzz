@@ -95,6 +95,9 @@ class V8_EXPORT_PRIVATE MacroAssembler : public MacroAssemblerBase {
   // that is guaranteed not to be clobbered.
   MemOperand ExternalReferenceAsOperand(ExternalReference reference,
                                         Register scratch);
+  MemOperand ExternalReferenceAsOperand(IsolateFieldId id) {
+    return ExternalReferenceAsOperand(ExternalReference::Create(id), no_reg);
+  }
 
   // Jump, Call, and Ret pseudo instructions implementing inter-working.
   void Jump(Register target, Condition cond = al);
@@ -173,6 +176,7 @@ class V8_EXPORT_PRIVATE MacroAssembler : public MacroAssemblerBase {
   void Move(Register dst, Handle<HeapObject> source,
             RelocInfo::Mode rmode = RelocInfo::FULL_EMBEDDED_OBJECT);
   void Move(Register dst, ExternalReference reference);
+  void LoadIsolateField(Register dst, IsolateFieldId id);
   void Move(Register dst, const MemOperand& src);
   void Move(Register dst, Register src, Condition cond = al);
   void Move(DoubleRegister dst, DoubleRegister src);
@@ -284,7 +288,9 @@ class V8_EXPORT_PRIVATE MacroAssembler : public MacroAssemblerBase {
   // Add Logical (Register - Immediate)
   void AddU32(Register dst, const Operand& imm);
   void AddU64(Register dst, const Operand& imm);
+  void AddU64(Register dst, int imm) { AddU64(dst, Operand(imm)); }
   void AddU64(Register dst, Register src1, Register src2);
+  void AddU64(Register dst, Register src) { algr(dst, src); }
 
   // Add Logical (Register - Mem)
   void AddU32(Register dst, const MemOperand& opnd);
@@ -550,8 +556,7 @@ class V8_EXPORT_PRIVATE MacroAssembler : public MacroAssemblerBase {
                   DoubleRegister scratch);
   void DivFloat64(DoubleRegister dst, const MemOperand& opnd,
                   DoubleRegister scratch);
-  void LoadF32AsF64(DoubleRegister dst, const MemOperand& opnd,
-                    DoubleRegister scratch);
+  void LoadF32AsF64(DoubleRegister dst, const MemOperand& opnd);
 
   // Load On Condition
   void LoadOnConditionP(Condition cond, Register dst, Register src);
@@ -1817,7 +1822,17 @@ class V8_EXPORT_PRIVATE MacroAssembler : public MacroAssemblerBase {
 
   template <typename Field>
   void DecodeField(Register dst, Register src) {
-    ExtractBitRange(dst, src, Field::kShift + Field::kSize - 1, Field::kShift);
+    int shift = Field::kShift;
+    int mask = Field::kMask >> Field::kShift;
+    if (base::bits::IsPowerOfTwo(mask + 1)) {
+      ExtractBitRange(dst, src, Field::kShift + Field::kSize - 1,
+                      Field::kShift);
+    } else if (shift != 0) {
+      ShiftLeftU64(dst, src, Operand(shift));
+      AndP(dst, Operand(mask));
+    } else {
+      AndP(dst, src, Operand(mask));
+    }
   }
 
   template <typename Field>

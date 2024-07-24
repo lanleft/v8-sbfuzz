@@ -152,6 +152,7 @@ UseInfo TruncatingUseInfoFromRepresentation(MachineRepresentation rep) {
       return UseInfo::AnyTagged();
     case MachineRepresentation::kFloat64:
       return UseInfo::TruncatingFloat64();
+    case MachineRepresentation::kFloat16:
     case MachineRepresentation::kFloat32:
       return UseInfo::Float32();
     case MachineRepresentation::kWord8:
@@ -1947,6 +1948,11 @@ class RepresentationSelector {
         if (flags & uint8_t(CTypeInfo::Flags::kEnforceRangeBit) ||
             flags & uint8_t(CTypeInfo::Flags::kClampBit)) {
           DCHECK(repr != CFunctionInfo::Int64Representation::kBigInt);
+          // If the parameter is marked as `kEnforceRange` or `kClampBit`, then
+          // special type conversion gets added explicitly to the generated
+          // code. Therefore it is sufficient here to only require here that the
+          // value is a Float64, even though the C++ signature actually asks for
+          // an `int32_t`.
           return UseInfo::CheckedNumberAsFloat64(kIdentifyZeros, feedback);
         }
         switch (type.GetType()) {
@@ -4651,6 +4657,17 @@ class RepresentationSelector {
         }
         SetOutput<T>(node, LoadRepresentationOf(node->op()).representation());
         return;
+
+#ifdef V8_ENABLE_CONTINUATION_PRESERVED_EMBEDDER_DATA
+      case IrOpcode::kGetContinuationPreservedEmbedderData:
+        SetOutput<T>(node, MachineRepresentation::kTagged);
+        return;
+
+      case IrOpcode::kSetContinuationPreservedEmbedderData:
+        ProcessInput<T>(node, 0, UseInfo::AnyTagged());
+        SetOutput<T>(node, MachineRepresentation::kNone);
+        return;
+#endif  // V8_ENABLE_CONTINUATION_PRESERVED_EMBEDDER_DATA
 
       default:
         FATAL(

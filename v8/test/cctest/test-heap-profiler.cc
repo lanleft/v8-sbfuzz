@@ -37,6 +37,7 @@
 #include "include/v8-profiler.h"
 #include "src/api/api-inl.h"
 #include "src/base/hashmap.h"
+#include "src/base/logging.h"
 #include "src/base/optional.h"
 #include "src/base/strings.h"
 #include "src/codegen/assembler-inl.h"
@@ -53,6 +54,10 @@
 #include "test/cctest/heap/heap-utils.h"
 #include "test/cctest/jsonstream-helper.h"
 
+#if V8_ENABLE_WEBASSEMBLY
+#include "src/wasm/wasm-module-builder.h"
+#endif
+
 using i::AllocationTraceNode;
 using i::AllocationTraceTree;
 using i::AllocationTracker;
@@ -60,7 +65,9 @@ using i::EntrySourceLocation;
 using i::heap::GrowNewSpaceToMaximumCapacity;
 using v8::base::ArrayVector;
 using v8::base::Optional;
+using v8::base::OS;
 using v8::base::Vector;
+using v8::base::VectorOf;
 
 namespace {
 
@@ -188,6 +195,39 @@ static const v8::HeapGraphNode* GetProperty(v8::Isolate* isolate,
   }
   return nullptr;
 }
+
+// The following functions are not Wasm-specific, but are only used in a
+// Wasm-specific test. As long as this is the case we only define them if Wasm
+// is enabled to avoid warnings about unused functions.
+#if V8_ENABLE_WEBASSEMBLY
+static const std::vector<std::string> GetProperties(
+    v8::Isolate* isolate, const v8::HeapGraphNode* node) {
+  int num_children = node->GetChildrenCount();
+  std::vector<std::string> properties(num_children);
+  for (int i = 0; i < num_children; ++i) {
+    const v8::HeapGraphEdge* prop = node->GetChild(i);
+    v8::String::Utf8Value prop_name(isolate, prop->GetName());
+    properties[i] = *prop_name;
+  }
+  std::sort(properties.begin(), properties.end());
+  return properties;
+}
+
+static void CheckProperties(
+    v8::Isolate* isolate, const v8::HeapGraphNode* node,
+    std::initializer_list<std::string> expected_properties) {
+  std::vector<std::string> properties = GetProperties(isolate, node);
+  if (VectorOf(properties) == VectorOf(expected_properties)) return;
+
+  std::ostringstream full_error;
+  full_error << "Expected properties: "
+             << i::PrintCollection(expected_properties) << "\n";
+  full_error << "Found properties:    " << i::PrintCollection(properties)
+             << "\n";
+  OS::PrintError("%s\n", full_error.str().c_str());
+  FATAL("Mismatch in properties");
+}
+#endif  // V8_ENABLE_WEBASSEMBLY
 
 static bool HasString(v8::Isolate* isolate, const v8::HeapGraphNode* node,
                       const char* contents) {
@@ -4329,3 +4369,117 @@ TEST(ObjectRetainedInDirectHandle) {
   // Make sure to keep the handle alive.
   CHECK(!direct.is_null());
 }
+
+#if V8_ENABLE_WEBASSEMBLY
+TEST(HeapSnapshotWithWasmInstance) {
+  LocalContext env2;
+  v8::Isolate* isolate = env2->GetIsolate();
+  v8::HandleScope scope(isolate);
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  v8::HeapProfiler* heap_profiler = isolate->GetHeapProfiler();
+
+  i::Zone zone(i_isolate->allocator(), ZONE_NAME);
+  i::wasm::ZoneBuffer buffer(&zone);
+  i::wasm::WasmModuleBuilder module_builder{&zone};
+  module_builder.WriteTo(&buffer);
+
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+  // Get the "WebAssembly.Module" and "WebAssembly.Instance" functions.
+  auto get_property = [context, isolate](
+                          v8::Local<v8::Object> obj,
+                          const char* property_name) -> v8::Local<v8::Object> {
+    auto name = v8::String::NewFromUtf8(isolate, property_name,
+                                        v8::NewStringType::kInternalized)
+                    .ToLocalChecked();
+    return obj->Get(context, name).ToLocalChecked().As<v8::Object>();
+  };
+  auto wasm_class = get_property(context->Global(), "WebAssembly");
+  auto module_class = get_property(wasm_class, "Module");
+  auto instance_class = get_property(wasm_class, "Instance");
+
+  // Create an arraybuffer with the wire bytes.
+  v8::Local<v8::ArrayBuffer> buf = v8::ArrayBuffer::New(isolate, buffer.size());
+  memcpy(static_cast<uint8_t*>(buf->GetBackingStore()->Data()), buffer.data(),
+         buffer.size());
+
+  // Now call the "WebAssembly.Module" function with the array buffer.
+  v8::Local<v8::Value> module_args[] = {buf};
+  v8::Local<v8::Value> module_object =
+      module_class
+          ->CallAsConstructor(context, arraysize(module_args), module_args)
+          .ToLocalChecked();
+  auto set_property = [context, isolate](v8::Local<v8::Object> obj,
+                                         const char* property_name,
+                                         v8::Local<v8::Value> value) {
+    auto name = v8::String::NewFromUtf8(isolate, property_name,
+                                        v8::NewStringType::kInternalized)
+                    .ToLocalChecked();
+    CHECK(obj->Set(context, name, value).FromMaybe(false));
+  };
+  // Store the module as global "module".
+  set_property(context->Global(), "module", module_object);
+
+  // Create a Wasm instance by calling "WebAssembly.Instance" with the module.
+  v8::Local<v8::Value> instance_args[] = {module_object};
+  v8::Local<v8::Value> instance_object =
+      instance_class
+          ->CallAsConstructor(context, arraysize(instance_args), instance_args)
+          .ToLocalChecked();
+  // Store the instance object as global "instance".
+  set_property(context->Global(), "instance", instance_object);
+
+  // Now take a snapshot and check the representation of the Wasm objects.
+  const v8::HeapSnapshot* snapshot = heap_profiler->TakeHeapSnapshot();
+  CHECK(ValidateSnapshot(snapshot));
+  const v8::HeapGraphNode* global = GetGlobalObject(snapshot);
+
+  // Check the properties of the global "instance" (adapt this when fields are
+  // added or removed).
+  const v8::HeapGraphNode* instance_node =
+      GetProperty(isolate, global, v8::HeapGraphEdge::kProperty, "instance");
+  CHECK_NOT_NULL(instance_node);
+  CheckProperties(
+      isolate, instance_node,
+      {"__proto__", "exports", "map", "module_object", "trusted_data"});
+
+  // Check the properties of the WasmTrustedInstanceData.
+  const v8::HeapGraphNode* trusted_instance_data_node = GetProperty(
+      isolate, instance_node, v8::HeapGraphEdge::kInternal, "trusted_data");
+  CHECK_NOT_NULL(trusted_instance_data_node);
+  CheckProperties(
+      isolate, trusted_instance_data_node,
+      {"dispatch_table0", "dispatch_table_for_imports", "dispatch_tables",
+       "instance_object", "managed_native_module", "map",
+       "memory_bases_and_sizes", "native_context", "shared_part"});
+
+  // "module_object" should be the same as the global "module".
+  const v8::HeapGraphNode* module_node =
+      GetProperty(isolate, global, v8::HeapGraphEdge::kProperty, "module");
+  CHECK_NOT_NULL(module_node);
+  CHECK_EQ(module_node,
+           GetProperty(isolate, instance_node, v8::HeapGraphEdge::kInternal,
+                       "module_object"));
+  // Check that all properties of the WasmModuleObject are there (adapt this
+  // when fields are added or removed).
+  CheckProperties(isolate, module_node,
+                  {"__proto__", "managed_native_module", "map", "script"});
+  // Check the "managed_native_module" specifically. It should say
+  // "Managed<wasm::NativeModule>" and should have a reasonable size.
+  const v8::HeapGraphNode* managed_node =
+      GetProperty(isolate, module_node, v8::HeapGraphEdge::kInternal,
+                  "managed_native_module");
+  CHECK_NOT_NULL(managed_node);
+  v8::String::Utf8Value managed_name{isolate, managed_node->GetName()};
+#if V8_ENABLE_SANDBOX
+  CHECK_EQ(std::string_view{"system / Managed<wasm::NativeModule>"},
+           std::string_view{*managed_name});
+  // The size of the Managed is computed from the size of the NativeModule. This
+  // is multiple kB, just conservatively assume >= 500b here.
+  CHECK_LE(500, managed_node->GetShallowSize());
+#else
+  CHECK_EQ(std::string_view{"system / Foreign"},
+           std::string_view{*managed_name});
+#endif  // V8_ENABLE_SANDBOX
+}
+#endif  // V8_ENABLE_WEBASSEMBLY

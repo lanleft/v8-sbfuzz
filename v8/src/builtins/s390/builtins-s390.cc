@@ -894,14 +894,12 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
   __ StoreU64(r0, MemOperand(ip));
   __ push(r9);
 
-  __ Move(ip,
-          ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(ip, IsolateFieldId::kFastCCallCallerFP);
   __ LoadU64(r9, MemOperand(ip));
   __ StoreU64(r0, MemOperand(ip));
   __ push(r9);
 
-  __ Move(ip,
-          ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+  __ LoadIsolateField(ip, IsolateFieldId::kFastCCallCallerPC);
   __ LoadU64(r9, MemOperand(ip));
   __ StoreU64(r0, MemOperand(ip));
   __ push(r9);
@@ -992,13 +990,11 @@ void Generate_JSEntryVariant(MacroAssembler* masm, StackFrame::Type type,
 
   // Restore the top frame descriptors from the stack.
   __ pop(r5);
-  __ Move(scrach,
-          ExternalReference::fast_c_call_caller_pc_address(masm->isolate()));
+  __ LoadIsolateField(scrach, IsolateFieldId::kFastCCallCallerPC);
   __ StoreU64(r5, MemOperand(scrach));
 
   __ pop(r5);
-  __ Move(scrach,
-          ExternalReference::fast_c_call_caller_fp_address(masm->isolate()));
+  __ LoadIsolateField(scrach, IsolateFieldId::kFastCCallCallerFP);
   __ StoreU64(r5, MemOperand(scrach));
 
   __ pop(r5);
@@ -3501,7 +3497,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
     __ mov(r8, r2);
   }
   // Call C built-in.
-  __ Move(isolate_reg, ExternalReference::isolate_address(masm->isolate()));
+  __ Move(isolate_reg, ER::isolate_address());
 
 #if V8_OS_ZOS
   // Shuffle input arguments to match XPLINK ABI
@@ -3603,7 +3599,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
     __ PrepareCallCFunction(3, 0, r2);
     __ mov(kCArgRegs[0], Operand::Zero());
     __ mov(kCArgRegs[1], Operand::Zero());
-    __ Move(kCArgRegs[2], ExternalReference::isolate_address(masm->isolate()));
+    __ Move(kCArgRegs[2], ER::isolate_address());
     __ CallCFunction(ER::Create(Runtime::kUnwindAndFindExceptionHandler), 3,
                      SetIsolateDataSlots::kNo);
   }
@@ -3838,7 +3834,7 @@ void Builtins::Generate_CallApiCallbackImpl(MacroAssembler* masm,
   __ StoreU64(holder, MemOperand(sp, FCA::kHolderIndex * kSystemPointerSize));
 
   // kIsolate.
-  __ Move(scratch, ER::isolate_address(masm->isolate()));
+  __ Move(scratch, ER::isolate_address());
   __ StoreU64(scratch, MemOperand(sp, FCA::kIsolateIndex * kSystemPointerSize));
 
   // kContext
@@ -3957,7 +3953,7 @@ void Builtins::Generate_CallApiGetter(MacroAssembler* masm) {
   __ LoadRoot(scratch, RootIndex::kUndefinedValue);
   __ Move(smi_zero, Smi::zero());
   __ Push(scratch, smi_zero);  // kReturnValueIndex, kHolderV2Index
-  __ Move(scratch, ER::isolate_address(masm->isolate()));
+  __ Move(scratch, ER::isolate_address());
   __ Push(scratch, holder);
   __ LoadTaggedField(name_arg,
                      FieldMemOperand(callback, AccessorInfo::kNameOffset), r1);
@@ -4069,7 +4065,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
   // r4: code address or 0 already loaded.
   // r5: Fp-to-sp delta already loaded.
   // Parm6: isolate is passed on the stack.
-  __ Move(r6, ExternalReference::isolate_address(isolate));
+  __ Move(r6, ExternalReference::isolate_address());
   __ StoreU64(r6,
               MemOperand(sp, kStackFrameExtraParamSlot * kSystemPointerSize));
 
@@ -4116,7 +4112,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
     UseScratchRegisterScope temps(masm);
     Register is_iterable = temps.Acquire();
     Register zero = r6;
-    __ Move(is_iterable, ExternalReference::stack_is_iterable_address(isolate));
+    __ LoadIsolateField(is_iterable, IsolateFieldId::kStackIsIterable);
     __ lhi(zero, Operand(0));
     __ StoreU8(zero, MemOperand(is_iterable));
   }
@@ -4217,7 +4213,7 @@ void Generate_DeoptimizationEntry(MacroAssembler* masm,
     UseScratchRegisterScope temps(masm);
     Register is_iterable = temps.Acquire();
     Register one = r6;
-    __ Move(is_iterable, ExternalReference::stack_is_iterable_address(isolate));
+    __ LoadIsolateField(is_iterable, IsolateFieldId::kStackIsIterable);
     __ lhi(one, Operand(1));
     __ StoreU8(one, MemOperand(is_iterable));
   }

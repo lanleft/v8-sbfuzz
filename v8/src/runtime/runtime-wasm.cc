@@ -29,6 +29,10 @@
 #include "src/wasm/wasm-subtyping.h"
 #include "src/wasm/wasm-value.h"
 
+#if V8_ENABLE_WEBASSEMBLY && V8_ENABLE_DRUMBRAKE
+#include "src/wasm/interpreter/wasm-interpreter.h"
+#endif  // V8_ENABLE_WEBASSEMBLY && V8_ENABLE_DRUMBRAKE
+
 namespace v8 {
 namespace internal {
 
@@ -105,12 +109,26 @@ class V8_NODISCARD ClearThreadInWasmScope {
     if (is_thread_in_wasm_) {
       trap_handler::ClearThreadInWasm();
     }
+
+#if V8_ENABLE_DRUMBRAKE
+    if (v8_flags.wasm_enable_exec_time_histograms && v8_flags.slow_histograms &&
+        !v8_flags.wasm_jitless) {
+      isolate->wasm_execution_timer()->Stop();
+    }
+#endif  // V8_ENABLE_DRUMBRAKE
   }
   ~ClearThreadInWasmScope() {
     DCHECK_IMPLIES(trap_handler::IsTrapHandlerEnabled(),
                    !trap_handler::IsThreadInWasm());
     if (!isolate_->has_exception() && is_thread_in_wasm_) {
       trap_handler::SetThreadInWasm();
+
+#if V8_ENABLE_DRUMBRAKE
+      if (v8_flags.wasm_enable_exec_time_histograms &&
+          v8_flags.slow_histograms && !v8_flags.wasm_jitless) {
+        isolate_->wasm_execution_timer()->Start();
+      }
+#endif  // V8_ENABLE_DRUMBRAKE
     }
     // Otherwise we only want to set the flag if the exception is caught in
     // wasm. This is handled by the unwinder.
@@ -124,6 +142,14 @@ class V8_NODISCARD ClearThreadInWasmScope {
 Tagged<Object> ThrowWasmError(
     Isolate* isolate, MessageTemplate message,
     std::initializer_list<DirectHandle<Object>> args = {}) {
+#if V8_ENABLE_DRUMBRAKE
+  if (v8_flags.wasm_jitless) {
+    // Store the trap reason to be retrieved later when the interpreter will
+    // trap while detecting the thrown exception.
+    wasm::WasmInterpreterThread::SetRuntimeLastWasmError(isolate, message);
+  }
+#endif  // V8_ENABLE_DRUMBRAKE
+
   Handle<JSObject> error_obj =
       isolate->factory()->NewWasmRuntimeError(message, base::VectorOf(args));
   JSObject::AddProperty(isolate, error_obj,
@@ -292,6 +318,15 @@ RUNTIME_FUNCTION(Runtime_WasmThrowJSTypeError) {
   // The caller may be wasm or JS. Only clear the thread_in_wasm flag if the
   // caller is wasm, and let the unwinder set it back depending on the handler.
   if (trap_handler::IsTrapHandlerEnabled() && trap_handler::IsThreadInWasm()) {
+#if V8_ENABLE_DRUMBRAKE
+    // Transitioning from Wasm To JS.
+    if (v8_flags.wasm_enable_exec_time_histograms && v8_flags.slow_histograms &&
+        !v8_flags.wasm_jitless) {
+      // Stop measuring the time spent running jitted Wasm.
+      isolate->wasm_execution_timer()->Stop();
+    }
+#endif  // V8_ENABLE_DRUMBRAKE
+
     trap_handler::ClearThreadInWasm();
   }
   HandleScope scope(isolate);
@@ -587,13 +622,6 @@ RUNTIME_FUNCTION(Runtime_TierUpWasmToJSWrapper) {
       wasm::SerializedSignatureHelper::DeserializeSignature(ref->sig(), &reps);
   DirectHandle<Object> origin(ref->call_origin(), isolate);
 
-  const wasm::WasmModule* module = nullptr;
-  Handle<WasmTrustedInstanceData> trusted_data;
-  if (ref->has_instance_data()) {
-    trusted_data =
-        Handle<WasmTrustedInstanceData>(ref->instance_data(), isolate);
-    module = trusted_data->module();
-  }
   if (IsWasmFuncRef(*origin)) {
     // The tierup for `WasmInternalFunction is special, as there may not be an
     // instance.
@@ -609,6 +637,9 @@ RUNTIME_FUNCTION(Runtime_TierUpWasmToJSWrapper) {
         kind = wasm::ImportCallKind::kJSFunctionArityMismatch;
       }
     }
+    const wasm::WasmModule* module =
+        ref->has_instance_data() ? ref->instance_data()->module() : nullptr;
+
     DirectHandle<Code> wasm_to_js_wrapper_code =
         compiler::CompileWasmToJSWrapper(
             isolate, module, &sig, kind, static_cast<int>(expected_arity),
@@ -625,6 +656,7 @@ RUNTIME_FUNCTION(Runtime_TierUpWasmToJSWrapper) {
     return ReadOnlyRoots(isolate).undefined_value();
   }
 
+  Handle<WasmTrustedInstanceData> trusted_data(ref->instance_data(), isolate);
   if (IsTuple2(*origin)) {
     auto tuple = Cast<Tuple2>(origin);
     trusted_data =
@@ -632,6 +664,7 @@ RUNTIME_FUNCTION(Runtime_TierUpWasmToJSWrapper) {
                isolate);
     origin = direct_handle(tuple->value2(), isolate);
   }
+  const wasm::WasmModule* module = trusted_data->module();
 
   // Get the function's canonical signature index.
   uint32_t canonical_sig_index = std::numeric_limits<uint32_t>::max();
@@ -646,9 +679,13 @@ RUNTIME_FUNCTION(Runtime_TierUpWasmToJSWrapper) {
     int table_count = trusted_data->dispatch_tables()->length();
     // We have to find the table which contains the correct entry.
     for (int table_index = 0; table_index < table_count; ++table_index) {
-      if (!trusted_data->has_dispatch_table(table_index)) continue;
+      bool table_is_shared = module->tables[table_index].shared;
+      Handle<WasmTrustedInstanceData> maybe_shared_data =
+          table_is_shared ? handle(trusted_data->shared_part(), isolate)
+                          : trusted_data;
+      if (!maybe_shared_data->has_dispatch_table(table_index)) continue;
       Tagged<WasmDispatchTable> table =
-          trusted_data->dispatch_table(table_index);
+          maybe_shared_data->dispatch_table(table_index);
       if (entry_index < table->length() && table->ref(entry_index) == *ref) {
         canonical_sig_index = table->sig(entry_index);
         break;
@@ -758,8 +795,8 @@ RUNTIME_FUNCTION(Runtime_WasmTriggerTierUp) {
       // budget to appropriately delay the next call.
       int array_index =
           wasm::declared_function_index(trusted_data->module(), func_index);
-      trusted_data->tiering_budget_array()[array_index] =
-          v8_flags.wasm_tiering_budget;
+      trusted_data->tiering_budget_array()[array_index].store(
+          v8_flags.wasm_tiering_budget, std::memory_order_relaxed);
     } else {
       wasm::TriggerTierUp(isolate, trusted_data, func_index);
     }
@@ -1349,12 +1386,12 @@ RUNTIME_FUNCTION(Runtime_WasmAllocateSuspender) {
   auto parent = handle(Cast<WasmContinuationObject>(
                            isolate->root(RootIndex::kActiveContinuation)),
                        isolate);
-  DirectHandle<WasmContinuationObject> target =
-      WasmContinuationObject::New(isolate, wasm::JumpBuffer::Inactive, parent);
-  auto target_stack =
-      Cast<Managed<wasm::StackMemory>>(target->stack())->get().get();
-  isolate->wasm_stacks().push_back(target_stack);
-  target_stack->set_index(isolate->wasm_stacks().size() - 1);
+  std::unique_ptr<wasm::StackMemory> target_stack =
+      isolate->stack_pool().GetOrAllocate();
+  DirectHandle<WasmContinuationObject> target = WasmContinuationObject::New(
+      isolate, target_stack.get(), wasm::JumpBuffer::Inactive, parent);
+  target_stack->set_index(isolate->wasm_stacks().size());
+  isolate->wasm_stacks().emplace_back(std::move(target_stack));
   for (size_t i = 0; i < isolate->wasm_stacks().size(); ++i) {
     SLOW_DCHECK(isolate->wasm_stacks()[i]->index() == i);
   }
@@ -1416,8 +1453,7 @@ RUNTIME_FUNCTION(Runtime_WasmCastToSpecialPrimitiveArray) {
   if (!IsWasmArray(args[0])) return ThrowWasmError(isolate, illegal_cast);
   Tagged<WasmArray> obj = Cast<WasmArray>(args[0]);
   Tagged<WasmTypeInfo> wti = obj->map()->wasm_type_info();
-  const wasm::WasmModule* module =
-      Cast<WasmInstanceObject>(wti->instance())->module();
+  const wasm::WasmModule* module = wti->trusted_data(isolate)->module();
   DCHECK(module->has_array(wti->type_index()));
   uint32_t expected = bits == 8
                           ? wasm::TypeCanonicalizer::kPredefinedArrayI8Index
@@ -1703,6 +1739,27 @@ Tagged<Object> EncodeWtf8(Isolate* isolate, unibrow::Utf8Variant variant,
 }
 }  // namespace
 
+// Used for storing the name of a string-constants imports module off the heap.
+// Defined here to be able to make use of the helper functions above.
+void ToUtf8Lossy(Isolate* isolate, Handle<String> string, std::string& out) {
+  int utf8_length = MeasureWtf8(isolate, string);
+  DisallowGarbageCollection no_gc;
+  out.resize(utf8_length);
+  String::FlatContent content = string->GetFlatContent(no_gc);
+  DCHECK(content.IsFlat());
+  static constexpr unibrow::Utf8Variant variant =
+      unibrow::Utf8Variant::kLossyUtf8;
+  MessageTemplate* error_cant_happen = nullptr;
+  MessageTemplate oob_cant_happen = MessageTemplate::kInvalid;
+  if (content.IsOneByte()) {
+    EncodeWtf8({out.data(), out.size()}, 0, content.ToOneByteVector(), variant,
+               error_cant_happen, oob_cant_happen);
+  } else {
+    EncodeWtf8({out.data(), out.size()}, 0, content.ToUC16Vector(), variant,
+               error_cant_happen, oob_cant_happen);
+  }
+}
+
 RUNTIME_FUNCTION(Runtime_WasmStringMeasureUtf8) {
   ClearThreadInWasmScope flag_scope(isolate);
   DCHECK_EQ(1, args.length());
@@ -1947,6 +2004,32 @@ RUNTIME_FUNCTION(Runtime_WasmStringViewWtf8Slice) {
                                   unibrow::Utf8Variant::kWtf8)
               .ToHandleChecked();
 }
+
+#ifdef V8_ENABLE_DRUMBRAKE
+RUNTIME_FUNCTION(Runtime_WasmTraceBeginExecution) {
+  DCHECK(v8_flags.slow_histograms && !v8_flags.wasm_jitless &&
+         v8_flags.wasm_enable_exec_time_histograms);
+  DCHECK_EQ(0, args.length());
+  HandleScope scope(isolate);
+
+  wasm::WasmExecutionTimer* timer = isolate->wasm_execution_timer();
+  timer->Start();
+
+  return ReadOnlyRoots(isolate).undefined_value();
+}
+
+RUNTIME_FUNCTION(Runtime_WasmTraceEndExecution) {
+  DCHECK(v8_flags.slow_histograms && !v8_flags.wasm_jitless &&
+         v8_flags.wasm_enable_exec_time_histograms);
+  DCHECK_EQ(0, args.length());
+  HandleScope scope(isolate);
+
+  wasm::WasmExecutionTimer* timer = isolate->wasm_execution_timer();
+  timer->Stop();
+
+  return ReadOnlyRoots(isolate).undefined_value();
+}
+#endif  // V8_ENABLE_DRUMBRAKE
 
 RUNTIME_FUNCTION(Runtime_WasmStringFromCodePoint) {
   ClearThreadInWasmScope flag_scope(isolate);

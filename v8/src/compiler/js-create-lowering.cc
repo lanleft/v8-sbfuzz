@@ -18,6 +18,7 @@
 #include "src/compiler/state-values-utils.h"
 #include "src/execution/protectors.h"
 #include "src/objects/arguments.h"
+#include "src/objects/contexts.h"
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/heap-number.h"
 #include "src/objects/js-collection-iterator.h"
@@ -100,6 +101,8 @@ Reduction JSCreateLowering::Reduce(Node* node) {
       return ReduceJSCreateGeneratorObject(node);
     case IrOpcode::kJSCreateObject:
       return ReduceJSCreateObject(node);
+    case IrOpcode::kJSCreateStringWrapper:
+      return ReduceJSCreateStringWrapper(node);
     default:
       break;
   }
@@ -948,6 +951,17 @@ Reduction JSCreateLowering::ReduceJSCreateClosure(Node* node) {
   DCHECK(!function_map.IsInobjectSlackTrackingInProgress());
   DCHECK(!function_map.is_dictionary_map());
 
+#ifdef V8_ENABLE_LEAPTIERING
+  // TODO(saelo): we should embed the dispatch handle directly into the
+  // generated code instead of loading it at runtime from the FeedbackCell.
+  // This will likely first require GC support though.
+  Node* feedback_cell_node = jsgraph()->ConstantNoHole(feedback_cell, broker());
+  Node* dispatch_handle = effect = graph()->NewNode(
+      simplified()->LoadField(
+          AccessBuilder::ForFeedbackCellDispatchHandleNoWriteBarrier()),
+      feedback_cell_node, effect, control);
+#endif  // V8_ENABLE_LEAPTIERING
+
   // TODO(turbofan): We should use the pretenure flag from {p} here,
   // but currently the heuristic in the parser works against us, as
   // it marks closures like
@@ -960,7 +974,8 @@ Reduction JSCreateLowering::ReduceJSCreateClosure(Node* node) {
   AllocationType allocation = AllocationType::kYoung;
 
   // Emit code to allocate the JSFunction instance.
-  static_assert(JSFunction::kSizeWithoutPrototype == 7 * kTaggedSize);
+  static_assert(JSFunction::kSizeWithoutPrototype ==
+                (7 + V8_ENABLE_LEAPTIERING_BOOL) * kTaggedSize);
   AllocationBuilder a(jsgraph(), broker(), effect, control);
   a.Allocate(function_map.instance_size(), allocation,
              Type::CallableFunction());
@@ -972,12 +987,18 @@ Reduction JSCreateLowering::ReduceJSCreateClosure(Node* node) {
   a.Store(AccessBuilder::ForJSFunctionSharedFunctionInfo(), shared);
   a.Store(AccessBuilder::ForJSFunctionContext(), context);
   a.Store(AccessBuilder::ForJSFunctionFeedbackCell(), feedback_cell);
+#ifdef V8_ENABLE_LEAPTIERING
+  a.Store(AccessBuilder::ForJSFunctionDispatchHandleNoWriteBarrier(),
+          dispatch_handle);
+#endif  // V8_ENABLE_LEAPTIERING
   a.Store(AccessBuilder::ForJSFunctionCode(), code);
-  static_assert(JSFunction::kSizeWithoutPrototype == 7 * kTaggedSize);
+  static_assert(JSFunction::kSizeWithoutPrototype ==
+                (7 + V8_ENABLE_LEAPTIERING_BOOL) * kTaggedSize);
   if (function_map.has_prototype_slot()) {
     a.Store(AccessBuilder::ForJSFunctionPrototypeOrInitialMap(),
             jsgraph()->TheHoleConstant());
-    static_assert(JSFunction::kSizeWithPrototype == 8 * kTaggedSize);
+    static_assert(JSFunction::kSizeWithPrototype ==
+                  (8 + V8_ENABLE_LEAPTIERING_BOOL) * kTaggedSize);
   }
   for (int i = 0; i < function_map.GetInObjectProperties(); i++) {
     a.Store(AccessBuilder::ForJSObjectInObjectProperty(function_map, i),
@@ -1427,6 +1448,29 @@ Reduction JSCreateLowering::ReduceJSCreateObject(Node* node) {
 
   ReplaceWithValue(node, value, effect, control);
   return Replace(value);
+}
+
+Reduction JSCreateLowering::ReduceJSCreateStringWrapper(Node* node) {
+  DCHECK_EQ(IrOpcode::kJSCreateStringWrapper, node->opcode());
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* primitive_value = NodeProperties::GetValueInput(node, 0);
+
+  MapRef map = native_context().string_function(broker()).initial_map(broker());
+  DCHECK_EQ(map.instance_size(), JSPrimitiveWrapper::kHeaderSize);
+  CHECK(!map.IsInobjectSlackTrackingInProgress());
+
+  // Emit code to allocate the JSPrimitiveWrapper instance for the given {map}.
+  AllocationBuilder a(jsgraph(), broker(), effect, graph()->start());
+  a.Allocate(JSPrimitiveWrapper::kHeaderSize, AllocationType::kYoung,
+             Type::StringWrapper());
+  a.Store(AccessBuilder::ForMap(), map);
+  a.Store(AccessBuilder::ForJSObjectPropertiesOrHash(),
+          jsgraph()->EmptyFixedArrayConstant());
+  a.Store(AccessBuilder::ForJSObjectElements(),
+          jsgraph()->EmptyFixedArrayConstant());
+  a.Store(AccessBuilder::ForJSPrimitiveWrapperValue(), primitive_value);
+  a.FinishAndChange(node);
+  return Changed(node);
 }
 
 // Helper that allocates a FixedArray holding argument values recorded in the

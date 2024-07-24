@@ -289,6 +289,7 @@ void InstructionSelectorT<Adapter>::VisitLoad(node_t node) {
     case MachineRepresentation::kSimd256:  // Fall through.
     case MachineRepresentation::kProtectedPointer:  // Fall through.
     case MachineRepresentation::kIndirectPointer:
+    case MachineRepresentation::kFloat16:
       UNREACHABLE();
     }
 
@@ -374,6 +375,7 @@ void InstructionSelectorT<TurboshaftAdapter>::VisitStore(node_t node) {
       case MachineRepresentation::kSimd256:  // Fall through.
       case MachineRepresentation::kProtectedPointer:  // Fall through.
       case MachineRepresentation::kIndirectPointer:
+      case MachineRepresentation::kFloat16:
         UNREACHABLE();
     }
 
@@ -481,6 +483,7 @@ void InstructionSelectorT<TurbofanAdapter>::VisitStore(Node* node) {
       case MachineRepresentation::kSimd256:  // Fall through.
       case MachineRepresentation::kProtectedPointer:  // Fall through.
       case MachineRepresentation::kIndirectPointer:
+      case MachineRepresentation::kFloat16:
         UNREACHABLE();
     }
 
@@ -630,12 +633,14 @@ void InstructionSelectorT<Adapter>::VisitUint32MulHigh(node_t node) {
 
 template <typename Adapter>
 void InstructionSelectorT<Adapter>::VisitInt32Div(node_t node) {
-  VisitRRR(this, kRiscvDiv32, node);
+  VisitRRR(this, kRiscvDiv32, node,
+           OperandGenerator::RegisterUseKind::kUseUniqueRegister);
 }
 
 template <typename Adapter>
 void InstructionSelectorT<Adapter>::VisitUint32Div(node_t node) {
-  VisitRRR(this, kRiscvDivU32, node);
+  VisitRRR(this, kRiscvDivU32, node,
+           OperandGenerator::RegisterUseKind::kUseUniqueRegister);
 }
 
 template <typename Adapter>
@@ -917,6 +922,7 @@ void InstructionSelectorT<Adapter>::VisitUnalignedLoad(node_t node) {
       case MachineRepresentation::kWord64:
       case MachineRepresentation::kNone:
       case MachineRepresentation::kIndirectPointer:
+      case MachineRepresentation::kFloat16:
         UNREACHABLE();
     }
 
@@ -980,6 +986,7 @@ void InstructionSelectorT<Adapter>::VisitUnalignedStore(node_t node) {
       case MachineRepresentation::kNone:
       case MachineRepresentation::kWord64:
       case MachineRepresentation::kIndirectPointer:
+      case MachineRepresentation::kFloat16:
         UNREACHABLE();
     }
 

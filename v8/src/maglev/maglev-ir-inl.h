@@ -109,6 +109,7 @@ void DeepForVirtualObject(VirtualObject* vobject,
         // Check if it has escaped.
         if (alloc->HasBeenAnalysed() && alloc->HasBeenElided()) {
           VirtualObject* vobject = virtual_objects.FindAllocatedWith(alloc);
+          CHECK_NOT_NULL(vobject);
           input_location++;  // Reserved for the inlined allocation.
           DeepForVirtualObject<mode>(vobject, input_location, virtual_objects,
                                      f);
@@ -135,16 +136,15 @@ void DeepForEachInputAndVirtualObject(
   const VirtualObject::List& virtual_objects = GetVirtualObjects(frame);
   auto update_node = [&f, &virtual_objects](ValueNodeT<mode> node,
                                             InputLocation*& input_location) {
-    // Node cannot be an InlinedAllocation, since we patched to a VirtualObject
-    // snapshot.
-    DCHECK(!node->template Is<InlinedAllocation>());
+    DCHECK(!node->template Is<VirtualObject>());
     if constexpr (mode == DeoptFrameVisitMode::kRemoveIdentities) {
       if (node->template Is<Identity>()) {
         node = node->input(0).node();
       }
     }
-    if (auto vobject = node->template TryCast<VirtualObject>()) {
-      InlinedAllocation* alloc = vobject->allocation();
+    if (auto alloc = node->template TryCast<InlinedAllocation>()) {
+      VirtualObject* vobject = virtual_objects.FindAllocatedWith(alloc);
+      CHECK_NOT_NULL(vobject);
       if (alloc->HasBeenAnalysed() && alloc->HasBeenElided()) {
         input_location++;  // Reserved for the inlined allocation.
         return DeepForVirtualObject<mode>(vobject, input_location,

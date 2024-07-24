@@ -145,6 +145,10 @@
 #include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-objects.h"
+
+#if V8_ENABLE_DRUMBRAKE
+#include "src/wasm/interpreter/wasm-interpreter.h"
+#endif  // V8_ENABLE_DRUMBRAKE
 #endif  // V8_ENABLE_WEBASSEMBLY
 
 #if defined(V8_OS_WIN) && defined(V8_ENABLE_ETW_STACK_WALKING)
@@ -608,11 +612,11 @@ void Isolate::Iterate(RootVisitor* v, ThreadLocalTop* thread) {
 #if V8_ENABLE_WEBASSEMBLY
   wasm::WasmCodeRefScope wasm_code_ref_scope;
 
-  for (wasm::StackMemory* stack : wasm_stacks_) {
+  for (const std::unique_ptr<wasm::StackMemory>& stack : wasm_stacks_) {
     if (stack->IsActive()) {
       continue;
     }
-    for (StackFrameIterator it(this, stack); !it.done(); it.Advance()) {
+    for (StackFrameIterator it(this, stack.get()); !it.done(); it.Advance()) {
       it.frame()->Iterate(v);
     }
   }
@@ -824,10 +828,22 @@ class CallSiteBuilder {
   bool Visit(FrameSummary const& summary) {
     if (Full()) return false;
 #if V8_ENABLE_WEBASSEMBLY
-    if (summary.IsWasm()) {
-      AppendWasmFrame(summary.AsWasm());
+#if V8_ENABLE_DRUMBRAKE
+    if (summary.IsWasmInterpreted()) {
+      AppendWasmInterpretedFrame(summary.AsWasmInterpreted());
       return true;
+      // FrameSummary::IsWasm() should be renamed FrameSummary::IsWasmCompiled
+      // to be more precise, but we'll leave it as it is to try to reduce merge
+      // churn.
+    } else {
+#endif  // V8_ENABLE_DRUMBRAKE
+      if (summary.IsWasm()) {
+        AppendWasmFrame(summary.AsWasm());
+        return true;
+      }
+#if V8_ENABLE_DRUMBRAKE
     }
+#endif  // V8_ENABLE_DRUMBRAKE
     if (summary.IsWasmInlined()) {
       AppendWasmInlinedFrame(summary.AsWasmInlined());
       return true;
@@ -917,6 +933,21 @@ class CallSiteBuilder {
                 summary.code_offset(), flags,
                 isolate_->factory()->empty_fixed_array());
   }
+
+#if V8_ENABLE_DRUMBRAKE
+  void AppendWasmInterpretedFrame(
+      FrameSummary::WasmInterpretedFrameSummary const& summary) {
+    Handle<WasmInstanceObject> instance = summary.wasm_instance();
+    int flags = CallSiteInfo::kIsWasm | CallSiteInfo::kIsWasmInterpretedFrame;
+    DCHECK(!instance->module_object()->is_asm_js());
+    // We don't have any code object in the interpreter, so we pass 'undefined'.
+    auto code = isolate_->factory()->undefined_value();
+    AppendFrame(instance,
+                handle(Smi::FromInt(summary.function_index()), isolate_), code,
+                summary.byte_offset(), flags,
+                isolate_->factory()->empty_fixed_array());
+  }
+#endif  // V8_ENABLE_DRUMBRAKE
 
   void AppendWasmInlinedFrame(
       FrameSummary::WasmInlinedFrameSummary const& summary) {
@@ -1254,6 +1285,9 @@ void VisitStack(Isolate* isolate, Visitor* visitor,
 #if V8_ENABLE_WEBASSEMBLY
       case StackFrame::STUB:
       case StackFrame::WASM:
+#if V8_ENABLE_DRUMBRAKE
+      case StackFrame::WASM_INTERPRETER_ENTRY:
+#endif  // V8_ENABLE_DRUMBRAKE
 #endif  // V8_ENABLE_WEBASSEMBLY
       {
         // A standard frame may include many summarized frames (due to
@@ -1671,7 +1705,8 @@ bool Isolate::MayAccess(Handle<NativeContext> accessing_context,
         AccessCheckInfo::Get(this, receiver);
     if (access_check_info.is_null()) return false;
     Tagged<Object> fun_obj = access_check_info->callback();
-    callback = v8::ToCData<v8::AccessCheckCallback>(fun_obj);
+    callback = v8::ToCData<v8::AccessCheckCallback, kApiAccessCheckCallbackTag>(
+        fun_obj);
     data = handle(access_check_info->data(), this);
   }
 
@@ -2180,6 +2215,29 @@ Tagged<Object> Isolate::UnwindAndFindHandler() {
 
 #if V8_ENABLE_WEBASSEMBLY
       case StackFrame::C_WASM_ENTRY: {
+#if V8_ENABLE_DRUMBRAKE
+        if (v8_flags.wasm_jitless) {
+          StackHandler* handler = frame->top_handler();
+          thread_local_top()->handler_ = handler->next_address();
+          Tagged<Code> code =
+              frame->LookupCode();  // WasmInterpreterCWasmEntry.
+
+          HandlerTable table(code);
+          Address instruction_start = code->InstructionStart(this, frame->pc());
+          // Compute the stack pointer from the frame pointer. This ensures that
+          // argument slots on the stack are dropped as returning would.
+          Address return_sp = *reinterpret_cast<Address*>(
+              frame->fp() + WasmInterpreterCWasmEntryConstants::kSPFPOffset);
+          const int handler_offset = table.LookupReturn(0);
+          if (trap_handler::IsThreadInWasm()) {
+            trap_handler::ClearThreadInWasm();
+          }
+          return FoundHandler(Context(), instruction_start, handler_offset,
+                              code->constant_pool(), return_sp, frame->fp(),
+                              visited_frames);
+        }
+#endif  // V8_ENABLE_DRUMBRAKE
+
         StackHandler* handler = frame->top_handler();
         thread_local_top()->handler_ = handler->next_address();
         Tagged<Code> code = frame->LookupCode();
@@ -2197,6 +2255,14 @@ Tagged<Object> Isolate::UnwindAndFindHandler() {
                             code->constant_pool(), return_sp, frame->fp(),
                             visited_frames);
       }
+
+#if V8_ENABLE_DRUMBRAKE
+      case StackFrame::WASM_INTERPRETER_ENTRY: {
+        if (trap_handler::IsThreadInWasm()) {
+          trap_handler::ClearThreadInWasm();
+        }
+      } break;
+#endif  // V8_ENABLE_DRUMBRAKE
 
       case StackFrame::WASM: {
         if (!is_catchable_by_wasm(exception)) break;
@@ -2218,6 +2284,15 @@ Tagged<Object> Isolate::UnwindAndFindHandler() {
         Address return_sp = frame->fp() +
                             StandardFrameConstants::kFixedFrameSizeAboveFp -
                             stack_slots * kSystemPointerSize;
+
+#if V8_ENABLE_DRUMBRAKE
+        // Transitioning from JS To Wasm.
+        if (v8_flags.wasm_enable_exec_time_histograms &&
+            v8_flags.slow_histograms && !v8_flags.wasm_jitless) {
+          // Start measuring the time spent running Wasm for jitted Wasm.
+          wasm_execution_timer()->Start();
+        }
+#endif  // V8_ENABLE_DRUMBRAKE
 
         // This is going to be handled by WebAssembly, so we need to set the TLS
         // flag. The {SetThreadInWasmFlagScope} will set the flag after all
@@ -2716,10 +2791,11 @@ Handle<JSMessageObject> Isolate::CreateMessage(Handle<Object> exception,
                                                MessageLocation* location) {
   Handle<FixedArray> stack_trace_object;
   if (capture_stack_trace_for_uncaught_exceptions_) {
-    if (IsJSError(*exception)) {
-      // We fetch the stack trace that corresponds to this error object.
-      // If the lookup fails, the exception is probably not a valid Error
-      // object. In that case, we fall through and capture the stack trace
+    if (IsJSObject(*exception)) {
+      // First, check whether a stack trace is already present on this object.
+      // It maybe an Error, or the embedder may have stored a stack trace using
+      // Exception::CaptureStackTrace().
+      // If the lookup fails, we fall through and capture the stack trace
       // at this throw site.
       stack_trace_object = GetDetailedStackTrace(Cast<JSObject>(exception));
     }
@@ -3361,17 +3437,6 @@ void Isolate::InstallConditionalFeatures(Handle<NativeContext> context) {
                             shared_array_buffer_fun(), DONT_ENUM);
     }
   }
-
-  // Cache the "compile hints magic enabled" information so that it's available
-  // during script streaming (when we don't have an entered NativeContext and
-  // cannot query it). This will enable the feature for an Isolate if any
-  // NativeContext enables it. But this overapproximation is fine, since the
-  // site also has to enable the feature by inserting the magic comment - so an
-  // experiment can guard against accidental enabling by not adding the magic
-  // comment.
-  if (!allow_compile_hints_magic_) {
-    allow_compile_hints_magic_ = IsCompileHintsMagicEnabled(context);
-  }
 }
 
 bool Isolate::IsSharedArrayBufferConstructorEnabled(
@@ -3381,18 +3446,6 @@ bool Isolate::IsSharedArrayBufferConstructorEnabled(
   if (sharedarraybuffer_constructor_enabled_callback()) {
     v8::Local<v8::Context> api_context = v8::Utils::ToLocal(context);
     return sharedarraybuffer_constructor_enabled_callback()(api_context);
-  }
-  return false;
-}
-
-bool Isolate::IsCompileHintsMagicEnabled(Handle<NativeContext> context) {
-  v8::JavaScriptCompileHintsMagicEnabledCallback callback =
-      compile_hints_magic_enabled_callback();
-  if (callback) {
-    v8::Local<v8::Context> api_context = v8::Utils::ToLocal(context);
-    if (callback(api_context)) {
-      return true;
-    }
   }
   return false;
 }
@@ -3604,7 +3657,7 @@ void Isolate::SyncStackLimit() {
   auto continuation =
       Cast<WasmContinuationObject>(root(RootIndex::kActiveContinuation));
   wasm::StackMemory* stack =
-      Cast<Managed<wasm::StackMemory>>(continuation->stack())->raw();
+      reinterpret_cast<wasm::StackMemory*>(continuation->stack());
   if (v8_flags.trace_wasm_stack_switching) {
     PrintF("Switch to stack #%d\n", stack->id());
   }
@@ -3616,11 +3669,8 @@ void Isolate::SyncStackLimit() {
 void Isolate::UpdateCentralStackInfo() {
   Tagged<Object> current = root(RootIndex::kActiveContinuation);
   DCHECK(!IsUndefined(current));
-  wasm::StackMemory* wasm_stack =
-      Cast<Managed<wasm::StackMemory>>(
-          Cast<WasmContinuationObject>(current)->stack())
-          ->get()
-          .get();
+  wasm::StackMemory* wasm_stack = reinterpret_cast<wasm::StackMemory*>(
+      Cast<WasmContinuationObject>(current)->stack());
   current = Cast<WasmContinuationObject>(current)->parent();
   thread_local_top()->is_on_central_stack_flag_ =
       IsOnCentralStack(wasm_stack->jmpbuf()->sp);
@@ -3630,8 +3680,7 @@ void Isolate::UpdateCentralStackInfo() {
   // may contain cpp heap pointers.
   while (!IsUndefined(current)) {
     auto cont = Cast<WasmContinuationObject>(current);
-    auto* wasm_stack =
-        Cast<Managed<wasm::StackMemory>>(cont->stack())->get().get();
+    auto* wasm_stack = reinterpret_cast<wasm::StackMemory*>(cont->stack());
     // On x64 and arm64 we don't need to record the stack segments for
     // conservative stack scanning. We switch to the central stack for foreign
     // calls, so secondary stacks only contain wasm frames which use the precise
@@ -3909,8 +3958,7 @@ v8::PageAllocator* Isolate::page_allocator() const {
 }
 
 Isolate::Isolate(IsolateGroup* isolate_group)
-    : isolate_data_(this, isolate_group->GetPtrComprCageBase(),
-                    isolate_group->GetTrustedPtrComprCageBase()),
+    : isolate_data_(this, isolate_group),
       isolate_group_(isolate_group),
       id_(isolate_counter.fetch_add(1, std::memory_order_relaxed)),
       allocator_(new TracingAccountingAllocator(this)),
@@ -4152,6 +4200,15 @@ void Isolate::Deinit() {
   DisallowGarbageCollection no_gc;
   IgnoreLocalGCRequests ignore_gc_requests(heap());
 
+#if V8_ENABLE_WEBASSEMBLY && V8_ENABLE_DRUMBRAKE
+  if (v8_flags.wasm_jitless) {
+    wasm::WasmInterpreter::NotifyIsolateDisposal(this);
+  } else if (v8_flags.wasm_enable_exec_time_histograms &&
+             v8_flags.slow_histograms) {
+    wasm_execution_timer_->Terminate();
+  }
+#endif  // V8_ENABLE_WEBASSEMBLY && V8_ENABLE_DRUMBRAKE
+
   tracing_cpu_profiler_.reset();
   if (v8_flags.stress_sampling_allocation_profiler > 0) {
     heap_profiler()->StopSamplingHeapProfiler();
@@ -4338,6 +4395,8 @@ void Isolate::Deinit() {
   trusted_pointer_table().TearDown();
 
   GetProcessWideCodePointerTable()->TearDownSpace(heap()->code_pointer_space());
+  GetProcessWideJSDispatchTable()->TearDownSpace(
+      heap()->js_dispatch_table_space());
 
   external_buffer_table().TearDownSpace(heap()->external_buffer_space());
   external_buffer_table().TearDown();
@@ -4570,9 +4629,10 @@ void Isolate::NotifyExceptionPropagationCallback() {
             reinterpret_cast<const v8::FunctionCallbackInfo<v8::Value>*>(
                 ext_callback_scope->callback_info());
 
+        Handle<JSReceiver> receiver = Utils::OpenHandle(*callback_info->This());
         Handle<FunctionTemplateInfo> function_template_info(
             GetTargetFunctionTemplateInfo(*callback_info), this);
-        ReportExceptionFunctionCallback(function_template_info, kind);
+        ReportExceptionFunctionCallback(receiver, function_template_info, kind);
         return;
       }
       case v8::ExceptionContext::kAttributeGet:
@@ -4602,11 +4662,12 @@ void Isolate::NotifyExceptionPropagationCallback() {
         Handle<Object> holder = Utils::OpenHandle(*callback_info->Holder());
         Handle<Object> maybe_name =
             PropertyCallbackArguments::GetPropertyKeyHandle(*callback_info);
-        // TODO(ishell, 328104148): support propagation of index values for
-        // real instead of passing "yearMonthFromFields".
-        Handle<Name> name = IsSmi(*maybe_name)
-                                ? factory()->yearMonthFromFields_string()
-                                : Cast<Name>(maybe_name);
+        Handle<Name> name =
+            IsSmi(*maybe_name)
+                ? factory()->SizeToString(
+                      PropertyCallbackArguments::GetPropertyIndex(
+                          *callback_info))
+                : Cast<Name>(maybe_name);
         DCHECK(IsJSReceiver(*holder));
 
         // Allow usages of v8::PropertyCallbackInfo<T>::Holder() for now.
@@ -4637,13 +4698,16 @@ void Isolate::NotifyExceptionPropagationCallback() {
   switch (frame_type) {
     case StackFrame::API_CALLBACK_EXIT: {
       ApiCallbackExitFrame* frame = ApiCallbackExitFrame::cast(it.frame());
+      Handle<JSReceiver> receiver =
+          handle(Cast<JSReceiver>(frame->receiver()), this);
       Handle<FunctionTemplateInfo> function_template_info =
           frame->GetFunctionTemplateInfo();
 
       v8::ExceptionContext callback_kind =
           frame->IsConstructor() ? v8::ExceptionContext::kConstructor
                                  : v8::ExceptionContext::kOperation;
-      ReportExceptionFunctionCallback(function_template_info, callback_kind);
+      ReportExceptionFunctionCallback(receiver, function_template_info,
+                                      callback_kind);
       return;
     }
     case StackFrame::API_ACCESSOR_EXIT: {
@@ -4679,23 +4743,69 @@ void Isolate::NotifyExceptionPropagationCallback() {
 }
 
 void Isolate::ReportExceptionFunctionCallback(
-    Handle<FunctionTemplateInfo> function, v8::ExceptionContext callback_kind) {
-  DCHECK(callback_kind == v8::ExceptionContext::kConstructor ||
-         callback_kind == v8::ExceptionContext::kOperation);
+    Handle<JSReceiver> receiver, Handle<FunctionTemplateInfo> function,
+    v8::ExceptionContext exception_context) {
+  DCHECK(exception_context == v8::ExceptionContext::kConstructor ||
+         exception_context == v8::ExceptionContext::kOperation);
   DCHECK_NOT_NULL(exception_propagation_callback_);
-  // PrintF("=== ReportExceptionFunctionCallback: \n");
-  // Print(exception());
-  // Print(*function);
+
+  // Ignore exceptions that we can't extend.
+  if (!IsJSReceiver(this->exception())) return;
+  Handle<JSReceiver> exception(Cast<JSReceiver>(this->exception()), this);
+
+  Handle<Object> maybe_message(pending_message(), this);
+
+  Handle<String> property_name =
+      IsUndefined(function->class_name(), this)
+          ? factory()->empty_string()
+          : Handle<String>(Cast<String>(function->class_name()), this);
+  Handle<String> interface_name =
+      JSReceiver::GetConstructorName(this, receiver);
+
+  {
+    v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(this);
+    // Ignore any exceptions thrown inside the callback and rethrow the
+    // original exception/message.
+    TryCatch try_catch(v8_isolate);
+
+    exception_propagation_callback_(v8::ExceptionPropagationMessage(
+        v8_isolate, v8::Utils::ToLocal(exception),
+        v8::Utils::ToLocal(interface_name), v8::Utils::ToLocal(property_name),
+        exception_context));
+
+    try_catch.Reset();
+  }
+  ReThrow(*exception, *maybe_message);
 }
 
 void Isolate::ReportExceptionPropertyCallback(
     Handle<JSReceiver> holder, Handle<Name> name,
-    v8::ExceptionContext callback_kind) {
+    v8::ExceptionContext exception_context) {
   DCHECK_NOT_NULL(exception_propagation_callback_);
-  // PrintF("=== ReportExceptionPropertyCallback: \n");
-  // Print(exception());
-  // Print(*name);
-  // Print(*holder);
+
+  if (!IsJSReceiver(this->exception())) return;
+  Handle<JSReceiver> exception(Cast<JSReceiver>(this->exception()), this);
+
+  Handle<Object> maybe_message(pending_message(), this);
+
+  Handle<String> property_name;
+  std::ignore = Name::ToFunctionName(this, name).ToHandle(&property_name);
+  Handle<String> interface_name = JSReceiver::GetConstructorName(this, holder);
+
+  {
+    v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(this);
+    // Ignore any exceptions thrown inside the callback and rethrow the
+    // original exception/message.
+    TryCatch try_catch(v8_isolate);
+
+    exception_propagation_callback_(v8::ExceptionPropagationMessage(
+        v8_isolate, v8::Utils::ToLocal(exception),
+        v8::Utils::ToLocal(interface_name), v8::Utils::ToLocal(property_name),
+        exception_context));
+
+    try_catch.Reset();
+  }
+  ReThrow(*exception, *maybe_message);
 }
 
 void Isolate::SetExceptionPropagationCallback(
@@ -4826,8 +4936,8 @@ void Isolate::InitializeIsShortBuiltinCallsEnabled() {
 #endif  // defined(V8_OS_ANDROID)
     // Additionally, enable if there is already a process-wide CodeRange that
     // has re-embedded builtins.
-    if (COMPRESS_POINTERS_IN_SHARED_CAGE_BOOL) {
-      CodeRange* code_range = CodeRange::GetProcessWideCodeRange();
+    if (COMPRESS_POINTERS_BOOL) {
+      CodeRange* code_range = isolate_group()->GetCodeRange();
       if (code_range && code_range->embedded_blob_code_copy() != nullptr) {
         is_short_builtin_calls_enabled_ = true;
       }
@@ -4985,10 +5095,12 @@ class BigIntPlatform : public bigint::Platform {
 };
 }  // namespace
 
+#ifdef V8_COMPRESS_POINTERS
 VirtualMemoryCage* Isolate::GetPtrComprCodeCageForTesting() {
   return V8_EXTERNAL_CODE_SPACE_BOOL ? heap_.code_range()
                                      : isolate_group_->GetPtrComprCage();
 }
+#endif  // V8_COMPRESS_POINTERS
 
 void Isolate::VerifyStaticRoots() {
 #if V8_STATIC_ROOTS_BOOL
@@ -5329,6 +5441,8 @@ bool Isolate::Init(SnapshotData* startup_snapshot_data,
 #ifdef V8_ENABLE_SANDBOX
   GetProcessWideCodePointerTable()->InitializeSpace(
       heap()->code_pointer_space());
+  GetProcessWideJSDispatchTable()->InitializeSpace(
+      heap()->js_dispatch_table_space());
   if (owns_shareable_data()) {
     isolate_data_.shared_external_buffer_table_ = new ExternalBufferTable();
     shared_external_buffer_space_ = new ExternalBufferTable::Space();
@@ -6069,9 +6183,8 @@ void Isolate::FireCallCompletedCallbackInternal(
 #ifdef V8_ENABLE_WEBASSEMBLY
 void Isolate::WasmInitJSPIFeature() {
   if (IsUndefined(root(RootIndex::kActiveContinuation))) {
-    std::unique_ptr<wasm::StackMemory> stack(
-        wasm::StackMemory::GetCurrentStackView(this));
-    this->wasm_stacks().push_back(stack.get());
+    wasm::StackMemory* stack(wasm::StackMemory::GetCurrentStackView(this));
+    this->wasm_stacks().emplace_back(stack);
     stack->set_index(0);
     if (v8_flags.trace_wasm_stack_switching) {
       PrintF("Set up native stack object (limit: %p, base: %p)\n",
@@ -6079,8 +6192,7 @@ void Isolate::WasmInitJSPIFeature() {
     }
     HandleScope scope(this);
     DirectHandle<WasmContinuationObject> continuation =
-        WasmContinuationObject::New(this, std::move(stack),
-                                    wasm::JumpBuffer::Active,
+        WasmContinuationObject::New(this, stack, wasm::JumpBuffer::Active,
                                     AllocationType::kOld);
     heap()
         ->roots_table()
@@ -6756,12 +6868,12 @@ void Isolate::SetRAILMode(RAILMode rail_mode) {
   }
 }
 
-void Isolate::IsolateInBackgroundNotification() {
-  is_backgrounded_ = true;
-  heap()->ActivateMemoryReducerIfNeeded();
+void Isolate::SetPriority(v8::Isolate::Priority priority) {
+  priority_ = priority;
+  if (priority_ == v8::Isolate::Priority::kBestEffort) {
+    heap()->ActivateMemoryReducerIfNeeded();
+  }
 }
-
-void Isolate::IsolateInForegroundNotification() { is_backgrounded_ = false; }
 
 void Isolate::PrintWithTimestamp(const char* format, ...) {
   base::OS::Print("[%d:%p] %8.0f ms: ", base::OS::GetCurrentProcessId(),
@@ -7119,6 +7231,15 @@ void Isolate::RemoveCodeMemoryChunk(MutablePageMetadata* chunk) {
   SetCodePages(new_code_pages);
 #endif  // !defined(V8_TARGET_ARCH_ARM)
 }
+
+#if V8_ENABLE_DRUMBRAKE
+void Isolate::initialize_wasm_execution_timer() {
+  DCHECK(v8_flags.wasm_enable_exec_time_histograms &&
+         v8_flags.slow_histograms && !v8_flags.wasm_jitless);
+  wasm_execution_timer_ =
+      std::make_unique<wasm::WasmExecutionTimer>(this, false);
+}
+#endif  // V8_ENABLE_DRUMBRAKE
 
 #undef TRACE_ISOLATE
 

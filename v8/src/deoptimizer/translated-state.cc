@@ -4,6 +4,8 @@
 
 #include "src/deoptimizer/translated-state.h"
 
+#include <inttypes.h>
+
 #include <iomanip>
 
 #include "src/base/memory.h"
@@ -971,7 +973,6 @@ TranslatedValue DeoptimizationLiteralProvider::Get(TranslatedState* container,
   CHECK(v8_flags.wasm_deopt);
   CHECK_LT(literal_index, literals_off_heap_.size());
   const DeoptimizationLiteral& literal = literals_off_heap_[literal_index];
-  // TODO(mliedtke): We also need to support simd literals.
   switch (literal.kind()) {
     case DeoptimizationLiteralKind::kWasmInt32:
       return TranslatedValue::NewInt32(container, literal.GetInt32());
@@ -1753,16 +1754,28 @@ int TranslatedState::CreateNextTranslatedValue(
         } else {
           switch (translated_value.kind()) {
             case TranslatedValue::Kind::kDouble:
-              PrintF(trace_file, "(wasm double literal %f)",
-                     translated_value.double_value().get_scalar());
+              if (translated_value.double_value().is_nan()) {
+                PrintF(trace_file, "(wasm double literal %f 0x%" PRIx64 ")",
+                       translated_value.double_value().get_scalar(),
+                       translated_value.double_value().get_bits());
+              } else {
+                PrintF(trace_file, "(wasm double literal %f)",
+                       translated_value.double_value().get_scalar());
+              }
               break;
             case TranslatedValue::Kind::kFloat:
-              PrintF(trace_file, "(wasm float literal %f)",
-                     translated_value.float_value().get_scalar());
+              if (translated_value.float_value().is_nan()) {
+                PrintF(trace_file, "(wasm float literal %f 0x%x)",
+                       translated_value.float_value().get_scalar(),
+                       translated_value.float_value().get_bits());
+              } else {
+                PrintF(trace_file, "(wasm float literal %f)",
+                       translated_value.float_value().get_scalar());
+              }
               break;
             case TranslatedValue::Kind::kInt64:
-              PrintF(trace_file, "(wasm int64 literal %lld)",
-                     static_cast<long long>(translated_value.int64_value()));
+              PrintF(trace_file, "(wasm int64 literal %" PRId64 ")",
+                     translated_value.int64_value());
               break;
             case TranslatedValue::Kind::kInt32:
               PrintF(trace_file, "(wasm int32 literal %d)",
@@ -2693,7 +2706,7 @@ bool TranslatedState::DoUpdateFeedback() {
   if (!feedback_vector_handle_.is_null()) {
     CHECK(!feedback_slot_.IsInvalid());
     isolate()->CountUsage(v8::Isolate::kDeoptimizerDisableSpeculation);
-    FeedbackNexus nexus(feedback_vector_handle_, feedback_slot_);
+    FeedbackNexus nexus(isolate(), feedback_vector_handle_, feedback_slot_);
     nexus.SetSpeculationMode(SpeculationMode::kDisallowSpeculation);
     return true;
   }

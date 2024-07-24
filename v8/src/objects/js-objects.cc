@@ -4,6 +4,8 @@
 
 #include "src/objects/js-objects.h"
 
+#include <limits>
+
 #include "src/api/api-arguments-inl.h"
 #include "src/api/api-natives.h"
 #include "src/base/optional.h"
@@ -1384,7 +1386,7 @@ Maybe<bool> JSReceiver::OrdinaryDefineOwnProperty(
   LookupIterator it(isolate, object, key, LookupIterator::OWN);
 
   // Deal with access checks first.
-  if (it.state() == LookupIterator::ACCESS_CHECK) {
+  while (it.state() == LookupIterator::ACCESS_CHECK) {
     if (!it.HasAccess()) {
       RETURN_ON_EXCEPTION_VALUE(
           isolate, isolate->ReportFailedAccessCheck(it.GetHolder<JSObject>()),
@@ -1407,7 +1409,7 @@ Maybe<bool> JSReceiver::OrdinaryDefineOwnProperty(
   it.Restart();
 
   // Skip over the access check after restarting -- we've already checked it.
-  if (it.state() == LookupIterator::ACCESS_CHECK) {
+  while (it.state() == LookupIterator::ACCESS_CHECK) {
     DCHECK(it.HasAccess());
     it.Next();
   }
@@ -1432,7 +1434,7 @@ Maybe<bool> JSReceiver::OrdinaryDefineOwnProperty(
           // Proceed lookup.
           break;
       }
-      // We need to restart the lookup in case the accessor ran with side
+      // We need to restart the lookup in case the interceptor ran with side
       // effects.
       it.Restart();
     }
@@ -2493,8 +2495,12 @@ int JSObject::GetHeaderSize(InstanceType type,
       return JSPrimitiveWrapper::kHeaderSize;
     case JS_DATE_TYPE:
       return JSDate::kHeaderSize;
-    case JS_DISPOSABLE_STACK_TYPE:
-      return JSDisposableStack::kHeaderSize;
+    case JS_DISPOSABLE_STACK_BASE_TYPE:
+      return JSDisposableStackBase::kHeaderSize;
+    case JS_ASYNC_DISPOSABLE_STACK_TYPE:
+      return JSAsyncDisposableStack::kHeaderSize;
+    case JS_SYNC_DISPOSABLE_STACK_TYPE:
+      return JSSyncDisposableStack::kHeaderSize;
     case JS_ARRAY_TYPE:
       return JSArray::kHeaderSize;
     case JS_ARRAY_BUFFER_TYPE:
@@ -5648,19 +5654,17 @@ void JSGlobalObject::InvalidatePropertyCell(DirectHandle<JSGlobalObject> global,
 // static
 MaybeHandle<JSDate> JSDate::New(Handle<JSFunction> constructor,
                                 Handle<JSReceiver> new_target, double tv) {
-  Isolate* const isolate = constructor->GetIsolate();
-  Handle<JSObject> result;
+  Handle<JSDate> result;
   ASSIGN_RETURN_ON_EXCEPTION(
-      isolate, result,
-      JSObject::New(constructor, new_target, Handle<AllocationSite>::null()));
-  if (-DateCache::kMaxTimeInMs <= tv && tv <= DateCache::kMaxTimeInMs) {
-    tv = DoubleToInteger(tv) + 0.0;
+      constructor->GetIsolate(), result,
+      Cast<JSDate>(JSObject::New(constructor, new_target,
+                                 Handle<AllocationSite>::null())));
+  if (DateCache::TryTimeClip(&tv)) {
+    result->SetValue(tv);
   } else {
-    tv = std::numeric_limits<double>::quiet_NaN();
+    result->SetNanValue();
   }
-  DirectHandle<Number> value = isolate->factory()->NewNumber(tv);
-  Cast<JSDate>(result)->SetValue(*value, std::isnan(tv));
-  return Cast<JSDate>(result);
+  return result;
 }
 
 // static
@@ -5691,16 +5695,14 @@ Address JSDate::GetField(Isolate* isolate, Address raw_object,
 }
 
 Tagged<Object> JSDate::DoGetField(Isolate* isolate, FieldIndex index) {
-  DCHECK_NE(index, kDateValue);
-
   DateCache* date_cache = isolate->date_cache();
 
   if (index < kFirstUncachedField) {
     Tagged<Object> stamp = cache_stamp();
     if (stamp != date_cache->stamp() && IsSmi(stamp)) {
       // Since the stamp is not NaN, the value is also not NaN.
-      int64_t local_time_ms = date_cache->ToLocal(
-          static_cast<int64_t>(Object::NumberValue(Cast<Number>(value()))));
+      int64_t local_time_ms =
+          date_cache->ToLocal(static_cast<int64_t>(value()));
       SetCachedFields(local_time_ms, date_cache);
     }
     switch (index) {
@@ -5724,11 +5726,10 @@ Tagged<Object> JSDate::DoGetField(Isolate* isolate, FieldIndex index) {
   }
 
   if (index >= kFirstUTCField) {
-    return GetUTCField(index, Object::NumberValue(Cast<Number>(value())),
-                       date_cache);
+    return GetUTCField(index, value(), date_cache);
   }
 
-  double time = Object::NumberValue(Cast<Number>(value()));
+  double time = value();
   if (std::isnan(time)) return GetReadOnlyRoots().nan_value();
 
   int64_t local_time_ms = date_cache->ToLocal(static_cast<int64_t>(time));
@@ -5789,29 +5790,28 @@ Tagged<Object> JSDate::GetUTCField(FieldIndex index, double value,
 }
 
 // static
-Handle<Object> JSDate::SetValue(DirectHandle<JSDate> date, double v) {
-  Isolate* const isolate = date->GetIsolate();
-  Handle<Number> value = isolate->factory()->NewNumber(v);
-  bool value_is_nan = std::isnan(v);
-  date->SetValue(*value, value_is_nan);
-  return value;
-}
-
-void JSDate::SetValue(Tagged<Number> value, bool is_value_nan) {
+void JSDate::SetValue(double value) {
+#ifdef DEBUG
+  DCHECK(!std::isnan(value));
+  double clipped_value = value;
+  DCHECK(DateCache::TryTimeClip(&clipped_value));
+  DCHECK_EQ(value, clipped_value);
+#endif
   set_value(value);
-  if (is_value_nan) {
-    Tagged<HeapNumber> nan = GetReadOnlyRoots().nan_value();
-    set_cache_stamp(nan, SKIP_WRITE_BARRIER);
-    set_year(nan, SKIP_WRITE_BARRIER);
-    set_month(nan, SKIP_WRITE_BARRIER);
-    set_day(nan, SKIP_WRITE_BARRIER);
-    set_hour(nan, SKIP_WRITE_BARRIER);
-    set_min(nan, SKIP_WRITE_BARRIER);
-    set_sec(nan, SKIP_WRITE_BARRIER);
-    set_weekday(nan, SKIP_WRITE_BARRIER);
-  } else {
-    set_cache_stamp(Smi::FromInt(DateCache::kInvalidStamp), SKIP_WRITE_BARRIER);
-  }
+  set_cache_stamp(Smi::FromInt(DateCache::kInvalidStamp), SKIP_WRITE_BARRIER);
+}
+void JSDate::SetNanValue() {
+  set_value(std::numeric_limits<double>::quiet_NaN());
+
+  Tagged<HeapNumber> nan = GetReadOnlyRoots().nan_value();
+  set_cache_stamp(nan, SKIP_WRITE_BARRIER);
+  set_year(nan, SKIP_WRITE_BARRIER);
+  set_month(nan, SKIP_WRITE_BARRIER);
+  set_day(nan, SKIP_WRITE_BARRIER);
+  set_hour(nan, SKIP_WRITE_BARRIER);
+  set_min(nan, SKIP_WRITE_BARRIER);
+  set_sec(nan, SKIP_WRITE_BARRIER);
+  set_weekday(nan, SKIP_WRITE_BARRIER);
 }
 
 void JSDate::SetCachedFields(int64_t local_time_ms, DateCache* date_cache) {

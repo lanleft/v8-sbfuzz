@@ -20,6 +20,7 @@
 #include "src/execution/execution.h"
 #include "src/execution/frames-inl.h"
 #include "src/execution/isolate-inl.h"
+#include "src/execution/protectors-inl.h"
 #include "src/execution/v8threads.h"
 #include "src/handles/global-handles-inl.h"
 #include "src/heap/heap-inl.h"  // For NextDebuggingId.
@@ -1134,6 +1135,8 @@ bool Debug::SetBreakpointForFunction(Handle<SharedFunctionInfo> shared,
     Tagged<WasmExportedFunctionData> function_data =
         shared->wasm_exported_function_data();
     int func_index = function_data->function_index();
+    // TODO(42204563): Avoid crashing if the instance object is not available.
+    CHECK(function_data->instance_data()->has_instance_object());
     Tagged<WasmModuleObject> module_obj =
         function_data->instance_data()->instance_object()->module_object();
     Handle<Script> script(module_obj->script(), isolate_);
@@ -1482,6 +1485,11 @@ void Debug::PrepareStep(StepAction step_action) {
     clear_suspended_generator();
 #if V8_ENABLE_WEBASSEMBLY
   } else if (frame->is_wasm() && step_action != StepOut) {
+#if V8_ENABLE_DRUMBRAKE
+    // TODO(paolosev@microsoft.com) - If we are running with the interpreter, we
+    // cannot step.
+    if (frame->is_wasm_interpreter_entry()) return;
+#endif  // V8_ENABLE_DRUMBRAKE
     // Handle stepping in wasm.
     WasmFrame* wasm_frame = WasmFrame::cast(frame);
     auto* debug_info = wasm_frame->native_module()->GetDebugInfo();
@@ -1546,6 +1554,11 @@ void Debug::PrepareStep(StepAction step_action) {
       bool in_current_frame = true;
       for (; !frames_it.done(); frames_it.Advance()) {
 #if V8_ENABLE_WEBASSEMBLY
+#if V8_ENABLE_DRUMBRAKE
+        // TODO(paolosev@microsoft.com): Implement stepping out from JS to wasm
+        // interpreter.
+        if (frame->is_wasm_interpreter_entry()) continue;
+#endif  // V8_ENABLE_DRUMBRAKE
         if (frames_it.frame()->is_wasm()) {
           if (in_current_frame) {
             in_current_frame = false;
@@ -2146,7 +2159,7 @@ bool Debug::FindSharedFunctionInfosIntersectingRange(
     }
 
     if (!triedTopLevelCompile && !candidateSubsumesRange &&
-        script->shared_function_info_count() > 0) {
+        script->infos()->length() > 0) {
       MaybeHandle<SharedFunctionInfo> shared =
           GetTopLevelWithRecompile(script, &triedTopLevelCompile);
       if (shared.is_null()) return false;
@@ -2181,10 +2194,9 @@ bool Debug::FindSharedFunctionInfosIntersectingRange(
 
 MaybeHandle<SharedFunctionInfo> Debug::GetTopLevelWithRecompile(
     Handle<Script> script, bool* did_compile) {
-  DCHECK_LE(kFunctionLiteralIdTopLevel, script->shared_function_info_count());
-  DCHECK_LE(script->shared_function_info_count(),
-            script->shared_function_infos()->length());
-  Tagged<MaybeObject> maybeToplevel = script->shared_function_infos()->get(0);
+  DCHECK_LE(kFunctionLiteralIdTopLevel, script->infos()->length());
+  Tagged<MaybeObject> maybeToplevel =
+      script->infos()->get(kFunctionLiteralIdTopLevel);
   Tagged<HeapObject> heap_object;
   const bool topLevelInfoExists =
       maybeToplevel.GetHeapObject(&heap_object) && !IsUndefined(heap_object);
@@ -3107,6 +3119,9 @@ bool Debug::PerformSideEffectCheck(Handle<JSFunction> function,
   DirectHandle<DebugInfo> debug_info = GetOrCreateDebugInfo(shared);
   DebugInfo::SideEffectState side_effect_state =
       debug_info->GetSideEffectState(isolate_);
+  if (shared->HasBuiltinId()) {
+    PrepareBuiltinForSideEffectCheck(isolate_, shared->builtin_id());
+  }
   switch (side_effect_state) {
     case DebugInfo::kHasSideEffects:
       if (v8_flags.trace_side_effect_free_debug_evaluate) {
@@ -3138,6 +3153,29 @@ bool Debug::PerformSideEffectCheck(Handle<JSFunction> function,
 
 Handle<Object> Debug::return_value_handle() {
   return handle(thread_local_.return_value_, isolate_);
+}
+
+void Debug::PrepareBuiltinForSideEffectCheck(Isolate* isolate, Builtin id) {
+  switch (id) {
+    case Builtin::kStringPrototypeMatch:
+    case Builtin::kStringPrototypeSearch:
+    case Builtin::kStringPrototypeSplit:
+    case Builtin::kStringPrototypeMatchAll:
+    case Builtin::kStringPrototypeReplace:
+    case Builtin::kStringPrototypeReplaceAll:
+      if (Protectors::IsRegExpSpeciesLookupChainIntact(isolate_)) {
+        // Force RegExps to go slow path so that we have a chance to perform
+        // side-effect checks for the functions for Symbol.match,
+        // Symbol.matchAll, Symbol.search, Symbol.split and Symbol.replace.
+        if (v8_flags.trace_side_effect_free_debug_evaluate) {
+          PrintF("[debug-evaluate] invalidating protector cell for RegExps\n");
+        }
+        Protectors::InvalidateRegExpSpeciesLookupChain(isolate_);
+      }
+      return;
+    default:
+      return;
+  }
 }
 
 bool Debug::PerformSideEffectCheckForAccessor(

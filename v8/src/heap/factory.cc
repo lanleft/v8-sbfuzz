@@ -6,6 +6,7 @@
 
 #include <algorithm>  // For copy
 #include <memory>     // For shared_ptr<>
+#include <optional>
 #include <string>
 #include <utility>  // For move
 
@@ -1299,7 +1300,7 @@ Handle<NativeContext> Factory::NewNativeContext() {
 
 Handle<Context> Factory::NewScriptContext(DirectHandle<NativeContext> outer,
                                           DirectHandle<ScopeInfo> scope_info) {
-  DCHECK_EQ(scope_info->scope_type(), SCRIPT_SCOPE);
+  DCHECK(scope_info->is_script_scope());
   int variadic_part_length = scope_info->ContextLength();
 
   Handle<FixedArray> side_data;
@@ -1542,8 +1543,7 @@ Handle<Script> Factory::CloneScript(DirectHandle<Script> script,
     new_script->set_line_ends(Smi::zero());
     new_script->set_eval_from_shared_or_wrapped_arguments(
         script->eval_from_shared_or_wrapped_arguments());
-    new_script->set_shared_function_infos(*empty_weak_fixed_array(),
-                                          SKIP_WRITE_BARRIER);
+    new_script->set_infos(*empty_weak_fixed_array(), SKIP_WRITE_BARRIER);
     new_script->set_eval_from_position(old_script->eval_from_position());
     new_script->set_flags(old_script->flags());
     new_script->set_host_defined_options(old_script->host_defined_options());
@@ -1612,7 +1612,8 @@ Handle<PromiseResolveThenableJobTask> Factory::NewPromiseResolveThenableJobTask(
 #if V8_ENABLE_WEBASSEMBLY
 Handle<WasmTypeInfo> Factory::NewWasmTypeInfo(
     Address type_address, Handle<Map> opt_parent,
-    DirectHandle<WasmInstanceObject> opt_instance, uint32_t type_index) {
+    DirectHandle<WasmTrustedInstanceData> opt_trusted_data,
+    uint32_t type_index) {
   // We pretenure WasmTypeInfo objects for two reasons:
   // (1) They are referenced by Maps, which are assumed to be long-lived,
   //     so pretenuring the WTI is a bit more efficient.
@@ -1650,10 +1651,10 @@ Handle<WasmTypeInfo> Factory::NewWasmTypeInfo(
     result->set_supertypes(static_cast<int>(i), *supertypes[i]);
   }
   result->init_native_type(isolate(), type_address);
-  if (opt_instance.is_null()) {
-    result->set_instance(read_only_roots().undefined_value());
+  if (opt_trusted_data.is_null()) {
+    result->clear_trusted_data();
   } else {
-    result->set_instance(*opt_instance);
+    result->set_trusted_data(*opt_trusted_data);
   }
   result->set_type_index(type_index);
   return handle(result, isolate());
@@ -1667,7 +1668,6 @@ Handle<WasmApiFunctionRef> Factory::NewWasmApiFunctionRef(
   auto result = Cast<WasmApiFunctionRef>(AllocateRawWithImmortalMap(
       map->instance_size(), AllocationType::kTrusted, map));
   DisallowGarbageCollection no_gc;
-  result->init_self_indirect_pointer(isolate());
   result->set_native_context(*isolate()->native_context());
   result->set_callable(Cast<UnionOf<Undefined, JSReceiver>>(*callable));
   result->set_suspend(suspend);
@@ -1692,17 +1692,18 @@ Handle<WasmApiFunctionRef> Factory::NewWasmApiFunctionRef(
 }
 
 Handle<WasmFastApiCallData> Factory::NewWasmFastApiCallData(
-    DirectHandle<HeapObject> signature) {
+    DirectHandle<HeapObject> signature, DirectHandle<Object> callback_data) {
   Tagged<Map> map = *wasm_fast_api_call_data_map();
   auto result = Cast<WasmFastApiCallData>(AllocateRawWithImmortalMap(
       map->instance_size(), AllocationType::kOld, map));
   result->set_signature(*signature);
+  result->set_callback_data(*callback_data);
   result->set_cached_map(read_only_roots().null_value());
   return handle(result, isolate());
 }
 
 Handle<WasmInternalFunction> Factory::NewWasmInternalFunction(
-    DirectHandle<ExposedTrustedObject> ref, int function_index,
+    DirectHandle<TrustedObject> ref, int function_index,
     uintptr_t signature_hash) {
   Tagged<WasmInternalFunction> internal =
       Cast<WasmInternalFunction>(AllocateRawWithImmortalMap(
@@ -1714,9 +1715,9 @@ Handle<WasmInternalFunction> Factory::NewWasmInternalFunction(
     internal->set_call_target(kNullAddress);
     DCHECK(IsWasmTrustedInstanceData(*ref) || IsWasmApiFunctionRef(*ref));
     internal->set_ref(*ref);
-#if V8_ENABLE_SANDBOX
+#if V8_ENABLE_LEAPTIERING
     internal->set_signature_hash(signature_hash);
-#endif  // V8_ENABLE_SANDBOX
+#endif  // V8_ENABLE_LEAPTIERING
     // Default values, will be overwritten by the caller.
     internal->set_function_index(function_index);
     internal->set_external(*undefined_value());
@@ -1740,7 +1741,7 @@ Handle<WasmFuncRef> Factory::NewWasmFuncRef(
 }
 
 Handle<WasmJSFunctionData> Factory::NewWasmJSFunctionData(
-    DirectHandle<JSReceiver> callable,
+    uint32_t canonical_sig_index, DirectHandle<JSReceiver> callable,
     DirectHandle<PodArray<wasm::ValueType>> serialized_sig,
     DirectHandle<Code> wrapper_code, DirectHandle<Map> rtt,
     wasm::Suspend suspend, wasm::Promise promise, uintptr_t signature_hash) {
@@ -1761,7 +1762,7 @@ Handle<WasmJSFunctionData> Factory::NewWasmJSFunctionData(
   result->set_func_ref(*func_ref);
   result->set_internal(*internal);
   result->set_wrapper_code(*wrapper_code);
-  result->set_serialized_signature(*serialized_sig);
+  result->set_canonical_sig_index(static_cast<int>(canonical_sig_index));
   result->set_js_promise_flags(WasmFunctionData::SuspendField::encode(suspend) |
                                WasmFunctionData::PromiseField::encode(promise));
   return handle(result, isolate());
@@ -1934,7 +1935,7 @@ Handle<Object> Factory::NewWasmArrayFromElementSegment(
   // now.
   AccountingAllocator allocator;
   Zone zone(&allocator, ZONE_NAME);
-  base::Optional<MessageTemplate> opt_error = wasm::InitializeElementSegment(
+  std::optional<MessageTemplate> opt_error = wasm::InitializeElementSegment(
       &zone, isolate(), trusted_instance_data, shared_trusted_instance_data,
       segment_index);
   if (opt_error.has_value()) {
@@ -1955,6 +1956,18 @@ Handle<Object> Factory::NewWasmArrayFromElementSegment(
   }
   return handle(result, isolate());
 }
+
+#if V8_ENABLE_DRUMBRAKE
+Handle<WasmStruct> Factory::NewWasmStructUninitialized(
+    const wasm::StructType* type, Handle<Map> map) {
+  Tagged<HeapObject> raw =
+      AllocateRaw(WasmStruct::Size(type), AllocationType::kYoung);
+  raw->set_map_after_allocation(*map);
+  Tagged<WasmStruct> result = Cast<WasmStruct>(raw);
+  result->set_raw_properties_or_hash(*empty_fixed_array(), kRelaxedStore);
+  return handle(result, isolate());
+}
+#endif  // V8_ENABLE_DRUMBRAKE
 
 Handle<WasmStruct> Factory::NewWasmStruct(const wasm::StructType* type,
                                           wasm::WasmValue* args,
@@ -1980,13 +1993,13 @@ Handle<WasmStruct> Factory::NewWasmStruct(const wasm::StructType* type,
 }
 
 Handle<WasmContinuationObject> Factory::NewWasmContinuationObject(
-    Address jmpbuf, DirectHandle<Foreign> managed_stack,
-    DirectHandle<HeapObject> parent, AllocationType allocation) {
+    Address jmpbuf, wasm::StackMemory* stack, DirectHandle<HeapObject> parent,
+    AllocationType allocation) {
   Tagged<Map> map = *wasm_continuation_object_map();
   auto result = Cast<WasmContinuationObject>(
       AllocateRawWithImmortalMap(map->instance_size(), allocation, map));
   result->init_jmpbuf(isolate(), jmpbuf);
-  result->set_stack(*managed_stack);
+  result->init_stack(isolate(), reinterpret_cast<Address>(stack));
   result->set_parent(Cast<UnionOf<Undefined, WasmContinuationObject>>(*parent));
   return handle(result, isolate());
 }
@@ -2040,6 +2053,9 @@ Handle<FeedbackCell> Factory::NewNoClosuresCell() {
   DisallowGarbageCollection no_gc;
   result->set_value(read_only_roots().undefined_value());
   result->clear_interrupt_budget();
+#ifdef V8_ENABLE_LEAPTIERING
+  result->clear_dispatch_handle();
+#endif  // V8_ENABLE_LEAPTIERING
   result->clear_padding();
   return handle(result, isolate());
 }
@@ -2052,6 +2068,9 @@ Handle<FeedbackCell> Factory::NewOneClosureCell(
   DisallowGarbageCollection no_gc;
   result->set_value(*value);
   result->clear_interrupt_budget();
+#ifdef V8_ENABLE_LEAPTIERING
+  result->clear_dispatch_handle();
+#endif  // V8_ENABLE_LEAPTIERING
   result->clear_padding();
   return handle(result, isolate());
 }
@@ -2063,6 +2082,9 @@ Handle<FeedbackCell> Factory::NewManyClosuresCell() {
   DisallowGarbageCollection no_gc;
   result->set_value(read_only_roots().undefined_value());
   result->clear_interrupt_budget();
+#ifdef V8_ENABLE_LEAPTIERING
+  result->clear_dispatch_handle();
+#endif  // V8_ENABLE_LEAPTIERING
   result->clear_padding();
   return handle(result, isolate());
 }
@@ -3209,11 +3231,27 @@ Handle<JSGeneratorObject> Factory::NewJSGeneratorObject(
   return Cast<JSGeneratorObject>(NewJSObjectFromMap(map));
 }
 
-Handle<JSDisposableStack> Factory::NewJSDisposableStack() {
+Handle<JSDisposableStackBase> Factory::NewJSDisposableStackBase() {
   DirectHandle<NativeContext> native_context = isolate()->native_context();
   DirectHandle<Map> map(native_context->js_disposable_stack_map(), isolate());
-  Handle<JSDisposableStack> disposable_stack(
-      Cast<JSDisposableStack>(NewJSObjectFromMap(map)));
+  Handle<JSDisposableStackBase> disposable_stack(
+      Cast<JSDisposableStackBase>(NewJSObjectFromMap(map)));
+  disposable_stack->set_status(0);
+  return disposable_stack;
+}
+
+Handle<JSSyncDisposableStack> Factory::NewJSSyncDisposableStack(
+    DirectHandle<Map> map) {
+  Handle<JSSyncDisposableStack> disposable_stack(
+      Cast<JSSyncDisposableStack>(NewJSObjectFromMap(map)));
+  disposable_stack->set_status(0);
+  return disposable_stack;
+}
+
+Handle<JSAsyncDisposableStack> Factory::NewJSAsyncDisposableStack(
+    DirectHandle<Map> map) {
+  Handle<JSAsyncDisposableStack> disposable_stack(
+      Cast<JSAsyncDisposableStack>(NewJSObjectFromMap(map)));
   disposable_stack->set_status(0);
   return disposable_stack;
 }
@@ -3268,7 +3306,7 @@ Handle<SyntheticModule> Factory::NewSyntheticModule(
   DirectHandle<ObjectHashTable> exports =
       ObjectHashTable::New(isolate(), static_cast<int>(export_names->length()));
   DirectHandle<Foreign> evaluation_steps_foreign =
-      NewForeign<kGenericForeignTag>(
+      NewForeign<kSyntheticModuleTag>(
           reinterpret_cast<Address>(evaluation_steps));
 
   Tagged<SyntheticModule> module =
@@ -4434,6 +4472,18 @@ Handle<DictionaryTemplateInfo> Factory::NewDictionaryTemplateInfo(
   return handle(obj, isolate());
 }
 
+Handle<TrustedForeign> Factory::NewTrustedForeign(Address addr) {
+  // Statically ensure that it is safe to allocate foreigns in paged spaces.
+  static_assert(TrustedForeign::kSize <= kMaxRegularHeapObjectSize);
+  Tagged<Map> map = *trusted_foreign_map();
+  Tagged<TrustedForeign> foreign =
+      Cast<TrustedForeign>(AllocateRawWithImmortalMap(
+          map->instance_size(), AllocationType::kTrusted, map));
+  DisallowGarbageCollection no_gc;
+  foreign->set_foreign_address(addr);
+  return handle(foreign, isolate());
+}
+
 Factory::JSFunctionBuilder::JSFunctionBuilder(Isolate* isolate,
                                               Handle<SharedFunctionInfo> sfi,
                                               Handle<Context> context)
@@ -4484,6 +4534,9 @@ Handle<JSFunction> Factory::JSFunctionBuilder::BuildRaw(
   function->set_shared(*sfi_, mode);
   function->set_context(*context_, kReleaseStore, mode);
   function->set_raw_feedback_cell(*feedback_cell, mode);
+#ifdef V8_ENABLE_SANDBOX
+  function->set_dispatch_handle(feedback_cell->dispatch_handle());
+#endif  // V8_ENABLE_SANDBOX
   function->set_code(*code, kReleaseStore, mode);
   if (function->has_prototype_slot()) {
     function->set_prototype_or_initial_map(

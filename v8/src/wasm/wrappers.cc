@@ -315,6 +315,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
       case wasm::kRtt:
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kS128:
       case wasm::kVoid:
       case wasm::kBottom:
@@ -571,7 +572,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
     V<JSFunction> callable_node = __ Load(ref, LoadOp::Kind::TaggedBase(),
                                           MemoryRepresentation::TaggedPointer(),
                                           WasmApiFunctionRef::kCallableOffset);
-    OpIndex old_sp = BuildSwitchToTheCentralStackIfNeeded(callable_node);
+    OpIndex old_sp = BuildSwitchToTheCentralStackIfNeeded();
     BuildModifyThreadInWasmFlag(__ phase_zone(), false);
     OpIndex call = OpIndex::Invalid();
     switch (kind) {
@@ -596,8 +597,8 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
         args[pos++] =
             __ Word32Constant(JSParameterCount(wasm_count));  // argument count
         args[pos++] = LoadContextFromJSFunction(callable_node);
-        call = BuildCallOnCentralStack(callable_node, args, ts_call_descriptor,
-                                       callable_node);
+        call = __ Call(callable_node, OpIndex::Invalid(), base::VectorOf(args),
+                       ts_call_descriptor);
         break;
       }
       // =======================================================================
@@ -625,14 +626,22 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
         // TypeError, if the target is a native function, or if the target is a
         // callable JSObject, which can only be constructed by the runtime.
         args[pos++] = native_context;
-        call = BuildCallOnCentralStack(target, args, ts_call_descriptor,
-                                       callable_node);
+        call = __ Call(target, OpIndex::Invalid(), base::VectorOf(args),
+                       ts_call_descriptor);
         break;
       }
       default:
         UNIMPLEMENTED();
     }
+    // For asm.js the error location can differ depending on whether an
+    // exception was thrown in imported JS code or an exception was thrown in
+    // the ToNumber builtin that converts the result of the JS code a
+    // WebAssembly value. The source position allows asm.js to determine the
+    // correct error location. Source position 1 encodes the call to ToNumber,
+    // source position 0 encodes the call to the imported JS code.
+    __ output_graph().source_positions()[call] = SourcePosition(0);
     DCHECK(call.valid());
+
     if (suspend == kSuspend) {
       call = BuildSuspend(call, LOAD_ROOT(ActiveSuspender), ref, &old_sp);
     } else if (suspend == kSuspendWithSuspender) {
@@ -657,7 +666,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
     }
     BuildModifyThreadInWasmFlag(__ phase_zone(), true);
     IF_NOT (LIKELY(__ WordPtrEqual(old_sp, __ IntPtrConstant(0)))) {
-      BuildSwitchBackFromCentralStack(old_sp, callable_node);
+      BuildSwitchBackFromCentralStack(old_sp);
     }
     if (sig_->return_count() <= 1) {
       __ Return(val);
@@ -825,6 +834,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
       case wasm::kS128:
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kBottom:
       case wasm::kVoid:
         UNREACHABLE();
@@ -1001,6 +1011,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
       case wasm::kS128:
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kBottom:
       case wasm::kVoid:
         // If this is reached, then IsJSCompatibleSignature() is too permissive.
@@ -1020,6 +1031,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
         case wasm::kS128:
         case wasm::kI8:
         case wasm::kI16:
+        case wasm::kF16:
         case wasm::kBottom:
         case wasm::kVoid:
           return false;
@@ -1081,6 +1093,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
       case wasm::kS128:
       case wasm::kI8:
       case wasm::kI16:
+      case wasm::kF16:
       case wasm::kBottom:
       case wasm::kVoid:
         UNREACHABLE();
@@ -1135,7 +1148,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
                    JSFunction::kContextOffset);
   }
 
-  OpIndex BuildSwitchToTheCentralStack(OpIndex receiver) {
+  OpIndex BuildSwitchToTheCentralStack() {
     V<WordPtr> stack_limit_slot = __ WordPtrAdd(
         __ FramePointer(),
         __ UintPtrConstant(
@@ -1147,7 +1160,8 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
 
     OpIndex central_stack_sp = CallC(
         &sig, ExternalReference::wasm_switch_to_the_central_stack_for_js(),
-        {__ BitcastHeapObjectToWordPtr(receiver), stack_limit_slot});
+        {__ ExternalConstant(ExternalReference::isolate_address()),
+         stack_limit_slot});
     OpIndex old_sp = __ LoadStackPointer();
     // Temporarily disallow sp-relative offsets.
     __ SetStackPointer(central_stack_sp);
@@ -1157,7 +1171,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
     return old_sp;
   }
 
-  OpIndex BuildSwitchToTheCentralStackIfNeeded(OpIndex receiver) {
+  OpIndex BuildSwitchToTheCentralStackIfNeeded() {
     OpIndex isolate_root = __ LoadRootRegister();
     OpIndex is_on_central_stack_flag = __ Load(
         isolate_root, LoadOp::Kind::RawAligned(), MemoryRepresentation::Uint8(),
@@ -1169,13 +1183,13 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
     // TODO(thibaudm): Look into ways to optimize the switching case as well.
     // Can we avoid the C call? Can we avoid spilling callee-saved registers?
     IF_NOT (LIKELY(is_on_central_stack_flag)) {
-      OpIndex old_sp = BuildSwitchToTheCentralStack(receiver);
+      OpIndex old_sp = BuildSwitchToTheCentralStack();
       old_sp_var = old_sp;
     }
     return old_sp_var;
   }
 
-  void BuildSwitchBackFromCentralStack(OpIndex old_sp, OpIndex receiver) {
+  void BuildSwitchBackFromCentralStack(OpIndex old_sp) {
     OpIndex stack_limit =
         __ Load(__ FramePointer(), LoadOp::Kind::RawAligned(),
                 MemoryRepresentation::UintPtr(),
@@ -1184,28 +1198,13 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
     MachineType reps[] = {MachineType::Pointer(), MachineType::Pointer()};
     MachineSignature sig(0, 2, reps);
     CallC(&sig, ExternalReference::wasm_switch_from_the_central_stack_for_js(),
-          {__ BitcastHeapObjectToWordPtr(receiver), stack_limit});
+          {__ ExternalConstant(ExternalReference::isolate_address()),
+           stack_limit});
     __ Store(__ FramePointer(), __ IntPtrConstant(0),
              StoreOp::Kind::RawAligned(), MemoryRepresentation::UintPtr(),
              compiler::kNoWriteBarrier,
              WasmImportWrapperFrameConstants::kCentralStackSPOffset);
     __ SetStackPointer(old_sp);
-  }
-
-  OpIndex BuildCallOnCentralStack(OpIndex target,
-                                  base::SmallVector<OpIndex, 16> args,
-                                  const TSCallDescriptor* call_descriptor,
-                                  OpIndex receiver) {
-    OpIndex call = __ Call(target, OpIndex::Invalid(), base::VectorOf(args),
-                           call_descriptor);
-    // For asm.js the error location can differ depending on whether an
-    // exception was thrown in imported JS code or an exception was thrown in
-    // the ToNumber builtin that converts the result of the JS code a
-    // WebAssembly value. The source position allows asm.js to determine the
-    // correct error location. Source position 1 encodes the call to ToNumber,
-    // source position 0 encodes the call to the imported JS code.
-    __ output_graph().source_positions()[call] = SourcePosition(0);
-    return call;
   }
 
   OpIndex BuildSuspend(OpIndex value, V<Object> suspender,
@@ -1265,15 +1264,16 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
         base::SmallVector<OpIndex, 16> args{value, on_fulfilled, on_rejected,
                                             LOAD_ROOT(UndefinedValue),
                                             native_context};
-        BuildCallOnCentralStack(promise_then, args, then_call_desc, suspender);
+        __ Call(promise_then, OpIndex::Invalid(), base::VectorOf(args),
+                then_call_desc);
 
         OpIndex suspend = GetTargetForBuiltinCall(Builtin::kWasmSuspend);
         auto* suspend_call_descriptor = GetBuiltinCallDescriptor(
             Builtin::kWasmSuspend, __ graph_zone(), stub_mode_);
-        BuildSwitchBackFromCentralStack(*old_sp, suspender);
+        BuildSwitchBackFromCentralStack(*old_sp);
         OpIndex resolved =
             __ Call(suspend, {suspender}, suspend_call_descriptor);
-        old_sp_var = BuildSwitchToTheCentralStack(suspender);
+        old_sp_var = BuildSwitchToTheCentralStack();
         result = resolved;
       }
     }
@@ -1294,7 +1294,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
     int alignment = offset % type.value_kind_size();
     auto rep = MemoryRepresentation::FromMachineRepresentation(
         type.machine_representation());
-    if (COMPRESS_POINTERS_BOOL && rep.IsTagged()) {
+    if (COMPRESS_POINTERS_BOOL && rep.IsCompressibleTagged()) {
       // We are storing tagged value to off-heap location, so we need to store
       // it as a full word otherwise we will not be able to decompress it.
       rep = MemoryRepresentation::UintPtr();
@@ -1323,7 +1323,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
     int alignment = offset % type.value_kind_size();
     auto rep = MemoryRepresentation::FromMachineRepresentation(
         type.machine_representation());
-    if (COMPRESS_POINTERS_BOOL && rep.IsTagged()) {
+    if (COMPRESS_POINTERS_BOOL && rep.IsCompressibleTagged()) {
       // We are loading tagged value from off-heap location, so we need to load
       // it as a full word otherwise we will not be able to decompress it.
       rep = MemoryRepresentation::UintPtr();

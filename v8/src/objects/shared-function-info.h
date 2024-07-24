@@ -544,8 +544,6 @@ class SharedFunctionInfo
   DECL_BOOLEAN_ACCESSORS(is_sparkplug_compiling)
   DECL_BOOLEAN_ACCESSORS(maglev_compilation_failed)
 
-  DECL_BOOLEAN_ACCESSORS(sparkplug_compiled)
-
   CachedTieringDecision cached_tiering_decision();
   void set_cached_tiering_decision(CachedTieringDecision decision);
 
@@ -598,6 +596,8 @@ class SharedFunctionInfo
   DECL_BOOLEAN_ACCESSORS(private_name_lookup_skips_outer_class)
 
   inline FunctionKind kind() const;
+
+  int UniqueIdInScript() const;
 
   // Defines the index in a native context of closure's map instantiated using
   // this shared function info.
@@ -760,7 +760,7 @@ class SharedFunctionInfo
   class ScriptIterator {
    public:
     V8_EXPORT_PRIVATE ScriptIterator(Isolate* isolate, Tagged<Script> script);
-    explicit ScriptIterator(Handle<WeakFixedArray> shared_function_infos);
+    explicit ScriptIterator(Handle<WeakFixedArray> infos);
     ScriptIterator(const ScriptIterator&) = delete;
     ScriptIterator& operator=(const ScriptIterator&) = delete;
     V8_EXPORT_PRIVATE Tagged<SharedFunctionInfo> Next();
@@ -770,7 +770,7 @@ class SharedFunctionInfo
     void Reset(Isolate* isolate, Tagged<Script> script);
 
    private:
-    Handle<WeakFixedArray> shared_function_infos_;
+    Handle<WeakFixedArray> infos_;
     int index_;
   };
 

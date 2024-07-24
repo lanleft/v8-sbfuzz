@@ -262,6 +262,7 @@ RegisterRepresentation WasmGraphBuilderBase::RepresentationFor(ValueType type) {
       return RegisterRepresentation::Word32();
     case kI64:
       return RegisterRepresentation::Word64();
+    case kF16:
     case kF32:
       return RegisterRepresentation::Float32();
     case kF64:
@@ -400,7 +401,10 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
         shared_(shared),
         wire_bytes_(wire_bytes),
         return_phis_(nullptr),
-        is_inlined_tail_call_(false) {}
+        is_inlined_tail_call_(false) {
+    DCHECK_NOT_NULL(env_);
+    DCHECK_NOT_NULL(env_->module);
+  }
 
   // For inlined functions.
   TurboshaftGraphBuildingInterface(
@@ -481,24 +485,11 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
     if (inlining_enabled(decoder)) {
       if (mode_ == kRegular) {
         if (v8_flags.liftoff) {
-          inlining_decisions_ = decoder->zone_->New<InliningTree>(
-              decoder->zone_, decoder->module_, func_index_,
-              0,  // call count
-              0,  // wire byte size. We pass 0 so that the initial node is
-                  // always expanded, regardless of budget.
-              func_index_,
-              // Pass dummy values for caller, feedback slot, and case.
-              -1, -1, -1,
-              0  // inlining depth
-          );
-          inlining_decisions_->FullyExpand(
-              decoder->module_->functions[func_index_].code.length());
+          inlining_decisions_ = InliningTree::CreateRoot(
+              decoder->zone_, decoder->module_, func_index_);
         } else {
-          set_no_liftoff_inlining_budget(std::max(
-              static_cast<int>(v8_flags.wasm_inlining_min_budget),
-              static_cast<int>(
-                  v8_flags.wasm_inlining_factor *
-                  decoder->module_->functions[func_index_].code.length())));
+          set_no_liftoff_inlining_budget(
+              InliningTree::NoLiftoffBudget(decoder->module_, func_index_));
         }
       } else {
 #if DEBUG
@@ -574,6 +565,11 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
         SourcePosition position = OpIndexToSourcePosition(
             __ output_graph().operation_origins()[index]);
         __ output_graph().source_positions()[index] = position;
+      }
+      if (v8_flags.trace_wasm_inlining) {
+        uint32_t node_count =
+            __ output_graph().NumberOfOperationsForDebugging();
+        PrintF("[function %d: emitted %d nodes]\n", func_index_, node_count);
       }
     }
   }
@@ -1150,6 +1146,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
         break;
       case kI8:
       case kI16:
+      case kF16:
       case kRtt:
       case kVoid:
       case kBottom:
@@ -2031,28 +2028,113 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
 
     const wasm::FunctionSig* sig = decoder->module_->functions[func_index].sig;
     size_t param_count = sig->parameter_count();
+    DCHECK_LE(sig->return_count(), 1);
+
+    const MachineSignature* callback_sig =
+        env_->fast_api_signatures[func_index];
     // All normal parameters + the options as additional parameter at the end.
-    MachineSignature::Builder builder(decoder->zone(), 1, param_count);
-    builder.AddReturn(sig->GetReturn().machine_type());
+    MachineSignature::Builder builder(decoder->zone(), sig->return_count(),
+                                      param_count + 1);
+    if (sig->return_count()) {
+      builder.AddReturn(callback_sig->GetReturn());
+    }
     // The first parameter is the receiver. Because of the fake handle on the
     // stack the type is `Pointer`.
     builder.AddParam(MachineType::Pointer());
 
-    for (size_t i = 1; i < sig->parameter_count(); ++i) {
-      builder.AddParam(sig->GetParam(i).machine_type());
+    for (size_t i = 0; i < callback_sig->parameter_count(); ++i) {
+      builder.AddParam(callback_sig->GetParam(i));
     }
+    // Options object.
+    builder.AddParam(MachineType::Pointer());
 
-    base::SmallVector<OpIndex, 16> inputs(param_count);
+    base::SmallVector<OpIndex, 16> inputs(param_count + 1);
 
     inputs[0] = receiver_handle;
 
+    Label<> value_out_of_range(&asm_);
     for (size_t i = 1; i < param_count; ++i) {
       if (sig->GetParam(i).is_reference()) {
         inputs[i] = __ AdaptLocalArgument(args[i].op);
+      } else if (callback_sig->GetParam(i - 1).representation() ==
+                 MachineRepresentation::kWord64) {
+        if (sig->GetParam(i) == kWasmI64) {
+          // If we already have an I64, then no conversion is needed neither for
+          // int64 nor uint64.
+          inputs[i] = args[i].op;
+        } else if (callback_sig->GetParam(i - 1) == MachineType::Int64()) {
+          if (sig->GetParam(i) == kWasmF64) {
+            V<Tuple<Word64, Word32>> truncate =
+                __ TryTruncateFloat64ToInt64(args[i].op);
+            inputs[i] = __ template Projection<0>(truncate);
+            GOTO_IF(UNLIKELY(
+                        __ Word32Equal(__ template Projection<1>(truncate), 0)),
+                    value_out_of_range);
+          } else if (sig->GetParam(i) == kWasmI32) {
+            inputs[i] = __ ChangeInt32ToInt64(args[i].op);
+          } else {
+            // TODO(ahaas): Handle values that are out of range of int64.
+            CHECK_EQ(sig->GetParam(i), kWasmF32);
+            V<Tuple<Word64, Word32>> truncate =
+                __ TryTruncateFloat32ToInt64(args[i].op);
+            inputs[i] = __ template Projection<0>(truncate);
+            GOTO_IF(UNLIKELY(
+                        __ Word32Equal(__ template Projection<1>(truncate), 0)),
+                    value_out_of_range);
+          }
+        } else if (callback_sig->GetParam(i - 1) == MachineType::Uint64()) {
+          if (sig->GetParam(i) == kWasmF64) {
+            V<Tuple<Word64, Word32>> truncate =
+                __ TryTruncateFloat64ToUint64(args[i].op);
+            inputs[i] = __ template Projection<0>(truncate);
+            GOTO_IF(UNLIKELY(
+                        __ Word32Equal(__ template Projection<1>(truncate), 0)),
+                    value_out_of_range);
+          } else if (sig->GetParam(i) == kWasmI32) {
+            inputs[i] = __ ChangeUint32ToUint64(args[i].op);
+          } else {
+            // TODO(ahaas): Handle values that are out of range of int64.
+            CHECK_EQ(sig->GetParam(i), kWasmF32);
+            V<Tuple<Word64, Word32>> truncate =
+                __ TryTruncateFloat32ToUint64(args[i].op);
+            inputs[i] = __ template Projection<0>(truncate);
+            GOTO_IF(UNLIKELY(
+                        __ Word32Equal(__ template Projection<1>(truncate), 0)),
+                    value_out_of_range);
+          }
+        }
       } else {
         inputs[i] = args[i].op;
       }
     }
+
+    OpIndex options_object;
+    {
+      const int kAlign = alignof(v8::FastApiCallbackOptions);
+      const int kSize = sizeof(v8::FastApiCallbackOptions);
+
+      options_object = __ StackSlot(kSize, kAlign);
+
+      static_assert(
+          sizeof(v8::FastApiCallbackOptions::isolate) == sizeof(intptr_t),
+          "We expected 'isolate' to be pointer sized, but it is not.");
+      __ StoreOffHeap(options_object,
+                      __ IsolateField(IsolateFieldId::kIsolateAddress),
+                      MemoryRepresentation::UintPtr(),
+                      offsetof(v8::FastApiCallbackOptions, isolate));
+
+      V<Object> callback_data =
+          __ Load(data, LoadOp::Kind::TaggedBase(),
+                  MemoryRepresentation::TaggedPointer(),
+                  WasmFastApiCallData::kCallbackDataOffset);
+      V<WordPtr> data_argument_to_pass = __ AdaptLocalArgument(callback_data);
+
+      __ StoreOffHeap(options_object, data_argument_to_pass,
+                      MemoryRepresentation::UintPtr(),
+                      offsetof(v8::FastApiCallbackOptions, data));
+    }
+
+    inputs[param_count] = options_object;
 
     const CallDescriptor* call_descriptor =
         compiler::Linkage::GetSimplifiedCDescriptor(__ graph_zone(),
@@ -2086,6 +2168,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
     V<Object> exception = __ Load(
         __ LoadRootRegister(), LoadOp::Kind::RawAligned(),
         MemoryRepresentation::UintPtr(), IsolateData::exception_offset());
+
     IF_NOT (LIKELY(
                 __ TaggedEqual(exception, LOAD_ROOT(TheHoleValue)))) {
       CallBuiltinThroughJumptable<
@@ -2094,11 +2177,38 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
     }
     BuildModifyThreadInWasmFlag(__ graph_zone(), true);
 
-    if (env_->fast_api_return_is_bool[func_index]) {
-      ret_val = __ WordBitwiseAnd(ret_val, __ Word32Constant(0xff),
-                                  WordRepresentation::Word32());
+    if (callback_sig->return_count() > 0) {
+      if (callback_sig->GetReturn() == MachineType::Bool()) {
+        ret_val = __ WordBitwiseAnd(ret_val, __ Word32Constant(0xff),
+                                    WordRepresentation::Word32());
+      } else if (callback_sig->GetReturn() == MachineType::Int64()) {
+        if (sig->GetReturn() == kWasmF64) {
+          ret_val = __ ChangeInt64ToFloat64(ret_val);
+        } else if (sig->GetReturn() == kWasmI32) {
+          ret_val = __ TruncateWord64ToWord32(ret_val);
+        } else if (sig->GetReturn() == kWasmF32) {
+          ret_val = __ ChangeInt64ToFloat32(ret_val);
+        }
+      } else if (callback_sig->GetReturn() == MachineType::Uint64()) {
+        if (sig->GetReturn() == kWasmF64) {
+          ret_val = __ ChangeUint64ToFloat64(ret_val);
+        } else if (sig->GetReturn() == kWasmI32) {
+          ret_val = __ TruncateWord64ToWord32(ret_val);
+        } else if (sig->GetReturn() == kWasmF32) {
+          ret_val = __ ChangeUint64ToFloat32(ret_val);
+        }
+      }
     }
-    returns[0].op = ret_val;
+    Label<> done(&asm_);
+    GOTO(done);
+    BIND(value_out_of_range);
+    auto [target, ref] = BuildImportedFunctionTargetAndRef(decoder, imm.index);
+    BuildWasmCall(decoder, imm.sig, target, ref, args, returns);
+    __ Unreachable();
+    BIND(done);
+    if (sig->return_count()) {
+      returns[0].op = ret_val;
+    }
   }
 
   bool HandleWellKnownImport(FullDecoder* decoder,
@@ -2130,7 +2240,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
       }
       case WKI::kStringCharCodeAt: {
         V<String> string = ExternRefToString(args[0]);
-        V<String> view = V<String>::Cast(__ StringAsWtf16(string));
+        V<String> view = __ StringAsWtf16(string);
         // TODO(14108): Annotate `view`'s type.
         result = GetCodeUnitImpl(decoder, view, args[1].op);
         decoder->detected_->add_imported_strings();
@@ -2138,7 +2248,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
       }
       case WKI::kStringCodePointAt: {
         V<String> string = ExternRefToString(args[0]);
-        V<String> view = V<String>::Cast(__ StringAsWtf16(string));
+        V<String> view = __ StringAsWtf16(string);
         // TODO(14108): Annotate `view`'s type.
         result = StringCodePointAt(decoder, view, args[1].op);
         decoder->detected_->add_imported_strings();
@@ -2239,12 +2349,12 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
       }
       case WKI::kStringSubstring: {
         V<String> string = ExternRefToString(args[0]);
-        V<Object> view = __ StringAsWtf16(string);
+        V<String> view = __ StringAsWtf16(string);
         // TODO(12868): Consider annotating {view}'s type when the typing story
         //              for string views has been settled.
         V<String> result_value = CallBuiltinThroughJumptable<
             BuiltinCallDescriptor::WasmStringViewWtf16Slice>(
-            decoder, {V<String>::Cast(view), args[1].op, args[2].op});
+            decoder, {view, args[1].op, args[2].op});
         result = __ AnnotateWasmType(result_value, kWasmRefExternString);
         decoder->detected_->add_imported_strings();
         break;
@@ -2548,7 +2658,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
   void CallIndirect(FullDecoder* decoder, const Value& index,
                     const CallIndirectImmediate& imm, const Value args[],
                     Value returns[]) {
-    if (v8_flags.experimental_wasm_inlining_call_indirect) {
+    if (v8_flags.wasm_inlining_call_indirect) {
       feedback_slot_++;
 
       if (should_inline(decoder, feedback_slot_,
@@ -2588,7 +2698,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
         InstanceCache::Snapshot saved_cache = instance_cache_.SaveState();
         __ Goto(case_blocks[0]);
 
-        bool use_deopt_slowpath = v8_flags.wasm_deopt;
+        bool use_deopt_slowpath = deopts_enabled_;
         for (size_t i = 0; i < feedback_cases.size(); i++) {
           __ Bind(case_blocks[i]);
           InliningTree* tree = feedback_cases[i];
@@ -2652,14 +2762,20 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
               use_deopt_slowpath = false;
             }
           }
-          if (use_deopt_slowpath && is_last_feedback_case) {
+          bool emit_deopt = use_deopt_slowpath && is_last_feedback_case;
+          if (emit_deopt) {
             const FunctionSig* sig =
                 decoder->module_->functions[inlined_index].sig;
             V<FrameState> frame_state =
                 CreateFrameState(decoder, sig, &index, args);
-            DeoptIfNot(decoder, __ WordPtrEqual(target, inlined_target),
-                       frame_state);
-          } else {
+            if (frame_state.valid()) {
+              DeoptIfNot(decoder, __ WordPtrEqual(target, inlined_target),
+                         frame_state);
+            } else {
+              emit_deopt = false;
+            }
+          }
+          if (!emit_deopt) {
             TSBlock* inline_block = __ NewBlock();
             BranchHint hint =
                 is_last_feedback_case ? BranchHint::kTrue : BranchHint::kNone;
@@ -2739,7 +2855,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
   void ReturnCallIndirect(FullDecoder* decoder, const Value& index,
                           const CallIndirectImmediate& imm,
                           const Value args[]) {
-    if (v8_flags.experimental_wasm_inlining_call_indirect) {
+    if (v8_flags.wasm_inlining_call_indirect) {
       feedback_slot_++;
 
       if (should_inline(decoder, feedback_slot_,
@@ -2887,7 +3003,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
       InstanceCache::Snapshot saved_cache = instance_cache_.SaveState();
       __ Goto(case_blocks[0]);
 
-      bool use_deopt_slowpath = v8_flags.wasm_deopt;
+      bool use_deopt_slowpath = deopts_enabled_;
       for (size_t i = 0; i < feedback_cases.size(); i++) {
         __ Bind(case_blocks[i]);
         InliningTree* tree = feedback_cases[i];
@@ -2925,12 +3041,18 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
             use_deopt_slowpath = false;
           }
         }
-        if (use_deopt_slowpath && is_last_feedback_case) {
+        bool emit_deopt = use_deopt_slowpath && is_last_feedback_case;
+        if (emit_deopt) {
           V<FrameState> frame_state =
               CreateFrameState(decoder, sig, &func_ref, args);
-          DeoptIfNot(decoder, __ TaggedEqual(func_ref.op, inlined_func_ref),
-                     frame_state);
-        } else {
+          if (frame_state.valid()) {
+            DeoptIfNot(decoder, __ TaggedEqual(func_ref.op, inlined_func_ref),
+                       frame_state);
+          } else {
+            emit_deopt = false;
+          }
+        }
+        if (!emit_deopt) {
           TSBlock* inline_block = __ NewBlock();
           BranchHint hint =
               is_last_feedback_case ? BranchHint::kTrue : BranchHint::kNone;
@@ -3389,6 +3511,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
         }
         case kI8:
         case kI16:
+        case kF16:
         case kVoid:
         case kBottom:
           UNREACHABLE();
@@ -4264,6 +4387,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
         case wasm::kI16:
           array_copy_max_loop_length = 20;
           break;
+        case wasm::kF16:  // TODO(irezvov): verify the threshold for F16.
         case wasm::kF32:
         case wasm::kF64:
           array_copy_max_loop_length = 35;
@@ -4844,7 +4968,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
   }
 
   void StringAsWtf16(FullDecoder* decoder, const Value& str, Value* result) {
-    result->op = __ StringAsWtf16(NullCheck(str));
+    result->op = __ StringAsWtf16(V<String>::Cast(NullCheck(str)));
   }
 
   V<Word32> GetCodeUnitImpl(FullDecoder* decoder, V<String> string,
@@ -5622,6 +5746,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
         return __ Word32Constant(int32_t{0});
       case kI64:
         return __ Word64Constant(int64_t{0});
+      case kF16:
       case kF32:
         return __ Float32Constant(0.0f);
       case kF64:
@@ -5705,11 +5830,18 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
         BytecodeOffset(decoder->pc_offset()),
         compiler::OutputFrameStateCombine::Ignore(), function_info);
 
-    // TODO(mliedtke): If there are too many inputs, we cannot create a
-    // FrameState. In this case we probably shouldn't emit a deopt node in the
-    // first place, probably much earlier than thousands of inputs.
-    CHECK_LT(builder.Inputs().size(),
-             std::numeric_limits<decltype(Operation::input_count)>::max());
+    size_t max_input_count =
+        std::numeric_limits<decltype(Operation::input_count)>::max();
+    // Int64 lowering might double the input count.
+    if (!Is64()) max_input_count /= 2;
+    if (builder.Inputs().size() >= max_input_count) {
+      // If there are too many inputs, we cannot create a valid FrameState.
+      // For simplicity reasons disable deopts completely for the rest of the
+      // function. (Note that this is an exceptional case that should not be
+      // relevant for any real-world application.)
+      deopts_enabled_ = false;
+      return OpIndex::Invalid();
+    }
 
     return __ FrameState(
         builder.Inputs(), builder.inlined(),
@@ -5718,7 +5850,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
 
   void DeoptIfNot(FullDecoder* decoder, OpIndex deopt_condition,
                   V<FrameState> frame_state) {
-    CHECK(v8_flags.wasm_deopt);
+    CHECK(deopts_enabled_);
     __ DeoptimizeIfNot(deopt_condition, frame_state,
                        DeoptimizeReason::kWrongCallTarget,
                        compiler::FeedbackSource());
@@ -7046,20 +7178,16 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
         WasmDispatchTable::kEntriesOffset);
 
     if (needs_type_check) {
-      // We store the isorecursive canonical types array in both the shared
-      // and non-shared part of the instance.
-      constexpr bool kShared = false;
-      V<WordPtr> isorecursive_canonical_types = LOAD_IMMUTABLE_INSTANCE_FIELD(
-          trusted_instance_data(kShared), IsorecursiveCanonicalTypes,
-          MemoryRepresentation::UintPtr());
-      V<Word32> expected_sig_id =
-          __ Load(isorecursive_canonical_types, LoadOp::Kind::RawAligned(),
-                  MemoryRepresentation::Uint32(), sig_index * kUInt32Size);
+      uint32_t canonical_sig_id =
+          env_->module->isorecursive_canonical_type_ids[sig_index];
+      V<Word32> expected_canonical_sig =
+          __ RelocatableWasmCanonicalSignatureId(canonical_sig_id);
+
       V<Word32> loaded_sig =
           __ Load(dispatch_table, dispatch_table_entry_offset,
                   LoadOp::Kind::TaggedBase(), MemoryRepresentation::Uint32(),
                   WasmDispatchTable::kSigBias);
-      V<Word32> sigs_match = __ Word32Equal(expected_sig_id, loaded_sig);
+      V<Word32> sigs_match = __ Word32Equal(expected_canonical_sig, loaded_sig);
       if (!decoder->module_->types[sig_index].is_final) {
         // In this case, a full type check is needed.
         Label<> end(&asm_);
@@ -7596,6 +7724,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
           break;
         case kI8:
         case kI16:
+        case kF16:
         case kVoid:
         case kBottom:
           UNREACHABLE();
@@ -7728,7 +7857,8 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
       BrOrRet(decoder, br_depth);
     }
     // Narrow type for the successful cast fallthrough branch.
-    Forward(decoder, object, value_on_fallthrough);
+    value_on_fallthrough->op =
+        __ AnnotateWasmType(V<Object>::Cast(object.op), config.to);
   }
 
   V<HeapObject> ArrayNewImpl(FullDecoder* decoder, uint32_t index,
@@ -7837,6 +7967,8 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
       case wasm::kRef:
         value_int64 = kTaggedSize == 4 ? __ ChangeInt32ToInt64(value) : value;
         break;
+      case wasm::kF16:
+        UNIMPLEMENTED();
       case wasm::kRtt:
       case wasm::kVoid:
       case wasm::kBottom:
@@ -7956,7 +8088,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
     }
 
     OptionalV<FrameState> frame_state;
-    if (v8_flags.wasm_deopt) {
+    if (deopts_enabled_) {
       frame_state = is_tail_call
                         ? parent_frame_state_
                         : CreateFrameState(decoder, sig, /*funcref*/ nullptr,
@@ -7965,13 +8097,13 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
 
     WasmFullDecoder<Decoder::FullValidationTag,
                     TurboshaftGraphBuildingInterface>
-        inlinee_decoder(
-            decoder->zone_, decoder->module_, decoder->enabled_,
-            decoder->detected_, inlinee_body, decoder->zone_, nullptr, asm_,
-            inlinee_mode, instance_cache_, assumptions_, inlining_positions_,
-            func_index, inlinee_is_shared, wire_bytes_,
-            base::VectorOf(inlinee_args), callee_return_block,
-            inlinee_return_phis, callee_catch_block, is_tail_call, frame_state);
+        inlinee_decoder(decoder->zone_, decoder->module_, decoder->enabled_,
+                        decoder->detected_, inlinee_body, decoder->zone_, env_,
+                        asm_, inlinee_mode, instance_cache_, assumptions_,
+                        inlining_positions_, func_index, inlinee_is_shared,
+                        wire_bytes_, base::VectorOf(inlinee_args),
+                        callee_return_block, inlinee_return_phis,
+                        callee_catch_block, is_tail_call, frame_state);
     SourcePosition call_position =
         SourcePosition(decoder->position(), inlining_id_ == kNoInliningId
                                                 ? SourcePosition::kNotInlined
@@ -8234,6 +8366,7 @@ class TurboshaftGraphBuildingInterface : public WasmGraphBuilderBase {
   SourcePosition parent_position_;
   bool is_inlined_tail_call_ = false;
 
+  bool deopts_enabled_ = v8_flags.wasm_deopt;
   OptionalV<FrameState> parent_frame_state_;
 };
 

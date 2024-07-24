@@ -25,6 +25,7 @@
 #include "src/objects/smi.h"
 #include "src/objects/string.h"
 #include "src/sandbox/external-pointer-inl.h"
+#include "src/sandbox/js-dispatch-table-inl.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -78,6 +79,15 @@ void MarkingVisitorBase<ConcreteVisitor>::ProcessStrongHeapObject(
   concrete_visitor()->RecordSlot(host, slot, heap_object);
 }
 
+// static
+template <typename ConcreteVisitor>
+V8_INLINE constexpr bool
+MarkingVisitorBase<ConcreteVisitor>::IsTrivialWeakReferenceValue(
+    Tagged<HeapObject> host, Tagged<HeapObject> heap_object) {
+  return !IsMap(heap_object) ||
+         !(IsMap(host) || IsTransitionArray(host) || IsDescriptorArray(host));
+}
+
 // class template arguments
 template <typename ConcreteVisitor>
 // method template arguments
@@ -103,13 +113,12 @@ void MarkingVisitorBase<ConcreteVisitor>::ProcessWeakHeapObject(
     // closure.
     // Distinguish trivial cases (non involving custom weakness) from
     // non-trivial ones. The latter are maps in host objects of type Map,
-    // TransitionArray and DescriptorArray. However, as the check is
-    // expensive, we consider all maps to be non-trivial.
-    if (IsMap(heap_object)) {
-      local_weak_objects_->weak_references_non_trivial_local.Push(
+    // TransitionArray and DescriptorArray.
+    if (V8_LIKELY(IsTrivialWeakReferenceValue(host, heap_object))) {
+      local_weak_objects_->weak_references_trivial_local.Push(
           HeapObjectAndSlot{host, slot});
     } else {
-      local_weak_objects_->weak_references_trivial_local.Push(
+      local_weak_objects_->weak_references_non_trivial_local.Push(
           HeapObjectAndSlot{host, slot});
     }
   }
@@ -282,6 +291,16 @@ void MarkingVisitorBase<ConcreteVisitor>::VisitTrustedPointerTableEntry(
   concrete_visitor()->MarkPointerTableEntry(host, slot);
 }
 
+template <typename ConcreteVisitor>
+void MarkingVisitorBase<ConcreteVisitor>::VisitJSDispatchTableEntry(
+    Tagged<HeapObject> host, JSDispatchHandle handle) {
+#ifdef V8_ENABLE_SANDBOX
+  JSDispatchTable* table = GetProcessWideJSDispatchTable();
+  JSDispatchTable::Space* space = heap_->js_dispatch_table_space();
+  table->Mark(space, handle);
+#endif  // V8_ENABLE_SANDBOX
+}
+
 // ===========================================================================
 // Object participating in bytecode flushing =================================
 // ===========================================================================
@@ -405,10 +424,12 @@ template <typename ConcreteVisitor>
 void MarkingVisitorBase<ConcreteVisitor>::MakeOlder(
     Tagged<SharedFunctionInfo> sfi) const {
   if (v8_flags.flush_code_based_on_time) {
-    DCHECK_NE(code_flushing_increase_, 0);
+    if (code_flushing_increase_ == 0) {
+      return;
+    }
+
     uint16_t current_age;
     uint16_t updated_age;
-
     do {
       current_age = sfi->age();
       // When the age is 0, it was reset by the function prologue in

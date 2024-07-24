@@ -73,10 +73,39 @@ std::ostream& operator<<(std::ostream& out, const ExecutionResult& result) {
   return out;
 }
 
+class NearHeapLimitCallbackScope {
+ public:
+  explicit NearHeapLimitCallbackScope(Isolate* isolate) : isolate_(isolate) {
+    isolate_->heap()->AddNearHeapLimitCallback(Callback, this);
+  }
+
+  ~NearHeapLimitCallbackScope() {
+    isolate_->heap()->RemoveNearHeapLimitCallback(Callback, initial_limit_);
+  }
+
+  bool heap_limit_reached() const { return heap_limit_reached_; }
+
+ private:
+  static size_t Callback(void* raw_data, size_t current_limit,
+                         size_t initial_limit) {
+    NearHeapLimitCallbackScope* data =
+        reinterpret_cast<NearHeapLimitCallbackScope*>(raw_data);
+    data->heap_limit_reached_ = true;
+    data->isolate_->TerminateExecution();
+    data->initial_limit_ = initial_limit;
+    // Return a slightly raised limit, just to make it to the next
+    // interrupt check point, where execution will terminate.
+    return initial_limit * 1.25;
+  }
+
+  Isolate* isolate_;
+  bool heap_limit_reached_ = false;
+  size_t initial_limit_ = 0;
+};
+
 std::vector<ExecutionResult> PerformReferenceRun(
     const std::vector<std::string>& callees, ModuleWireBytes wire_bytes,
-    CompileTimeImports compile_imports, WasmEnabledFeatures enabled_features,
-    bool valid, Isolate* isolate) {
+    WasmEnabledFeatures enabled_features, bool valid, Isolate* isolate) {
   std::vector<ExecutionResult> results;
   FlagScope<bool> eager_compile(&v8_flags.wasm_lazy_compilation, false);
   ErrorThrower thrower(isolate, "WasmFuzzerSyncCompileReference");
@@ -97,24 +126,8 @@ std::vector<ExecutionResult> PerformReferenceRun(
 
   auto arguments = base::OwnedVector<Handle<Object>>::New(1);
 
+  NearHeapLimitCallbackScope near_heap_limit(isolate);
   for (uint32_t i = 0; i < callees.size(); ++i) {
-    struct OomCallbackData {
-      Isolate* isolate;
-      bool heap_limit_reached{false};
-      size_t initial_limit{0};
-    } oom_callback_data{isolate};
-    auto heap_limit_callback = [](void* raw_data, size_t current_limit,
-                                  size_t initial_limit) -> size_t {
-      OomCallbackData* data = reinterpret_cast<OomCallbackData*>(raw_data);
-      data->heap_limit_reached = true;
-      data->isolate->TerminateExecution();
-      data->initial_limit = initial_limit;
-      // Return a slightly raised limit, just to make it to the next
-      // interrupt check point, where execution will terminate.
-      return initial_limit * 1.25;
-    };
-    isolate->heap()->AddNearHeapLimitCallback(heap_limit_callback,
-                                              &oom_callback_data);
 
     arguments[0] = handle(Smi::FromInt(i), isolate);
     std::unique_ptr<const char[]> exception;
@@ -128,9 +141,7 @@ std::vector<ExecutionResult> PerformReferenceRun(
     if (nondeterminism != 0) break;
     // Similar to max steps reached, also discard modules that need too much
     // memory.
-    isolate->heap()->RemoveNearHeapLimitCallback(
-        heap_limit_callback, oom_callback_data.initial_limit);
-    if (oom_callback_data.heap_limit_reached) {
+    if (near_heap_limit.heap_limit_reached()) {
       isolate->CancelTerminateExecution();
       break;
     }
@@ -177,8 +188,8 @@ int FuzzIt(base::Vector<const uint8_t> data) {
   // Enable the experimental features we want to fuzz. (Note that
   // EnableExperimentalWasmFeatures only enables staged features.)
   FlagScope<bool> deopt_scope(&v8_flags.wasm_deopt, true);
-  FlagScope<bool> inlining_indirect(
-      &v8_flags.experimental_wasm_inlining_call_indirect, true);
+  FlagScope<bool> inlining_indirect(&v8_flags.wasm_inlining_call_indirect,
+                                    true);
   // Make inlining more aggressive.
   FlagScope<bool> ignore_call_counts_scope(
       &v8_flags.wasm_inlining_ignore_call_counts, true);
@@ -188,6 +199,9 @@ int FuzzIt(base::Vector<const uint8_t> data) {
                                   v8_flags.wasm_inlining_max_size * 5);
   FlagScope<size_t> inlining_factor(&v8_flags.wasm_inlining_factor,
                                     v8_flags.wasm_inlining_factor * 5);
+  // Force new instruction selection.
+  FlagScope<bool> new_isel(
+      &v8_flags.turboshaft_wasm_instruction_selection_staged, true);
 
   EnableExperimentalWasmFeatures(isolate);
 
@@ -204,11 +218,8 @@ int FuzzIt(base::Vector<const uint8_t> data) {
   testing::SetupIsolateForWasmModule(i_isolate);
   ModuleWireBytes wire_bytes(buffer.begin(), buffer.end());
   auto enabled_features = WasmEnabledFeatures::FromIsolate(i_isolate);
-  CompileTimeImports compile_imports = CompileTimeImports(
-      {CompileTimeImport::kJsString, CompileTimeImport::kTextEncoder,
-       CompileTimeImport::kTextDecoder});
-  bool valid = GetWasmEngine()->SyncValidate(i_isolate, enabled_features,
-                                             compile_imports, wire_bytes);
+  bool valid = GetWasmEngine()->SyncValidate(
+      i_isolate, enabled_features, CompileTimeImportsForFuzzing(), wire_bytes);
 
   if (v8_flags.wasm_fuzzer_gen_test) {
     GenerateTestCase(i_isolate, wire_bytes, valid);
@@ -216,14 +227,15 @@ int FuzzIt(base::Vector<const uint8_t> data) {
 
   ErrorThrower thrower(i_isolate, "WasmFuzzerSyncCompile");
   MaybeHandle<WasmModuleObject> compiled = GetWasmEngine()->SyncCompile(
-      i_isolate, enabled_features, compile_imports, &thrower, wire_bytes);
+      i_isolate, enabled_features, CompileTimeImportsForFuzzing(), &thrower,
+      wire_bytes);
   if (!valid) {
     FATAL("Generated module should validate, but got: %s\n",
           thrower.error_msg());
   }
 
   std::vector<ExecutionResult> reference_results = PerformReferenceRun(
-      callees, wire_bytes, compile_imports, enabled_features, valid, i_isolate);
+      callees, wire_bytes, enabled_features, valid, i_isolate);
 
   if (reference_results.empty()) {
     // If the first run already included non-determinism, there isn't any value
@@ -241,13 +253,14 @@ int FuzzIt(base::Vector<const uint8_t> data) {
   Handle<WasmExportedFunction> main_function =
       testing::GetExportedFunction(i_isolate, instance, "main")
           .ToHandleChecked();
-  int function_to_optimize = main_function->function_index();
+  int function_to_optimize =
+      main_function->shared()->wasm_exported_function_data()->function_index();
   // As the main function has a fixed signature, it doesn't provide great
   // coverage to always optimize and deopt the main function. Instead by only
   // optimizing an inner wasm function, there can be a large amount of
   // parameters with all kinds of types.
   if (!inlinees.empty() && (data.last() & 1)) {
-    function_to_optimize = main_function->function_index() - 1;
+    function_to_optimize--;
   }
 
   size_t num_callees = reference_results.size();

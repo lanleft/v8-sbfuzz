@@ -205,8 +205,7 @@ Node* FastApiCallBuilder::WrapFastCall(const CallDescriptor* call_descriptor,
                                        const CFunctionInfo* c_signature,
                                        int c_arg_count, Node* stack_slot) {
   // CPU profiler support
-  Node* target_address = __ ExternalConstant(
-      ExternalReference::fast_api_call_target_address(isolate()));
+  Node* target_address = __ IsolateField(IsolateFieldId::kFastApiCallTarget);
   __ Store(StoreRepresentation(MachineType::PointerRepresentation(),
                                kNoWriteBarrier),
            target_address, 0, __ BitcastTaggedToWord(target));
@@ -362,7 +361,7 @@ Node* FastApiCallBuilder::Build(const FastApiCallFunctionVector& c_functions,
                                  kNoWriteBarrier),
              stack_slot,
              static_cast<int>(offsetof(v8::FastApiCallbackOptions, isolate)),
-             __ ExternalConstant(ExternalReference::isolate_address(isolate_)));
+             __ ExternalConstant(ExternalReference::isolate_address()));
 
     Node* data_argument_to_pass = __ AdaptLocalArgument(data_argument);
 

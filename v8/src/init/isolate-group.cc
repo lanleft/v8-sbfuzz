@@ -17,6 +17,17 @@
 namespace v8 {
 namespace internal {
 
+#ifdef V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
+thread_local IsolateGroup* IsolateGroup::current_ = nullptr;
+
+// static
+IsolateGroup* IsolateGroup::current_non_inlined() { return current_; }
+// static
+void IsolateGroup::set_current_non_inlined(IsolateGroup* group) {
+  current_ = group;
+}
+#endif  // V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
+
 #ifdef V8_COMPRESS_POINTERS
 struct PtrComprCageReservationParams
     : public VirtualMemoryCage::ReservationParams {
@@ -57,8 +68,20 @@ IsolateGroup* IsolateGroup::GetProcessWideIsolateGroup() {
 }
 #endif  // V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
 
+IsolateGroup::IsolateGroup() {}
+IsolateGroup::~IsolateGroup() {
+  DCHECK_EQ(reference_count_.load(), 0);
+  // If pointer compression is enabled but the external code space is disabled,
+  // the pointer cage's page allocator is used for the CodeRange, whose
+  // destructor calls it via VirtualMemory::Free.  Therefore we explicitly clear
+  // the code range here while we know the reservation still has a valid page
+  // allocator.
+  code_range_.reset();
+}
+
 #ifdef V8_ENABLE_SANDBOX
 void IsolateGroup::Initialize(Sandbox* sandbox) {
+  DCHECK(!reservation_.IsReserved());
   CHECK(sandbox->is_initialized());
   PtrComprCageReservationParams params;
   Address base = sandbox->address_space()->AllocatePages(
@@ -80,6 +103,7 @@ void IsolateGroup::Initialize(Sandbox* sandbox) {
 }
 #elif defined(V8_COMPRESS_POINTERS)
 void IsolateGroup::Initialize() {
+  DCHECK(!reservation_.IsReserved());
   PtrComprCageReservationParams params;
   if (!reservation_.InitReservation(params)) {
     V8::FatalProcessOutOfMemory(
@@ -93,8 +117,6 @@ void IsolateGroup::Initialize() {
 }
 #else   // !V8_COMPRESS_POINTERS
 void IsolateGroup::Initialize() {
-  pointer_compression_cage_ = &reservation_;
-  trusted_pointer_compression_cage_ = &reservation_;
   page_allocator_ = GetPlatformPageAllocator();
 }
 #endif  // V8_ENABLE_SANDBOX
@@ -103,7 +125,6 @@ void IsolateGroup::Initialize() {
 void IsolateGroup::InitializeOncePerProcess() {
 #ifndef V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
   IsolateGroup* group = GetProcessWideIsolateGroup();
-  DCHECK(!group->reservation_.IsReserved());
 
 #ifdef V8_ENABLE_SANDBOX
   group->Initialize(GetProcessWideSandbox());
@@ -122,6 +143,32 @@ void IsolateGroup::InitializeOncePerProcess() {
   ExternalCodeCompressionScheme::InitBase(V8HeapCompressionScheme::base());
 #endif  // V8_EXTERNAL_CODE_SPACE
 #endif  // !V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
+}
+
+namespace {
+void InitCodeRangeOnce(std::unique_ptr<CodeRange>* code_range_member,
+                       v8::PageAllocator* page_allocator,
+                       size_t requested_size) {
+  CodeRange* code_range = new CodeRange();
+  if (!code_range->InitReservation(page_allocator, requested_size)) {
+    V8::FatalProcessOutOfMemory(
+        nullptr, "Failed to reserve virtual memory for CodeRange");
+  }
+  code_range_member->reset(code_range);
+#ifdef V8_EXTERNAL_CODE_SPACE
+#ifdef V8_COMPRESS_POINTERS_IN_SHARED_CAGE
+  ExternalCodeCompressionScheme::InitBase(
+      ExternalCodeCompressionScheme::PrepareCageBaseAddress(
+          code_range->base()));
+#endif  // V8_COMPRESS_POINTERS_IN_SHARED_CAGE
+#endif  // V8_EXTERNAL_CODE_SPACE
+}
+}  // namespace
+
+CodeRange* IsolateGroup::EnsureCodeRange(size_t requested_size) {
+  base::CallOnce(&init_code_range_, InitCodeRangeOnce, &code_range_,
+                 page_allocator_, requested_size);
+  return code_range_.get();
 }
 
 // static
@@ -153,17 +200,17 @@ IsolateGroup* IsolateGroup::AcquireGlobal() {
 // static
 void IsolateGroup::ReleaseGlobal() {
 #ifndef V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
-  if (CodeRange* code_range = CodeRange::GetProcessWideCodeRange()) {
-    code_range->Free();
-  }
-
   IsolateGroup *group = GetProcessWideIsolateGroup();
   CHECK_EQ(group->reference_count_.load(), 1);
   group->page_allocator_ = nullptr;
+  group->code_range_.reset();
+  group->init_code_range_ = base::ONCE_STATE_UNINITIALIZED;
+#ifdef V8_COMPRESS_POINTERS
   group->trusted_pointer_compression_cage_ = nullptr;
   group->pointer_compression_cage_ = nullptr;
-  DCHECK_EQ(COMPRESS_POINTERS_BOOL, group->reservation_.IsReserved());
-  if (COMPRESS_POINTERS_BOOL) group->reservation_.Free();
+  DCHECK(group->reservation_.IsReserved());
+  group->reservation_.Free();
+#endif  // V8_COMPRESS_POINTERS
 #endif  // V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
 }
 

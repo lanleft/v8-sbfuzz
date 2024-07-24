@@ -278,6 +278,8 @@ static void VisitLoadCommon(InstructionSelectorT<Adapter>* selector,
         // Vectors do not support MRI mode, only MRR is available.
         mode = kNoImmediate;
         break;
+      case MachineRepresentation::kFloat16:
+        UNIMPLEMENTED();
       case MachineRepresentation::kProtectedPointer:  // Fall through.
       case MachineRepresentation::kSimd256:  // Fall through.
       case MachineRepresentation::kMapWord:  // Fall through.
@@ -470,6 +472,8 @@ void VisitStoreCommon(InstructionSelectorT<Adapter>* selector,
         // Vectors do not support MRI mode, only MRR is available.
         mode = kNoImmediate;
         break;
+      case MachineRepresentation::kFloat16:
+        UNIMPLEMENTED();
       case MachineRepresentation::kProtectedPointer:  // Fall through.
       case MachineRepresentation::kSimd256:  // Fall through.
       case MachineRepresentation::kMapWord:  // Fall through.
@@ -2944,7 +2948,6 @@ void InstructionSelectorT<Adapter>::VisitMemoryBarrier(node_t node) {
 
 template <typename Adapter>
 void InstructionSelectorT<Adapter>::VisitWord32AtomicLoad(node_t node) {
-  OperandGeneratorT<Adapter> g(this);
   auto load = this->load_view(node);
   LoadRepresentation load_rep = load.loaded_rep();
   VisitLoadCommon(this, node, load_rep);
@@ -2952,7 +2955,6 @@ void InstructionSelectorT<Adapter>::VisitWord32AtomicLoad(node_t node) {
 
 template <typename Adapter>
 void InstructionSelectorT<Adapter>::VisitWord64AtomicLoad(node_t node) {
-  OperandGeneratorT<Adapter> g(this);
   auto load = this->load_view(node);
   LoadRepresentation load_rep = load.loaded_rep();
   VisitLoadCommon(this, node, load_rep);

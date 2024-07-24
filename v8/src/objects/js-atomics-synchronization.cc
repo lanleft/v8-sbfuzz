@@ -26,14 +26,14 @@ namespace {
 // Set fulfill/reject handlers for a JSPromise object.
 MaybeHandle<JSReceiver> PerformPromiseThen(
     Isolate* isolate, Handle<JSReceiver> promise,
-    Handle<JSFunction> fulfill_handler,
-    MaybeHandle<JSFunction> reject_handler = MaybeHandle<JSFunction>()) {
-  Handle<Object> reject_handler_handle = isolate->factory()->undefined_value();
-  MaybeLocal<Promise> local_then_promise;
-  if (!reject_handler.is_null()) {
-    reject_handler_handle = reject_handler.ToHandleChecked();
+    Handle<Object> fulfill_handler,
+    MaybeHandle<JSFunction> maybe_reject_handler = MaybeHandle<JSFunction>()) {
+  DCHECK(IsCallable(*fulfill_handler));
+  Handle<Object> reject_handler = isolate->factory()->undefined_value();
+  if (!maybe_reject_handler.is_null()) {
+    reject_handler = maybe_reject_handler.ToHandleChecked();
   }
-  Handle<Object> argv[] = {fulfill_handler, reject_handler_handle};
+  Handle<Object> argv[] = {fulfill_handler, reject_handler};
 
   Handle<Object> then_result;
   ASSIGN_RETURN_ON_EXCEPTION(
@@ -818,8 +818,7 @@ MaybeHandle<JSPromise> JSAtomicsMutex::LockOrEnqueuePromise(
   Handle<JSReceiver> waiting_for_callback_promise;
   ASSIGN_RETURN_ON_EXCEPTION(
       requester, waiting_for_callback_promise,
-      PerformPromiseThen(requester, internal_locked_promise,
-                         Cast<JSFunction>(callback)));
+      PerformPromiseThen(requester, internal_locked_promise, callback));
   Handle<JSPromise> unlocked_promise = requester->factory()->NewJSPromise();
   // Set the async unlock handlers here so we can throw without any additional
   // cleanup if the inner `promise_then` call fails. Keep a reference to
@@ -840,11 +839,11 @@ MaybeHandle<JSPromise> JSAtomicsMutex::LockOrEnqueuePromise(
     waiter_node = LockAsyncWaiterQueueNode::NewLockedAsyncWaiterStoredInIsolate(
         requester, mutex);
   }
-  // Use a kGenericForeignTag because using a kWaiterQueueNodeTag will cause
-  // the pointer to be stored in the shared external pointer table, which is not
-  // necessary since this object is only visible in this thread.
+  // Don't use kWaiterQueueNodeTag here as that will cause the pointer to be
+  // stored in the shared external pointer table, which is not necessary since
+  // this object is only visible in this thread.
   DirectHandle<Foreign> wrapper =
-      requester->factory()->NewForeign<kGenericForeignTag>(
+      requester->factory()->NewForeign<kWaiterQueueForeignTag>(
           reinterpret_cast<Address>(waiter_node));
   handlers_context->set(JSAtomicsMutex::kAsyncLockedWaiterAsyncContextSlot,
                         *wrapper);
@@ -945,7 +944,7 @@ void JSAtomicsMutex::UnlockAsyncLockedMutex(
     Isolate* requester, DirectHandle<Foreign> async_locked_waiter_wrapper) {
   LockAsyncWaiterQueueNode* waiter_node =
       reinterpret_cast<LockAsyncWaiterQueueNode*>(
-          async_locked_waiter_wrapper->foreign_address<kGenericForeignTag>(
+          async_locked_waiter_wrapper->foreign_address<kWaiterQueueForeignTag>(
               IsolateForSandbox(requester)));
   LockAsyncWaiterQueueNode::RemoveFromAsyncWaiterQueueList(waiter_node);
   Unlock(requester);

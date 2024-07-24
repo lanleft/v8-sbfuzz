@@ -1,22 +1,22 @@
 {
   "v8": {
     "v8/third_party/llvm-build/Release+Asserts": [
-      "Linux_x64/clang-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Linux_x64/clang-tidy-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Linux_x64/llvm-code-coverage-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Linux_x64/llvmobjdump-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Mac/clang-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Mac/clang-mac-runtime-library-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Mac/clang-tidy-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Mac/llvm-code-coverage-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Mac_arm64/clang-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Mac_arm64/clang-tidy-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Mac_arm64/llvm-code-coverage-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Win/clang-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Win/clang-tidy-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Win/clang-win-runtime-library-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Win/llvm-code-coverage-llvmorg-19-init-14561-gecea8371-1.tar.xz",
-      "Win/llvmobjdump-llvmorg-19-init-14561-gecea8371-1.tar.xz"
+      "Linux_x64/clang-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Linux_x64/clang-tidy-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Linux_x64/llvm-code-coverage-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Linux_x64/llvmobjdump-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Mac/clang-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Mac/clang-mac-runtime-library-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Mac/clang-tidy-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Mac/llvm-code-coverage-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Mac_arm64/clang-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Mac_arm64/clang-tidy-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Mac_arm64/llvm-code-coverage-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Win/clang-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Win/clang-tidy-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Win/clang-win-runtime-library-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Win/llvm-code-coverage-llvmorg-19-init-14561-gecea8371-3000.tar.xz",
+      "Win/llvmobjdump-llvmorg-19-init-14561-gecea8371-3000.tar.xz"
     ]
   },
   "v8/buildtools": {

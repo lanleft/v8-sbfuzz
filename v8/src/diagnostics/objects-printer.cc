@@ -25,6 +25,7 @@
 #include "src/snapshot/embedded/embedded-data.h"
 #include "src/strings/string-stream.h"
 #include "src/utils/ostreams.h"
+#include "third_party/fp16/src/include/fp16.h"
 
 #if V8_ENABLE_WEBASSEMBLY
 #include "src/debug/debug-wasm-objects-inl.h"
@@ -511,6 +512,12 @@ void DoPrintElements(std::ostream& os, Tagged<Object> object, int length) {
     previous_value = value;
   }
 }
+
+struct Fp16Printer {
+  uint16_t val;
+  Fp16Printer(float f) : val(fp16_ieee_from_fp32_value(f)) {}
+  operator float() const { return fp16_ieee_to_fp32_value(val); }
+};
 
 template <typename ElementType>
 void PrintTypedArrayElements(std::ostream& os, const ElementType* data_ptr,
@@ -1533,7 +1540,7 @@ void FeedbackVector::FeedbackVectorPrint(std::ostream& os) {
 }
 
 void FeedbackVector::FeedbackSlotPrint(std::ostream& os, FeedbackSlot slot) {
-  FeedbackNexus nexus(*this, slot);
+  FeedbackNexus nexus(GetIsolate(), *this, slot);
   nexus.Print(os);
 }
 
@@ -1586,7 +1593,8 @@ void FeedbackNexus::Print(std::ostream& os) {
       if (ic_state() == InlineCacheState::MONOMORPHIC) {
         os << "\n   " << Brief(GetFeedback()) << ": ";
         Tagged<Object> handler = GetFeedbackExtra().GetHeapObjectOrSmi();
-        if (IsWeakFixedArray(handler)) {
+        if (IsWeakFixedArray(handler) &&
+            !Cast<WeakFixedArray>(handler)->get(0).IsCleared()) {
           handler = Cast<WeakFixedArray>(handler)->get(0).GetHeapObjectOrSmi();
         }
         LoadHandler::PrintHandler(handler, os);
@@ -1613,8 +1621,16 @@ void FeedbackNexus::Print(std::ostream& os) {
     case FeedbackSlotKind::kSetKeyedSloppy:
     case FeedbackSlotKind::kSetKeyedStrict: {
       os << InlineCacheState2String(ic_state());
+      if (GetFeedback().IsCleared()) {
+        os << "\n   [cleared]";
+        break;
+      }
       if (ic_state() == InlineCacheState::MONOMORPHIC) {
         Tagged<HeapObject> feedback = GetFeedback().GetHeapObject();
+        if (GetFeedbackExtra().IsCleared()) {
+          os << " [cleared]\n";
+          break;
+        }
         if (IsName(feedback)) {
           os << " with name " << Brief(feedback);
           Tagged<WeakFixedArray> array =
@@ -1762,7 +1778,7 @@ static const char* const weekdays[] = {"???", "Sun", "Mon", "Tue",
 
 void JSDate::JSDatePrint(std::ostream& os) {
   JSObjectPrintHeader(os, *this, "JSDate");
-  os << "\n - value: " << Brief(value());
+  os << "\n - value: " << value();
   if (!IsSmi(year())) {
     os << "\n - time = NaN\n";
   } else {
@@ -1892,10 +1908,17 @@ std::ostream& operator<<(std::ostream& os, DisposableStackState state) {
   UNREACHABLE();
 }
 
-void JSDisposableStack::JSDisposableStackPrint(std::ostream& os) {
+void JSDisposableStackBase::JSDisposableStackBasePrint(std::ostream& os) {
   JSObjectPrintHeader(os, *this, "JSDisposableStack");
   os << "\n - stack: " << Brief(stack());
-  os << "\n - status (including state and length): " << status();
+  os << "\n - length: " << length();
+  os << "\n - state: " << state();
+  JSObjectPrintBody(os, *this);
+}
+
+void JSAsyncDisposableStack::JSAsyncDisposableStackPrint(std::ostream& os) {
+  JSObjectPrintHeader(os, *this, "JSAsyncDisposableStack");
+  os << "\n - stack: " << Brief(stack());
   os << "\n - length: " << length();
   os << "\n - state: " << state();
   JSObjectPrintBody(os, *this);
@@ -2077,12 +2100,15 @@ void JSFunction::JSFunctionPrint(std::ostream& os) {
 #if V8_ENABLE_WEBASSEMBLY
   if (WasmExportedFunction::IsWasmExportedFunction(*this)) {
     Tagged<WasmExportedFunction> function = Cast<WasmExportedFunction>(*this);
-    os << "\n - Wasm instance data: " << Brief(function->instance_data());
-    os << "\n - Wasm function index: " << function->function_index();
+    Tagged<WasmExportedFunctionData> data =
+        function->shared()->wasm_exported_function_data();
+    os << "\n - Wasm instance data: " << Brief(data->instance_data());
+    os << "\n - Wasm function index: " << data->function_index();
   }
   if (WasmJSFunction::IsWasmJSFunction(*this)) {
     Tagged<WasmJSFunction> function = Cast<WasmJSFunction>(*this);
-    os << "\n - Wasm wrapper around: " << Brief(function->GetCallable());
+    os << "\n - Wasm wrapper around: "
+       << Brief(function->shared()->wasm_js_function_data()->GetCallable());
   }
 #endif  // V8_ENABLE_WEBASSEMBLY
   shared()->PrintSourceCode(os);
@@ -2273,8 +2299,14 @@ void CodeWrapper::CodeWrapperPrint(std::ostream& os) {
 
 void Foreign::ForeignPrint(std::ostream& os) {
   PrintHeader(os, "Foreign");
-  os << "\n - foreign address : "
+  os << "\n - foreign address: "
      << reinterpret_cast<void*>(foreign_address_unchecked());
+  os << "\n";
+}
+
+void TrustedForeign::TrustedForeignPrint(std::ostream& os) {
+  PrintHeader(os, "TrustedForeign");
+  os << "\n - foreign address: " << reinterpret_cast<void*>(foreign_address());
   os << "\n";
 }
 
@@ -2362,13 +2394,14 @@ void AsmWasmData::AsmWasmDataPrint(std::ostream& os) {
 }
 
 void WasmTypeInfo::WasmTypeInfoPrint(std::ostream& os) {
+  Isolate* isolate = GetIsolateForSandbox(*this);
   PrintHeader(os, "WasmTypeInfo");
   os << "\n - type address: " << reinterpret_cast<void*>(native_type());
   os << "\n - supertypes: ";
   for (int i = 0; i < supertypes_length(); i++) {
     os << "\n  - " << Brief(supertypes(i));
   }
-  os << "\n - instance: " << Brief(instance());
+  os << "\n - trusted_data: " << Brief(trusted_data(isolate));
   os << "\n";
 }
 
@@ -2387,6 +2420,10 @@ void WasmStruct::WasmStructPrint(std::ostream& os) {
         break;
       case wasm::kI64:
         os << base::ReadUnalignedValue<int64_t>(field_address);
+        break;
+      case wasm::kF16:
+        os << fp16_ieee_to_fp32_value(
+            base::ReadUnalignedValue<uint16_t>(field_address));
         break;
       case wasm::kF32:
         os << base::ReadUnalignedValue<float>(field_address);
@@ -2446,6 +2483,10 @@ void WasmArray::WasmArrayPrint(std::ostream& os) {
       break;
     case wasm::kI64:
       PrintTypedArrayElements(os, reinterpret_cast<int64_t*>(data_ptr), len,
+                              true);
+      break;
+    case wasm::kF16:
+      PrintTypedArrayElements(os, reinterpret_cast<Fp16Printer*>(data_ptr), len,
                               true);
       break;
     case wasm::kF32:
@@ -2538,7 +2579,6 @@ void WasmInstanceObject::WasmInstanceObjectPrint(std::ostream& os) {
   JSObjectPrintHeader(os, *this, "WasmInstanceObject");
   os << "\n - trusted_data: " << Brief(trusted_data(isolate));
   os << "\n - module_object: " << Brief(module_object());
-  os << "\n - shared_part: " << Brief(shared_part());
   os << "\n - exports_object: " << Brief(exports_object());
   JSObjectPrintBody(os, *this);
   os << "\n";
@@ -2556,13 +2596,16 @@ void WasmTrustedInstanceData::WasmTrustedInstanceDataPrint(std::ostream& os) {
   };
 
   PrintHeader(os, "WasmTrustedInstanceData");
-  PRINT_WASM_INSTANCE_FIELD(instance_object, Brief);
+  PRINT_OPTIONAL_WASM_INSTANCE_FIELD(instance_object, Brief);
   PRINT_WASM_INSTANCE_FIELD(native_context, Brief);
   PRINT_WASM_INSTANCE_FIELD(shared_part, Brief);
   PRINT_WASM_INSTANCE_FIELD(memory_objects, Brief);
   PRINT_OPTIONAL_WASM_INSTANCE_FIELD(untagged_globals_buffer, Brief);
   PRINT_OPTIONAL_WASM_INSTANCE_FIELD(tagged_globals_buffer, Brief);
   PRINT_OPTIONAL_WASM_INSTANCE_FIELD(imported_mutable_globals_buffers, Brief);
+#if V8_ENABLE_DRUMBRAKE
+  PRINT_OPTIONAL_WASM_INSTANCE_FIELD(interpreter_object, Brief);
+#endif  // V8_ENABLE_DRUMBRAKE
   PRINT_OPTIONAL_WASM_INSTANCE_FIELD(tables, Brief);
   PRINT_WASM_INSTANCE_FIELD(dispatch_table0, Brief);
   PRINT_WASM_INSTANCE_FIELD(dispatch_tables, Brief);
@@ -2578,10 +2621,11 @@ void WasmTrustedInstanceData::WasmTrustedInstanceDataPrint(std::ostream& os) {
   PRINT_WASM_INSTANCE_FIELD(new_allocation_top_address, to_void_ptr);
   PRINT_WASM_INSTANCE_FIELD(old_allocation_limit_address, to_void_ptr);
   PRINT_WASM_INSTANCE_FIELD(old_allocation_top_address, to_void_ptr);
+#if V8_ENABLE_DRUMBRAKE
+  PRINT_WASM_INSTANCE_FIELD(imported_function_indices, Brief);
+#endif  // V8_ENABLE_DRUMBRAKE
   PRINT_WASM_INSTANCE_FIELD(globals_start, to_void_ptr);
   PRINT_WASM_INSTANCE_FIELD(imported_mutable_globals, Brief);
-  PRINT_WASM_INSTANCE_FIELD(isorecursive_canonical_types,
-                            reinterpret_cast<const uint32_t*>);
   PRINT_WASM_INSTANCE_FIELD(jump_table_start, to_void_ptr);
   PRINT_WASM_INSTANCE_FIELD(data_segment_starts, Brief);
   PRINT_WASM_INSTANCE_FIELD(data_segment_sizes, Brief);
@@ -2635,7 +2679,7 @@ void WasmExportedFunctionData::WasmExportedFunctionDataPrint(std::ostream& os) {
 void WasmJSFunctionData::WasmJSFunctionDataPrint(std::ostream& os) {
   PrintHeader(os, "WasmJSFunctionData");
   WasmFunctionDataPrint(os);
-  os << "\n - serialized_signature: " << Brief(serialized_signature());
+  os << "\n - canonical_sig_index: " << canonical_sig_index();
   os << "\n";
 }
 
@@ -2829,7 +2873,7 @@ void Script::ScriptPrint(std::ostream& os) {
     }
     os << "\n - eval from position: " << eval_from_position();
   }
-  os << "\n - shared function infos: " << Brief(shared_function_infos());
+  os << "\n - infos: " << Brief(infos());
   os << "\n";
 }
 
@@ -3713,8 +3757,10 @@ void TransitionsAccessor::PrintOneTransition(std::ostream& os, Tagged<Name> key,
   } else if (key == roots.elements_transition_symbol()) {
     os << "(transition to " << ElementsKindToString(target->elements_kind())
        << ")";
-  } else if (key == roots.object_clone_transition_symbol()) {
-    os << "(clone object dependency transition)";
+  } else if (key == roots.clone_object_ic_transition_symbol()) {
+    os << "(clone object ic dependency transition)";
+  } else if (key == roots.object_assign_clone_transition_symbol()) {
+    os << "(object assign clone cache transition)";
   } else if (key == roots.strict_function_transition_symbol()) {
     os << " (transition to strict function)";
   } else {
@@ -3813,8 +3859,10 @@ void TransitionsAccessor::PrintTransitionTree(
           os << "to " << ElementsKindToString(target->elements_kind());
         } else if (key == roots.strict_function_transition_symbol()) {
           os << "to strict function";
-        } else if (key == roots.object_clone_transition_symbol()) {
-          os << "clone object dependency";
+        } else if (key == roots.clone_object_ic_transition_symbol()) {
+          os << "clone object ic dependency";
+        } else if (key == roots.object_assign_clone_transition_symbol()) {
+          os << "object assign clone cache";
         } else {
 #ifdef OBJECT_PRINT
           key->NamePrint(os);

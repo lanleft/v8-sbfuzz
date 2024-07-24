@@ -8,6 +8,8 @@ const worker = new Worker(function() {
     // TODO(leszeks): Make importScripts work with paths relative to the
     // worker or caller script.
     // assertEquals({text: "ping"}, e.data);
+    print(JSON.stringify(e.data));
+
     postMessage({text: "pong", reply_to: e.data});
     close();
   }
@@ -15,5 +17,7 @@ const worker = new Worker(function() {
 
 worker.postMessage({text: "ping"});
 worker.onmessage = function(e) {
+  print(JSON.stringify(e.data));
+
   assertEquals({text: "pong", reply_to: {text: "ping"}}, e.data);
 };

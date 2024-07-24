@@ -143,6 +143,13 @@ V8_NOINLINE Tagged<Code> BuildWithMacroAssembler(
     handler_table_offset = HandlerTable::EmitReturnTableStart(&masm);
     HandlerTable::EmitReturnEntry(
         &masm, 0, isolate->builtins()->js_entry_handler_offset());
+#if V8_ENABLE_DRUMBRAKE
+  } else if (builtin == Builtin::kWasmInterpreterCWasmEntry) {
+    handler_table_offset = HandlerTable::EmitReturnTableStart(&masm);
+    HandlerTable::EmitReturnEntry(
+        &masm, 0,
+        isolate->builtins()->cwasm_interpreter_entry_handler_offset());
+#endif  // V8_ENABLE_DRUMBRAKE
   }
 #if V8_ENABLE_WEBASSEMBLY &&                                              \
     (V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_IA32 || \
@@ -223,8 +230,7 @@ V8_NOINLINE Tagged<Code> BuildWithTurboshaftAssemblerCS(
                                 builtin);
 
   PipelineData data(&zone_stats, TurboshaftPipelineKind::kTSABuiltin, isolate,
-                    &info, kNoSourcePosition,
-                    BuiltinAssemblerOptions(isolate, builtin));
+                    &info, BuiltinAssemblerOptions(isolate, builtin));
   data.InitializeGraphComponent(nullptr);
   ZoneWithName<kTempZoneName> temp_zone(&zone_stats, kTempZoneName);
   generator(&data, isolate, data.graph(), temp_zone);

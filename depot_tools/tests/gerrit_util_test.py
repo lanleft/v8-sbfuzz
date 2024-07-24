@@ -21,9 +21,11 @@ import httplib2
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import scm_mock
+
 import gerrit_util
-import git_common
 import metrics
+import scm
 import subprocess2
 
 RUN_SUBPROC_TESTS = 'RUN_SUBPROC_TESTS' in os.environ
@@ -104,6 +106,7 @@ class CookiesAuthenticatorTest(unittest.TestCase):
                    return_value=self._GITCOOKIES).start()
         mock.patch('os.getenv', return_value={}).start()
         mock.patch('os.environ', {'HOME': '$HOME'}).start()
+        mock.patch('os.getcwd', return_value='/fame/cwd').start()
         mock.patch('os.path.exists', return_value=True).start()
         mock.patch(
             'git_common.run',
@@ -111,6 +114,8 @@ class CookiesAuthenticatorTest(unittest.TestCase):
                 subprocess2.CalledProcessError(1, ['cmd'], 'cwd', 'out', 'err')
             ],
         ).start()
+        scm_mock.GIT(self)
+
         self.addCleanup(mock.patch.stopall)
         self.maxDiff = None
 
@@ -144,16 +149,10 @@ class CookiesAuthenticatorTest(unittest.TestCase):
             os.path.expanduser(os.path.join('~', '.gitcookies')),
             gerrit_util.CookiesAuthenticator().get_gitcookies_path())
 
-        git_common.run.side_effect = ['http.cookiefile\nhttp.cookiefile\x00']
+        scm.GIT.SetConfig(os.getcwd(), 'http.cookiefile', '/some/path')
         self.assertEqual(
-            'http.cookiefile',
+            '/some/path',
             gerrit_util.CookiesAuthenticator().get_gitcookies_path())
-        git_common.run.assert_called_with('config',
-                                          '--list',
-                                          '-z',
-                                          autostrip=False,
-                                          cwd=os.getcwd(),
-                                          env=mock.ANY)
 
         os.getenv.return_value = 'git-cookies-path'
         self.assertEqual(
@@ -322,7 +321,7 @@ class GerritUtilTest(unittest.TestCase):
                                      'first param+'))
 
     @mock.patch('gerrit_util.CookiesAuthenticator._get_auth_for_host')
-    @mock.patch('gerrit_util.Authenticator.get')
+    @mock.patch('gerrit_util._Authenticator.get')
     def testCreateHttpConn_Basic(self, mockAuth, cookieAuth):
         mockAuth.return_value = gerrit_util.CookiesAuthenticator()
         cookieAuth.return_value = None
@@ -338,7 +337,7 @@ class GerritUtilTest(unittest.TestCase):
             }, conn.req_params)
 
     @mock.patch('gerrit_util.CookiesAuthenticator._get_auth_for_host')
-    @mock.patch('gerrit_util.Authenticator.get')
+    @mock.patch('gerrit_util._Authenticator.get')
     def testCreateHttpConn_Authenticated(self, mockAuth, cookieAuth):
         mockAuth.return_value = gerrit_util.CookiesAuthenticator()
         cookieAuth.return_value = (None, 'token')
@@ -359,7 +358,7 @@ class GerritUtilTest(unittest.TestCase):
             }, conn.req_params)
 
     @mock.patch('gerrit_util.CookiesAuthenticator._get_auth_for_host')
-    @mock.patch('gerrit_util.Authenticator')
+    @mock.patch('gerrit_util._Authenticator')
     def testCreateHttpConn_Body(self, mockAuth, cookieAuth):
         mockAuth.return_value = gerrit_util.CookiesAuthenticator()
         cookieAuth.return_value = None
@@ -717,9 +716,17 @@ class ShouldUseSSOTest(unittest.TestCase):
     def setUp(self) -> None:
         self.newauth = mock.patch('newauth.Enabled', return_value=True)
         self.newauth.start()
+
+        self.cwd = mock.patch('os.getcwd', return_value='/fake/cwd')
+        self.cwd.start()
+
         self.sso = mock.patch('gerrit_util.ssoHelper.find_cmd',
                               return_value='/fake/git-remote-sso')
         self.sso.start()
+
+        scm_mock.GIT(self)
+
+        self.addCleanup(mock.patch.stopall)
         return super().setUp()
 
     def tearDown(self) -> None:
@@ -727,38 +734,43 @@ class ShouldUseSSOTest(unittest.TestCase):
         self.sso.stop()
         self.newauth.stop()
 
-    def testDisabled(self):
-        self.newauth.return_value = False
-        self.assertFalse(gerrit_util.ShouldUseSSO('fake-host'))
+    @mock.patch('newauth.Enabled', return_value=False)
+    def testDisabled(self, _):
+        self.assertFalse(
+            gerrit_util.ShouldUseSSO('fake-host', 'firefly@google.com'))
 
-    def testMissingCommand(self):
-        self.sso.return_value = 'fake-host'
-        self.assertFalse(gerrit_util.ShouldUseSSO('fake-host'))
+    @mock.patch('gerrit_util.ssoHelper.find_cmd', return_value='')
+    def testMissingCommand(self, _):
+        self.assertFalse(
+            gerrit_util.ShouldUseSSO('fake-host', 'firefly@google.com'))
 
-    @mock.patch('scm.GIT.GetConfig', return_value='firefly@google.com')
-    def testGoogle(self, _):
-        self.assertTrue(gerrit_util.ShouldUseSSO('fake-host'))
+    def testEmptyEmail(self):
+        self.assertTrue(gerrit_util.ShouldUseSSO('fake-host', ''))
 
-    @mock.patch('scm.GIT.GetConfig', return_value='firefly@gmail.com')
-    def testGmail(self, _):
-        self.assertFalse(gerrit_util.ShouldUseSSO('fake-host'))
+    def testGoogleEmail(self):
+        self.assertTrue(
+            gerrit_util.ShouldUseSSO('fake-host', 'firefly@google.com'))
+
+    def testGmail(self):
+        self.assertFalse(
+            gerrit_util.ShouldUseSSO('fake-host', 'firefly@gmail.com'))
 
     @mock.patch('gerrit_util.GetAccountEmails',
                 return_value=[{
                     'email': 'firefly@chromium.org'
                 }])
-    @mock.patch('scm.GIT.GetConfig', return_value='firefly@chromium.org')
-    def testLinkedChromium(self, _cfg, email):
-        self.assertTrue(gerrit_util.ShouldUseSSO('fake-host'))
+    def testLinkedChromium(self, email):
+        self.assertTrue(
+            gerrit_util.ShouldUseSSO('fake-host', 'firefly@chromium.org'))
         email.assert_called_with('fake-host', 'self', authenticator=mock.ANY)
 
     @mock.patch('gerrit_util.GetAccountEmails',
                 return_value=[{
                     'email': 'firefly@google.com'
                 }])
-    @mock.patch('scm.GIT.GetConfig', return_value='firefly@chromium.org')
-    def testUnlinkedChromium(self, _cfg, email):
-        self.assertFalse(gerrit_util.ShouldUseSSO('fake-host'))
+    def testUnlinkedChromium(self, email):
+        self.assertFalse(
+            gerrit_util.ShouldUseSSO('fake-host', 'firefly@chromium.org'))
         email.assert_called_with('fake-host', 'self', authenticator=mock.ANY)
 
 

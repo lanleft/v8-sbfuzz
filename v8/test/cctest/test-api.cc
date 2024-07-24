@@ -463,6 +463,57 @@ THREADED_TEST(Access) {
   CHECK(result);
 }
 
+THREADED_TEST(AccessWithReceiver) {
+  LocalContext env;
+  v8::Isolate* isolate = env->GetIsolate();
+  v8::HandleScope scope(isolate);
+  Local<v8::Object> a = CompileRun(R"(
+  ({
+    get prop() { return this },
+    set prop(v) { this.got = v },
+    val: 42,
+  })
+  )")
+                            .As<v8::Object>();
+  Local<v8::Object> b = v8::Object::New(isolate);
+
+  CHECK(a->Get(env.local(), v8_str("missing")).ToLocalChecked()->IsUndefined());
+  CHECK(a->Get(env.local(), v8_str("missing"), a)
+            .ToLocalChecked()
+            ->IsUndefined());
+  CHECK(a->Get(env.local(), v8_str("missing"), b)
+            .ToLocalChecked()
+            ->IsUndefined());
+
+  CHECK(a->Get(env.local(), v8_str("val"))
+            .ToLocalChecked()
+            ->StrictEquals(v8_int(42)));
+  CHECK(a->Get(env.local(), v8_str("val"), a)
+            .ToLocalChecked()
+            ->StrictEquals(v8_int(42)));
+  CHECK(a->Get(env.local(), v8_str("val"), b)
+            .ToLocalChecked()
+            ->StrictEquals(v8_int(42)));
+
+  CHECK(a->Get(env.local(), v8_str("prop")).ToLocalChecked()->StrictEquals(a));
+  CHECK(
+      a->Get(env.local(), v8_str("prop"), a).ToLocalChecked()->StrictEquals(a));
+  CHECK(
+      a->Get(env.local(), v8_str("prop"), b).ToLocalChecked()->StrictEquals(b));
+
+  CHECK(a->Set(env.local(), v8_str("prop"), v8_int(10)).ToChecked());
+  CHECK(a->Get(env.local(), v8_str("got"))
+            .ToLocalChecked()
+            ->StrictEquals(v8_int(10)));
+  CHECK(b->Get(env.local(), v8_str("got")).ToLocalChecked()->IsUndefined());
+  a->Delete(env.local(), v8_str("got")).ToChecked();
+
+  CHECK(a->Set(env.local(), v8_str("prop"), v8_int(10), b).ToChecked());
+  CHECK(a->Get(env.local(), v8_str("got")).ToLocalChecked()->IsUndefined());
+  CHECK(b->Get(env.local(), v8_str("got"))
+            .ToLocalChecked()
+            ->StrictEquals(v8_int(10)));
+}
 
 THREADED_TEST(AccessElement) {
   LocalContext env;
@@ -9007,8 +9058,9 @@ THREADED_TEST(Utf16MissingTrailing) {
   delete[] buffer;
 }
 
+START_ALLOW_USE_DEPRECATED()
 
-THREADED_TEST(Utf16Trailing3Byte) {
+THREADED_TEST(Utf16Trailing3Byte_Value) {
   LocalContext context;
   v8::Isolate* isolate = context->GetIsolate();
   v8::HandleScope scope(isolate);
@@ -9035,6 +9087,35 @@ THREADED_TEST(Utf16Trailing3Byte) {
   delete[] buffer;
 }
 
+END_ALLOW_USE_DEPRECATED()
+
+THREADED_TEST(Utf16Trailing3Byte_ValueView) {
+  LocalContext context;
+  v8::Isolate* isolate = context->GetIsolate();
+  v8::HandleScope scope(isolate);
+
+  // Make sure it will go past the buffer, so it will call `WriteUtf16Slow`
+  int size = 1024 * 63;
+  uint8_t* buffer = new uint8_t[size];
+  for (int i = 0; i < size; i += 3) {
+    buffer[i] = 0xE2;
+    buffer[i + 1] = 0x80;
+    buffer[i + 2] = 0xA6;
+  }
+
+  // Now invoke the decoder without last 3 bytes
+  v8::Local<v8::String> str =
+      v8::String::NewFromUtf8(isolate, reinterpret_cast<char*>(buffer),
+                              v8::NewStringType::kNormal, size)
+          .ToLocalChecked();
+
+  v8::String::ValueView value(isolate, str);
+  CHECK(!value.is_one_byte());
+  CHECK_EQ(value.length(), size / 3);
+  CHECK_EQ(value.data16()[value.length() - 1], 0x2026);
+
+  delete[] buffer;
+}
 
 THREADED_TEST(ToArrayIndex) {
   LocalContext context;
@@ -10801,7 +10882,7 @@ THREADED_TEST(ShadowObjectAndDataProperty) {
                                        .ToLocalChecked()));
   CHECK(foo->has_feedback_vector());
   i::FeedbackSlot slot = i::FeedbackVector::ToSlot(0);
-  i::FeedbackNexus nexus(foo->feedback_vector(), slot);
+  i::FeedbackNexus nexus(CcTest::i_isolate(), foo->feedback_vector(), slot);
   CHECK_EQ(i::FeedbackSlotKind::kStoreGlobalSloppy, nexus.kind());
   CompileRun("foo(1)");
   CHECK_EQ(i::InlineCacheState::MONOMORPHIC, nexus.ic_state());
@@ -10851,7 +10932,7 @@ THREADED_TEST(ShadowObjectAndDataPropertyTurbo) {
                                        .ToLocalChecked()));
   CHECK(foo->has_feedback_vector());
   i::FeedbackSlot slot = i::FeedbackVector::ToSlot(0);
-  i::FeedbackNexus nexus(foo->feedback_vector(), slot);
+  i::FeedbackNexus nexus(CcTest::i_isolate(), foo->feedback_vector(), slot);
   CHECK_EQ(i::FeedbackSlotKind::kStoreGlobalSloppy, nexus.kind());
   CompileRun("%OptimizeFunctionOnNextCall(foo); foo(1)");
   CHECK_EQ(i::InlineCacheState::MONOMORPHIC, nexus.ic_state());
@@ -28095,6 +28176,79 @@ void CheckEqual(F actual, F expected, std::ostringstream& error_msg) {
   }
 }
 
+#if V8_ENABLE_WEBASSEMBLY
+void CallAndCheckFromWasm() {
+  LocalContext env;
+  int32_t expected_value = -32;
+  ApiNumberChecker<int32_t> checker(expected_value, Behavior::kNoException);
+  v8::Local<v8::Value> initial_value = v8_num(expected_value);
+  bool has_caught = SetupTest<int32_t, ApiNumberChecker<int32_t>, void>(
+      initial_value, &env, &checker,
+      "function func(arg) {"
+      "  const buffer = new Uint8Array(["
+      "  0x00, 0x61, 0x73, 0x6d,"  // wasm magic
+      "  0x01, 0x00, 0x00, 0x00,"  // wasm version
+
+      "  0x01,                  "  // section kind: Type
+      "  0x06,                  "  // section length 6
+      "  0x01,                  "  // types count 1
+      "  0x60,                  "  //  kind: func
+      "  0x02,                  "  // param count 2
+      "  0x6f, 0x7f,            "  // externref i32
+      "  0x00,                  "  // return count 0
+
+      "  0x02,                  "  // section kind: Import
+      "  0x0b,                  "  // section length 11
+      "  0x01,                  "  // imports count 1: import #0
+      "  0x03,                  "  // module name length:  3
+      "  0x6d, 0x6f, 0x64,      "  // module name: mod
+      "  0x03,                  "  // field name length:  3
+      "  0x66, 0x6f, 0x6f,      "  // field name: foo
+      "  0x00, 0x00,            "  // kind: function (param externref i32)
+
+      "  0x03,                  "  // section kind: Function
+      "  0x02,                  "  // section length 2
+      "  0x01, 0x00,            "  // num functions 1, sig (param externref i32)
+
+      "  0x07,                  "  // section kind: Export
+      "  0x08,                  "  // section length 8
+      "  0x01,                  "  // exports count 1: export # 0
+      "  0x04,                  "  // field name length:  4
+      "  0x6d, 0x61, 0x69, 0x6e,"  // field name: main
+      "  0x00, 0x01,            "  // kind: function index:  1
+
+      "  0x0a,                  "  // section kind: Code
+      "  0x0a,                  "  // section length 10
+      "  0x01,                  "  // functions count 1
+      "                         "  // function #1 $main
+      "  0x08,                  "  // body size 8
+      "  0x00,                  "  // 0 entries in locals list
+      "  0x20, 0x00,            "  // local.get $var0
+      "  0x20, 0x01,            "  // local.get $var1
+      "  0x10, 0x00,            "  // call $mod.foo
+      "  0x0b,                  "  // end
+      "]);"
+      "  const wasmModule = new WebAssembly.Module(buffer);"
+      "  const boundImport = Function.prototype.call.bind(receiver.api_func);"
+      "  const wasmImport = {mod: {foo: boundImport}};"
+      "  const instance = new WebAssembly.Instance(wasmModule, wasmImport);"
+      "  return instance.exports.main(receiver, arg);"
+      "}"
+      "func(value);",
+      true, false, false);
+  CHECK(!has_caught);
+  checker.Reset();
+
+  v8::Isolate* isolate = CcTest::isolate();
+  v8::TryCatch try_catch(isolate);
+  v8::Local<v8::Value> result = CompileRun("func(value);");
+  CHECK(!try_catch.HasCaught());
+  CHECK_EQ(result->Int32Value(env.local()).ToChecked(), 0);
+  CHECK(checker.DidCallFast());
+  CHECK(!checker.DidCallSlow());
+}
+#endif  // V8_ENABLE_WEBASSEMBLY
+
 template <typename T>
 void CallAndCheck(T expected_value, Behavior expected_behavior,
                   ApiCheckerResultFlags expected_path,
@@ -29245,6 +29399,30 @@ TEST(FastApiCalls) {
 #endif  // !defined(V8_LITE_MODE) && defined(V8_ENABLE_TURBOFAN)
 }
 
+#if V8_ENABLE_WEBASSEMBLY
+TEST(FastApiCallsFromWasm) {
+  if (i::v8_flags.jitless) return;
+  if (i::v8_flags.disable_optimizing_compilers) return;
+
+  i::v8_flags.liftoff = false;
+  i::v8_flags.turboshaft_wasm = true;
+  i::v8_flags.wasm_fast_api = true;
+  i::v8_flags.turbo_fast_api_calls = true;
+  i::v8_flags.wasm_lazy_compilation = true;
+  i::FlagList::EnforceFlagImplications();
+
+  CcTest::InitializeVM();
+  v8::Isolate* isolate = CcTest::isolate();
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  i_isolate->set_embedder_wrapper_type_index(kV8WrapperTypeIndex);
+  i_isolate->set_embedder_wrapper_object_index(kV8WrapperObjectIndex);
+
+  v8::HandleScope scope(isolate);
+  LocalContext env;
+
+  CallAndCheckFromWasm();
+}
+#endif
 #if !defined(V8_LITE_MODE) && defined(V8_ENABLE_TURBOFAN)
 namespace {
 static Trivial* UnwrapTrivialObject(Local<Object> object) {
@@ -29263,6 +29441,7 @@ static Trivial* UnwrapTrivialObject(Local<Object> object) {
   return wrapped;
 }
 
+START_ALLOW_USE_DEPRECATED()
 void FastCallback1TypedArray(v8::Local<v8::Object> receiver, int arg0,
                              const v8::FastApiTypedArray<int32_t>& arg1) {
   Trivial* self = UnwrapTrivialObject(receiver);
@@ -29270,6 +29449,7 @@ void FastCallback1TypedArray(v8::Local<v8::Object> receiver, int arg0,
   CHECK_EQ(arg0, arg1.length());
   self->set_x(arg0);
 }
+END_ALLOW_USE_DEPRECATED()
 
 void FastCallback2JSArray(v8::Local<v8::Object> receiver, int arg0,
                           v8::Local<v8::Array> arg1) {

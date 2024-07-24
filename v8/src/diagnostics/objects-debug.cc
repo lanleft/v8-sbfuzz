@@ -35,6 +35,7 @@
 #include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/js-atomics-synchronization-inl.h"
+#include "src/objects/js-disposable-stack.h"
 #include "src/objects/objects-inl.h"
 #include "src/objects/objects.h"
 #include "src/objects/trusted-object.h"
@@ -90,6 +91,7 @@
 #include "src/objects/torque-defined-classes-inl.h"
 #include "src/objects/transitions-inl.h"
 #include "src/regexp/regexp.h"
+#include "src/sandbox/js-dispatch-table-inl.h"
 #include "src/utils/ostreams.h"
 #include "torque-generated/class-verifiers.h"
 
@@ -1179,7 +1181,7 @@ void JSFunction::JSFunctionVerify(Isolate* isolate) {
   // This assertion exists to encourage updating this verification function if
   // new fields are added in the Torque class layout definition.
   static_assert(JSFunction::TorqueGeneratedClass::kHeaderSize ==
-                8 * kTaggedSize);
+                (8 + V8_ENABLE_LEAPTIERING_BOOL) * kTaggedSize);
 
   JSFunctionOrBoundFunctionOrWrappedFunctionVerify(isolate);
   CHECK(IsJSFunction(*this));
@@ -1194,6 +1196,20 @@ void JSFunction::JSFunctionVerify(Isolate* isolate) {
   CHECK(map(isolate)->is_callable());
   // Ensure that the function's meta map belongs to the same native context.
   CHECK_EQ(map()->map()->native_context_or_null(), native_context());
+
+#ifdef V8_ENABLE_LEAPTIERING
+  JSDispatchHandle handle = dispatch_handle();
+  // Currently, the handle can still be the null handle as not all places where
+  // a JSFunction object is created populate the entry correctly. However, in
+  // the future, every JSFunction must have a valid dispatch handle, and then
+  // this check should be removed.
+  if (handle != kNullJSDispatchHandle) {
+    uint16_t parameter_count =
+        GetProcessWideJSDispatchTable()->GetParameterCount(handle);
+    CHECK_EQ(parameter_count,
+             shared(isolate)->internal_formal_parameter_count_with_receiver());
+  }
+#endif  // V8_ENABLE_LEAPTIERING
 
   Handle<JSFunction> function(*this, isolate);
   LookupIterator it(isolate, function, isolate->factory()->prototype_string(),
@@ -1653,11 +1669,21 @@ void JSAtomicsCondition::JSAtomicsConditionVerify(Isolate* isolate) {
   JSObjectVerify(isolate);
 }
 
-void JSDisposableStack::JSDisposableStackVerify(Isolate* isolate) {
-  CHECK(IsJSDisposableStack(*this));
+void JSDisposableStackBase::JSDisposableStackBaseVerify(Isolate* isolate) {
+  CHECK(IsJSDisposableStackBase(*this));
   JSObjectVerify(isolate);
   CHECK_EQ(length() % 3, 0);
   CHECK_GE(stack()->capacity(), length());
+}
+
+void JSSyncDisposableStack::JSSyncDisposableStackVerify(Isolate* isolate) {
+  CHECK(IsJSSyncDisposableStack(*this));
+  JSDisposableStackBase::JSDisposableStackBaseVerify(isolate);
+}
+
+void JSAsyncDisposableStack::JSAsyncDisposableStackVerify(Isolate* isolate) {
+  CHECK(IsJSAsyncDisposableStack(*this));
+  JSDisposableStackBase::JSDisposableStackBaseVerify(isolate);
 }
 
 void JSSharedArray::JSSharedArrayVerify(Isolate* isolate) {
@@ -2291,7 +2317,10 @@ void WasmDispatchTable::WasmDispatchTableVerify(Isolate* isolate) {
     Object::VerifyPointer(isolate, call_ref);
     CHECK(IsWasmTrustedInstanceData(call_ref) ||
           IsWasmApiFunctionRef(call_ref) || call_ref == Smi::zero());
-    CHECK_EQ(ref(i) == Smi::zero(), target(i) == kNullAddress);
+    if (!v8_flags.wasm_jitless) {
+      // call_target always null with the interpreter.
+      CHECK_EQ(ref(i) == Smi::zero(), target(i) == kNullAddress);
+    }
   }
 }
 
@@ -2309,12 +2338,16 @@ void WasmExportedFunctionData::WasmExportedFunctionDataVerify(
     Isolate* isolate) {
   TorqueGeneratedClassVerifiers::WasmExportedFunctionDataVerify(*this, isolate);
   Tagged<Code> wrapper = wrapper_code(isolate);
-  CHECK(wrapper->kind() == CodeKind::JS_TO_WASM_FUNCTION ||
-        wrapper->kind() == CodeKind::C_WASM_ENTRY ||
-        (wrapper->is_builtin() &&
-         (wrapper->builtin_id() == Builtin::kJSToWasmWrapper ||
-          wrapper->builtin_id() == Builtin::kWasmPromising ||
-          wrapper->builtin_id() == Builtin::kWasmPromisingWithSuspender)));
+  CHECK(
+      wrapper->kind() == CodeKind::JS_TO_WASM_FUNCTION ||
+      wrapper->kind() == CodeKind::C_WASM_ENTRY ||
+      (wrapper->is_builtin() &&
+       (wrapper->builtin_id() == Builtin::kJSToWasmWrapper ||
+#if V8_ENABLE_DRUMBRAKE
+        wrapper->builtin_id() == Builtin::kGenericJSToWasmInterpreterWrapper ||
+#endif  // V8_ENABLE_DRUMBRAKE
+        wrapper->builtin_id() == Builtin::kWasmPromising ||
+        wrapper->builtin_id() == Builtin::kWasmPromisingWithSuspender)));
 }
 
 #endif  // V8_ENABLE_WEBASSEMBLY
@@ -2375,12 +2408,13 @@ void Script::ScriptVerify(Isolate* isolate) {
 #else   // V8_ENABLE_WEBASSEMBLY
   CHECK(CanHaveLineEnds());
 #endif  // V8_ENABLE_WEBASSEMBLY
-  for (int i = 0; i < shared_function_info_count(); ++i) {
-    Tagged<MaybeObject> maybe_object = shared_function_infos()->get(i);
+  for (int i = 0; i < infos()->length(); ++i) {
+    Tagged<MaybeObject> maybe_object = infos()->get(i);
     Tagged<HeapObject> heap_object;
-    CHECK(maybe_object.IsWeak() || maybe_object.IsCleared() ||
+    CHECK(!maybe_object.GetHeapObjectIfWeak(isolate, &heap_object) ||
           (maybe_object.GetHeapObjectIfStrong(&heap_object) &&
-           IsUndefined(heap_object, isolate)));
+           IsUndefined(heap_object, isolate)) ||
+          Is<SharedFunctionInfo>(heap_object) || Is<ScopeInfo>(heap_object));
   }
 }
 

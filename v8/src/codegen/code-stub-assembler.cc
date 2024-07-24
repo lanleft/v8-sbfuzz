@@ -1282,7 +1282,7 @@ TNode<Smi> CodeStubAssembler::SmiLexicographicCompare(TNode<Smi> x,
   TNode<ExternalReference> smi_lexicographic_compare =
       ExternalConstant(ExternalReference::smi_lexicographic_compare_function());
   TNode<ExternalReference> isolate_ptr =
-      ExternalConstant(ExternalReference::isolate_address(isolate()));
+      ExternalConstant(ExternalReference::isolate_address());
   return CAST(CallCFunction(smi_lexicographic_compare, MachineType::AnyTagged(),
                             std::make_pair(MachineType::Pointer(), isolate_ptr),
                             std::make_pair(MachineType::AnyTagged(), x),
@@ -1294,7 +1294,7 @@ TNode<Object> CodeStubAssembler::GetCoverageInfo(
   TNode<ExternalReference> f =
       ExternalConstant(ExternalReference::debug_get_coverage_info_function());
   TNode<ExternalReference> isolate_ptr =
-      ExternalConstant(ExternalReference::isolate_address(isolate()));
+      ExternalConstant(ExternalReference::isolate_address());
   return CAST(CallCFunction(f, MachineType::AnyTagged(),
                             std::make_pair(MachineType::Pointer(), isolate_ptr),
                             std::make_pair(MachineType::TaggedPointer(), sfi)));
@@ -2436,7 +2436,7 @@ TNode<Uint32T> CodeStubAssembler::LoadNameRawHash(TNode<Name> name) {
     TNode<ExternalReference> function =
         ExternalConstant(ExternalReference::raw_hash_from_forward_table());
     const TNode<ExternalReference> isolate_ptr =
-        ExternalConstant(ExternalReference::isolate_address(isolate()));
+        ExternalConstant(ExternalReference::isolate_address());
     TNode<Uint32T> result = UncheckedCast<Uint32T>(CallCFunction(
         function, MachineType::Uint32(),
         std::make_pair(MachineType::Pointer(), isolate_ptr),
@@ -3259,15 +3259,15 @@ TNode<ScopeInfo> CodeStubAssembler::LoadScopeInfo(TNode<Context> context) {
 
 TNode<BoolT> CodeStubAssembler::LoadScopeInfoHasExtensionField(
     TNode<ScopeInfo> scope_info) {
-  TNode<Int32T> value =
-      LoadAndUntagToWord32ObjectField(scope_info, ScopeInfo::kFlagsOffset);
+  TNode<Uint32T> value =
+      LoadObjectField<Uint32T>(scope_info, ScopeInfo::kFlagsOffset);
   return IsSetWord32<ScopeInfo::HasContextExtensionSlotBit>(value);
 }
 
 TNode<BoolT> CodeStubAssembler::LoadScopeInfoClassScopeHasPrivateBrand(
     TNode<ScopeInfo> scope_info) {
-  TNode<Int32T> value =
-      LoadAndUntagToWord32ObjectField(scope_info, ScopeInfo::kFlagsOffset);
+  TNode<Uint32T> value =
+      LoadObjectField<Uint32T>(scope_info, ScopeInfo::kFlagsOffset);
   return IsSetWord32<ScopeInfo::ClassScopeHasPrivateBrandBit>(value);
 }
 
@@ -3531,8 +3531,52 @@ TNode<BytecodeArray> CodeStubAssembler::LoadSharedFunctionInfoBytecodeArray(
   Goto(&done);
 
   BIND(&done);
+  // We need an explicit check here since we use the
+  // kUnknownIndirectPointerTag above and so don't have any type guarantees.
+  CSA_SBXCHECK(this, HasInstanceType(var_result.value(), BYTECODE_ARRAY_TYPE));
   return CAST(var_result.value());
 }
+
+#ifdef V8_ENABLE_WEBASSEMBLY
+TNode<WasmFunctionData>
+CodeStubAssembler::LoadSharedFunctionInfoWasmFunctionData(
+    TNode<SharedFunctionInfo> sfi) {
+#ifdef V8_ENABLE_SANDBOX
+  return CAST(LoadTrustedPointerFromObject(
+      sfi, SharedFunctionInfo::kTrustedFunctionDataOffset,
+      kWasmFunctionDataIndirectPointerTag));
+#else
+  return LoadObjectField<WasmFunctionData>(
+      sfi, SharedFunctionInfo::kFunctionDataOffset);
+#endif  // V8_ENABLE_SANDBOX
+}
+
+TNode<WasmExportedFunctionData>
+CodeStubAssembler::LoadSharedFunctionInfoWasmExportedFunctionData(
+    TNode<SharedFunctionInfo> sfi) {
+  TNode<WasmFunctionData> function_data =
+      LoadSharedFunctionInfoWasmFunctionData(sfi);
+  // TODO(saelo): it would be nice if we could use LoadTrustedPointerFromObject
+  // with a kWasmExportedFunctionDataIndirectPointerTag to avoid the SBXCHECK,
+  // but for that our tagging scheme first needs to support type hierarchies.
+  CSA_SBXCHECK(
+      this, HasInstanceType(function_data, WASM_EXPORTED_FUNCTION_DATA_TYPE));
+  return CAST(function_data);
+}
+
+TNode<WasmJSFunctionData>
+CodeStubAssembler::LoadSharedFunctionInfoWasmJSFunctionData(
+    TNode<SharedFunctionInfo> sfi) {
+  TNode<WasmFunctionData> function_data =
+      LoadSharedFunctionInfoWasmFunctionData(sfi);
+  // TODO(saelo): it would be nice if we could use LoadTrustedPointerFromObject
+  // with a kWasmJSFunctionDataIndirectPointerTag to avoid the SBXCHECK, but
+  // for that our tagging scheme first needs to support type hierarchies.
+  CSA_SBXCHECK(this,
+               HasInstanceType(function_data, WASM_JS_FUNCTION_DATA_TYPE));
+  return CAST(function_data);
+}
+#endif  // V8_ENABLE_WEBASSEMBLY
 
 TNode<Int32T> CodeStubAssembler::LoadBytecodeArrayParameterCount(
     TNode<BytecodeArray> bytecode_array) {
@@ -7116,15 +7160,15 @@ TNode<BoolT> CodeStubAssembler::IsExecutionTerminating() {
 }
 
 TNode<Object> CodeStubAssembler::GetContinuationPreservedEmbedderData() {
-  TNode<ExternalReference> continuation_data = ExternalConstant(
-      ExternalReference::continuation_preserved_embedder_data(isolate()));
+  TNode<ExternalReference> continuation_data =
+      IsolateField(IsolateFieldId::kContinuationPreservedEmbedderData);
   return LoadFullTagged(continuation_data);
 }
 
 void CodeStubAssembler::SetContinuationPreservedEmbedderData(
     TNode<Object> value) {
-  TNode<ExternalReference> continuation_data = ExternalConstant(
-      ExternalReference::continuation_preserved_embedder_data(isolate()));
+  TNode<ExternalReference> continuation_data =
+      IsolateField(IsolateFieldId::kContinuationPreservedEmbedderData);
   StoreFullTaggedNoWriteBarrier(continuation_data, value);
 }
 
@@ -9253,7 +9297,7 @@ void CodeStubAssembler::TryToName(TNode<Object> key, Label* if_keyisindex,
             TNode<ExternalReference> function = ExternalConstant(
                 ExternalReference::raw_hash_from_forward_table());
             const TNode<ExternalReference> isolate_ptr =
-                ExternalConstant(ExternalReference::isolate_address(isolate()));
+                ExternalConstant(ExternalReference::isolate_address());
             TNode<Uint32T> result = UncheckedCast<Uint32T>(CallCFunction(
                 function, MachineType::Uint32(),
                 std::make_pair(MachineType::Pointer(), isolate_ptr),
@@ -9275,7 +9319,7 @@ void CodeStubAssembler::TryToName(TNode<Object> key, Label* if_keyisindex,
             TNode<ExternalReference> function = ExternalConstant(
                 ExternalReference::string_from_forward_table());
             const TNode<ExternalReference> isolate_ptr =
-                ExternalConstant(ExternalReference::isolate_address(isolate()));
+                ExternalConstant(ExternalReference::isolate_address());
             TNode<Object> result = CAST(CallCFunction(
                 function, MachineType::AnyTagged(),
                 std::make_pair(MachineType::Pointer(), isolate_ptr),
@@ -9381,7 +9425,7 @@ void CodeStubAssembler::TryInternalizeString(
   TNode<ExternalReference> function = ExternalConstant(
       ExternalReference::try_string_to_index_or_lookup_existing());
   const TNode<ExternalReference> isolate_ptr =
-      ExternalConstant(ExternalReference::isolate_address(isolate()));
+      ExternalConstant(ExternalReference::isolate_address());
   TNode<Object> result =
       CAST(CallCFunction(function, MachineType::AnyTagged(),
                          std::make_pair(MachineType::Pointer(), isolate_ptr),
@@ -9819,8 +9863,7 @@ void CodeStubAssembler::NameDictionaryLookupWithForwardIndex(
     func_ref = mode == kFindInsertionIndex ? ref0 : ref1;
   }
   const TNode<ER> function = ExternalConstant(func_ref);
-  const TNode<ER> isolate_ptr =
-      ExternalConstant(ER::isolate_address(isolate()));
+  const TNode<ER> isolate_ptr = ExternalConstant(ER::isolate_address());
   TNode<IntPtrT> entry = UncheckedCast<IntPtrT>(
       CallCFunction(function, MachineType::IntPtr(),
                     std::make_pair(MachineType::Pointer(), isolate_ptr),
@@ -9857,7 +9900,7 @@ TNode<Word32T> CodeStubAssembler::ComputeSeededHash(TNode<IntPtrT> key) {
   const TNode<ExternalReference> function_addr =
       ExternalConstant(ExternalReference::compute_integer_hash());
   const TNode<ExternalReference> isolate_ptr =
-      ExternalConstant(ExternalReference::isolate_address(isolate()));
+      ExternalConstant(ExternalReference::isolate_address());
 
   MachineType type_ptr = MachineType::Pointer();
   MachineType type_uint32 = MachineType::Uint32();
@@ -13740,11 +13783,13 @@ TNode<Context> CodeStubAssembler::GotoIfHasContextExtensionUpToDepth(
     // ScriptContext - however, it's unrelated to the sloppy eval variable
     // extension. We should never iterate through a ScriptContext here.
     auto scope_info = LoadScopeInfo(cur_context.value());
-    TNode<Int32T> flags =
-        LoadAndUntagToWord32ObjectField(scope_info, ScopeInfo::kFlagsOffset);
+    TNode<Uint32T> flags =
+        LoadObjectField<Uint32T>(scope_info, ScopeInfo::kFlagsOffset);
     auto scope_type = DecodeWord32<ScopeInfo::ScopeTypeBits>(flags);
     CSA_DCHECK(this, Word32NotEqual(scope_type,
                                     Int32Constant(ScopeType::SCRIPT_SCOPE)));
+    CSA_DCHECK(this, Word32NotEqual(scope_type,
+                                    Int32Constant(ScopeType::REPL_MODE_SCOPE)));
 #endif
 
     // Check if context has an extension slot.
@@ -16226,7 +16271,7 @@ CodeStubAssembler::LoadVariableLengthJSArrayBufferViewByteLength(
     const TNode<ExternalReference> byte_length_function =
         ExternalConstant(ExternalReference::gsab_byte_length());
     TNode<ExternalReference> isolate_ptr =
-        ExternalConstant(ExternalReference::isolate_address(isolate()));
+        ExternalConstant(ExternalReference::isolate_address());
     TNode<UintPtrT> buffer_byte_length = UncheckedCast<UintPtrT>(
         CallCFunction(byte_length_function, MachineType::UintPtr(),
                       std::make_pair(MachineType::Pointer(), isolate_ptr),
@@ -16725,8 +16770,7 @@ TNode<Code> CodeStubAssembler::LoadBuiltin(TNode<Smi> builtin_id) {
   TNode<IntPtrT> offset =
       ElementOffsetFromIndex(SmiToBInt(builtin_id), SYSTEM_POINTER_ELEMENTS);
 
-  TNode<ExternalReference> table =
-      ExternalConstant(ExternalReference::builtins_table(isolate()));
+  TNode<ExternalReference> table = IsolateField(IsolateFieldId::kBuiltinTable);
 
   return CAST(BitcastWordToTagged(Load<RawPtrT>(table, offset)));
 }
@@ -16893,7 +16937,8 @@ TNode<JSFunction> CodeStubAssembler::AllocateFunctionWithMapAndContext(
   CSA_DCHECK(this, Word32BinaryNot(IsConstructorMap(map)));
   CSA_DCHECK(this, Word32BinaryNot(IsFunctionWithPrototypeSlotMap(map)));
   const TNode<HeapObject> fun = Allocate(JSFunction::kSizeWithoutPrototype);
-  static_assert(JSFunction::kSizeWithoutPrototype == 7 * kTaggedSize);
+  static_assert(JSFunction::kSizeWithoutPrototype ==
+                (7 + V8_ENABLE_LEAPTIERING_BOOL) * kTaggedSize);
   StoreMapNoWriteBarrier(fun, map);
   StoreObjectFieldRoot(fun, JSObject::kPropertiesOrHashOffset,
                        RootIndex::kEmptyFixedArray);
@@ -16905,6 +16950,12 @@ TNode<JSFunction> CodeStubAssembler::AllocateFunctionWithMapAndContext(
                                  shared_info);
   StoreObjectFieldNoWriteBarrier(fun, JSFunction::kContextOffset, context);
   StoreCodePointerFieldNoWriteBarrier(fun, JSFunction::kCodeOffset, code);
+#ifdef V8_ENABLE_LEAPTIERING
+  // TODO(saelo): obtain an appropriate dispatch handle here
+  StoreObjectFieldNoWriteBarrier(fun, JSFunction::kDispatchHandleOffset,
+                                 Int32Constant(kNullJSDispatchHandle));
+#endif  // V8_ENABLE_LEAPTIERING
+
   return CAST(fun);
 }
 
@@ -17247,7 +17298,7 @@ TNode<Smi> CodeStubAssembler::RefillMathRandom(
   const TNode<ExternalReference> refill_math_random =
       ExternalConstant(ExternalReference::refill_math_random());
   const TNode<ExternalReference> isolate_ptr =
-      ExternalConstant(ExternalReference::isolate_address(isolate()));
+      ExternalConstant(ExternalReference::isolate_address());
   MachineType type_tagged = MachineType::AnyTagged();
   MachineType type_ptr = MachineType::Pointer();
 
@@ -17271,7 +17322,7 @@ void CodeStubAssembler::RemoveFinalizationRegistryCellFromUnregisterTokenMap(
       ExternalReference::
           js_finalization_registry_remove_cell_from_unregister_token_map());
   const TNode<ExternalReference> isolate_ptr =
-      ExternalConstant(ExternalReference::isolate_address(isolate()));
+      ExternalConstant(ExternalReference::isolate_address());
 
   CallCFunction(remove_cell, MachineType::Pointer(),
                 std::make_pair(MachineType::Pointer(), isolate_ptr),
@@ -18325,18 +18376,18 @@ TNode<FixedArray> CodeStubAssembler::ArrayListElements(TNode<ArrayList> array) {
 }
 
 #if V8_ENABLE_WEBASSEMBLY
-TNode<RawPtrT> CodeStubAssembler::SwitchToTheCentralStack(
-    TNode<Object> receiver) {
+TNode<RawPtrT> CodeStubAssembler::SwitchToTheCentralStack() {
   TNode<WordT> stack_limit_slot = IntPtrAdd(
       LoadFramePointer(),
       IntPtrConstant(WasmToJSWrapperConstants::kSecondaryStackLimitOffset));
 
   TNode<ExternalReference> do_switch = ExternalConstant(
       ExternalReference::wasm_switch_to_the_central_stack_for_js());
-  TNode<RawPtrT> central_stack_sp = TNode<RawPtrT>::UncheckedCast(
-      CallCFunction(do_switch, MachineType::Pointer(),
-                    std::make_pair(MachineType::TaggedPointer(), receiver),
-                    std::make_pair(MachineType::Pointer(), stack_limit_slot)));
+  TNode<RawPtrT> central_stack_sp = TNode<RawPtrT>::UncheckedCast(CallCFunction(
+      do_switch, MachineType::Pointer(),
+      std::make_pair(MachineType::Pointer(),
+                     ExternalConstant(ExternalReference::isolate_address())),
+      std::make_pair(MachineType::Pointer(), stack_limit_slot)));
 
   TNode<RawPtrT> old_sp = LoadStackPointer();
   SetStackPointer(central_stack_sp);
@@ -18347,17 +18398,18 @@ TNode<RawPtrT> CodeStubAssembler::SwitchToTheCentralStack(
   return old_sp;
 }
 
-void CodeStubAssembler::SwitchFromTheCentralStack(TNode<RawPtrT> old_sp,
-                                                  TNode<Object> receiver) {
+void CodeStubAssembler::SwitchFromTheCentralStack(TNode<RawPtrT> old_sp) {
   TNode<WordT> stack_limit = Load<RawPtrT>(
       LoadFramePointer(),
       IntPtrConstant(WasmToJSWrapperConstants::kSecondaryStackLimitOffset));
 
   TNode<ExternalReference> do_switch = ExternalConstant(
       ExternalReference::wasm_switch_from_the_central_stack_for_js());
-  CallCFunction(do_switch, MachineType::Pointer(),
-                std::make_pair(MachineType::TaggedPointer(), receiver),
-                std::make_pair(MachineType::Pointer(), stack_limit));
+  CallCFunction(
+      do_switch, MachineType::Pointer(),
+      std::make_pair(MachineType::Pointer(),
+                     ExternalConstant(ExternalReference::isolate_address())),
+      std::make_pair(MachineType::Pointer(), stack_limit));
 
   StoreNoWriteBarrier(
       MachineType::PointerRepresentation(), LoadFramePointer(),
@@ -18366,15 +18418,14 @@ void CodeStubAssembler::SwitchFromTheCentralStack(TNode<RawPtrT> old_sp,
   SetStackPointer(old_sp);
 }
 
-TNode<RawPtrT> CodeStubAssembler::SwitchToTheCentralStackIfNeeded(
-    TNode<Object> receiver) {
+TNode<RawPtrT> CodeStubAssembler::SwitchToTheCentralStackIfNeeded() {
   TVARIABLE(RawPtrT, old_sp, PointerConstant(nullptr));
   Label no_switch(this);
   Label end(this);  // -> return value of the call (kTaggedPointer)
   TNode<Uint8T> is_on_central_stack_flag = LoadUint8FromRootRegister(
       IntPtrConstant(IsolateData::is_on_central_stack_flag_offset()));
   GotoIf(is_on_central_stack_flag, &no_switch);
-  old_sp = SwitchToTheCentralStack(receiver);
+  old_sp = SwitchToTheCentralStack();
   Goto(&no_switch);
   Bind(&no_switch);
   return old_sp.value();
