@@ -1241,3 +1241,26 @@ v8_write64(addrOf(u16arr)+0x19,0x2e00000n);
 test(1, 0);
 
 ```
+
+**Current idea is make the emulator running only `test` function in jit**
+
+
+```js
+pwndbg> bt
+#0  pkey_read () at ../sysdeps/unix/sysv/linux/x86/pkey_set.c:30
+#1  pkey_set (key=1, rights=1) at ../sysdeps/unix/sysv/linux/x86/pkey_set.c:31
+#2  0x00007fffed0fa24d in v8::base::MemoryProtectionKey::SetPermissionsForKey(int, v8::base::MemoryProtectionKey::Permission) () at ../../src/base/platform/memory-protection-key.cc:86
+#3  0x00007ffff4e2b4a1 in v8::internal::SandboxHardwareSupport::BlockAccessScope::BlockAccessScope(int) () at ../../src/sandbox/hardware-support.cc:62
+#4  0x00007ffff4e2b461 in v8::internal::SandboxHardwareSupport::MaybeBlockAccess() () at ../../src/sandbox/hardware-support.cc:56
+#5  0x00007ffff4482ea9 in v8::internal::Arguments<(v8::internal::ArgumentsType)0>::address_of_arg_at(int) const () at ../../src/execution/arguments.h:79
+#6  0x00007ffff4d3c606 in v8::internal::Handle<v8::internal::JSArrayBuffer> v8::internal::Arguments<(v8::internal::ArgumentsType)0>::at<v8::internal::JSArrayBuffer>(int) const () at ../../src/execution/arguments.h:99
+#7  0x00007ffff4e0a5d7 in v8::internal::__RT_impl_Runtime_GrowableSharedArrayBufferByteLength(v8::internal::Arguments<(v8::internal::ArgumentsType)0>, v8::internal::Isolate*) () at ../../src/runtime/runtime-typedarray.cc:70
+#8  0x00007ffff4e0a2a0 in v8::internal::Runtime_GrowableSharedArrayBufferByteLength(int, unsigned long*, v8::internal::Isolate*) () at ../../src/runtime/runtime-typedarray.cc:67
+#9  0x00007fff7f8549bd in ?? ()
+
+```
+
+**Should not run with debug binary, cause it's enable lots of DCHECK**
+
+Now, the problem is how to find the address of `test` jit funciton on baseline memory??
+why they don't have optimized jit memory?

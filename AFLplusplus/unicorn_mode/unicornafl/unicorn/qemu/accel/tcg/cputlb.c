@@ -32,6 +32,7 @@
 #include "translate-all.h"
 #include "exec/cpu-common.h"
 #include "trace/mem.h"
+#include "unicorn/x86.h"
 
 #include <uc_priv.h>
 
@@ -1466,6 +1467,18 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
     if (mr == NULL) {
         printf(" $$$$$$$$$ load_helper: memory might be still unmapped while reading or fetching bbbb\n");
         printf("\t### paddr: 0x%lx op: %d addr: 0x%lx\n", paddr, op, addr);
+
+        ///===============
+        uint64_t tmp_reg = 0, tmp_size = 8;
+
+        uc->reg_read(uc->cpu->env_ptr, uc->mode, UC_X86_REG_RIP, &tmp_reg, &tmp_size);
+        printf("\t#### rip: 0x%lx\n", tmp_reg);
+
+        uc->reg_read(uc->cpu->env_ptr, uc->mode, UC_X86_REG_RAX, &tmp_reg, &tmp_size);
+        printf("\t#### rax: 0x%lx\n", tmp_reg);
+
+        uc->reg_read(uc->cpu->env_ptr, uc->mode, UC_X86_REG_RBP, &tmp_reg, &tmp_size);
+        printf("\t#### rbp: 0x%lx\n", tmp_reg);
         
         // if ((1)) __builtin_trap();
         handled = false;

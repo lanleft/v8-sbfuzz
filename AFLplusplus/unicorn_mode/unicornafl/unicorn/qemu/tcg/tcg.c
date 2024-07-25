@@ -3792,7 +3792,7 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb)
     num_insns = -1;
     QTAILQ_FOREACH(op, &s->ops, link) {
         TCGOpcode opc = op->opc;
-        // printf("\topc: %ld\n", opc);    
+        // printf("\topc: 0x%x  pc: 0x%lx\n", opc, op->args[1]);    
 
         switch (opc) {
         case INDEX_op_mov_i32:
@@ -3823,6 +3823,7 @@ int tcg_gen_code(TCGContext *s, TranslationBlock *tb)
 #else
                 a = op->args[i];
 #endif
+                // printf("&&&& op->args[%d]: 0x%lx\n", i, a);
                 s->gen_insn_data[num_insns][i] = a;
             }
             break;

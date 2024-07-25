@@ -57,7 +57,8 @@ static inline tcg_target_ulong cpu_tb_exec(CPUState *cpu, TranslationBlock *itb)
 
     UC_TRACE_START(UC_TRACE_TB_EXEC);
     tb_exec_lock(cpu->uc->tcg_ctx);
-    // printf("#### cpu_tb_exec itb->pc: 0x%" PRIx64 "\n", itb->pc);
+
+    printf("#### cpu_tb_exec itb->pc: 0x%" PRIx64 " \n", itb->pc);
     ret = tcg_qemu_tb_exec(env, tb_ptr);
     if (cpu->uc->nested_level == 1) {
         // Only unlock (allow writing to JIT area) if we are the outmost uc_emu_start

@@ -17,6 +17,8 @@
 */
 
 // This is not your everyday Unicorn.
+#include "unicorn/unicorn.h"
+#include "unicorn/x86.h"
 #define UNICORN_AFL
 
 #include "UnicornLoader.h"
@@ -97,48 +99,60 @@ static void load_context(uc_engine** uc, const char* context_dir) {
 // hook function avx2
 
 #define MEMSET_ADDR 0x555556ec7940
+#define PKEY_SET_ADDR 0x7fffec996a80 //
+#define PKEY_GET_ADDR 0x7fffec996ae0    
+
+uint64_t key_arr[16] = {0};
 
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
 
-    uint64_t rip;
-    uint64_t rdi, rsi, rdx, rax, rsp;
-    uint64_t new_rip ;
-    unsigned char tmp_data[0x100] = {0};
+    uint64_t rdi, rsi, rdx, rsp, new_rip;
+    // uint64_t rip, rax;
+    // uint64_t  key, permission;
+    // unsigned char tmp_data[0x100] = {0};
 
     switch (address){
-        case 0x7ffff7dc5915:
-            printf("####  Hooking address 0x7ffff7dc5915\n");
-            uint32_t eax_value = 0;
-            uc_reg_read(uc, UC_X86_REG_RDI, &rdi);
-            printf("\t rdi: 0x%"PRIx64 "\n", rdi);
-            uc_mem_read(uc, rdi, tmp_data, 0x20);
+        // case 0x7ffff7dc5915:
+        //     printf("####  Hooking address 0x7ffff7dc5915\n");
+        //     uint32_t eax_value = 0;
+        //     uc_reg_read(uc, UC_X86_REG_RDI, &rdi);
+        //     printf("\t rdi: 0x%"PRIx64 "\n", rdi);
+        //     uc_mem_read(uc, rdi, tmp_data, 0x20);
             
-            // uint64_t rax_value = 0;
-            // uc_reg_read(uc, UC_X86_REG_RAX, &rax_value);
-            eax_value = 1 << 31;
-            printf("\t before ymm eax_value: 0x%x\n", eax_value);
+        //     // uint64_t rax_value = 0;
+        //     // uc_reg_read(uc, UC_X86_REG_RAX, &rax_value);
+        //     eax_value = 1 << 31;
+        //     printf("\t before ymm eax_value: 0x%x\n", eax_value);
 
-            for (int i=0; i<0x20; i++){
-                if(tmp_data[i] == 0){
-                    eax_value |= 1 << i;
-                } 
-            }
-            printf("\t after ymm eax_value: 0x%x\n", eax_value);
-            uc_reg_write(uc, UC_X86_REG_RAX, &eax_value);
-            // add rip by 8
-            uc_reg_read(uc, UC_X86_REG_RIP, &rip);
-            new_rip = rip + 8;
-            uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
-            printf("Skipped 2 instructions at 0x7ffff7dc5915. New RIP: 0x%" PRIx64 "\n", new_rip);
+        //     for (int i=0; i<0x20; i++){
+        //         if(tmp_data[i] == 0){
+        //             eax_value |= 1 << i;
+        //         } 
+        //     }
+        //     printf("\t after ymm eax_value: 0x%x\n", eax_value);
+        //     uc_reg_write(uc, UC_X86_REG_RAX, &eax_value);
+        //     // add rip by 8
+        //     uc_reg_read(uc, UC_X86_REG_RIP, &rip);
+        //     new_rip = rip + 8;
+        //     uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
+        //     printf("Skipped 2 instructions at 0x7ffff7dc5915. New RIP: 0x%" PRIx64 "\n", new_rip);
 
-            break;
-        case 0x7ffff7cd711a:
-            // dump_registers(uc);
-            rax = 0x555556fb1010;
-            uc_reg_write(uc, UC_X86_REG_RAX, &rax);
-            new_rip = 0x7ffff7cd711f;
-            uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
-            break;
+        //     break;
+        // case 0x7ffff7cd711a:
+        //     // dump_registers(uc);
+        //     rax = 0x555556fb1010;
+        //     uc_reg_write(uc, UC_X86_REG_RAX, &rax);
+        //     new_rip = 0x7ffff7cd711f;
+        //     uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
+        //     break;
+        // case 0x00007fffec996ab5:
+        //     printf(">>> hooking 0x00007fffec996ab5\n");
+        //     uc_reg_read(uc, UC_X86_REG_RSP, &rsp);
+        //     // read 8 bytes at rsp 
+        //     uc_mem_read(uc, rsp, &new_rip, 8);
+        //     printf("\t new_rip: 0x%"PRIx64 "\n", new_rip);
+        //     uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
+        //     break;
 
         case MEMSET_ADDR:
             uc_reg_read(uc, UC_X86_REG_RDI, &rdi);
@@ -157,8 +171,15 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
             uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
 
             break;
-        // case 0x555555c84b85:
-        //     dump_registers(uc);
+
+        // case PKEY_SET_ADDR:
+        //     printf(">>> hooking pkey_set\n");
+        //     uc_reg_read(uc, UC_X86_REG_RAX, &rax);
+        //     key_arr[0] = rax;
+        //     uc_reg_read(uc, UC_X86_REG_RIP, &rip);
+        //     new_rip = rip + 3;
+        //     uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
+
         //     break;
 
         default:
@@ -221,6 +242,8 @@ static bool place_input_callback(
 uc_engine* init_unicorn(const char* context_dir) {
     uc_engine* uc;
     load_context(&uc, context_dir);
+    unsigned char nop_arr[0x20] = {0};
+    memset(nop_arr, 0x90, 0x20);
     
     // enable some features on cpu 
 
@@ -232,6 +255,13 @@ uc_engine* init_unicorn(const char* context_dir) {
     // mov 0x7ffff7c3bc80 to fs:0x0
     memcpy(a, "\x80\xbc\xc3\xf7\xff\x7f\x00\x00", 8);
     uc_mem_write(uc, 0, a, 8); // canary
+
+    /* setup for cs */
+
+    /* nop some dummy instructions */
+    // uc_mem_protect(uc, 0x7fffec996a00, 0x1000, UC_PROT_READ | UC_PROT_EXEC | UC_PROT_WRITE);
+    // uc_mem_write(uc, 0x7fffec996ab6, nop_arr, 0x18);
+    // uc_mem_protect(uc, 0x7fffec996a00, 0x1000, UC_PROT_READ | UC_PROT_EXEC);
 
 
 
@@ -263,8 +293,8 @@ int main(int argc, char **argv, char **envp) {
     // ======================= load context ===============================
 
     // Set the program counter to the start of the code
-    uint64_t start_address = 0x555556ca3c8b;      // address of entry point of main()
-    uint64_t end_address = 0xff5556c19100; // Address of last instruction in main()
+    uint64_t start_address = 0x7fff600005ed;      // address of entry point of main()
+    uint64_t end_address = 0x7fff60000a8a; // Address of last instruction in main()
 
     // If we want tracing output, set the callbacks here
     uc_hook hooks[2];

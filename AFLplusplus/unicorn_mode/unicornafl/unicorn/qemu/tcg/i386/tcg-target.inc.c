@@ -2514,6 +2514,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         tcg_out_qemu_st(s, args, 0);
         break;
     case INDEX_op_qemu_st_i64:
+        // printf(">>>> INDEX_op_qemu_st_i64 rip: 0x%lx\n", s->code_ptr);
         tcg_out_qemu_st(s, args, 1);
         break;
 

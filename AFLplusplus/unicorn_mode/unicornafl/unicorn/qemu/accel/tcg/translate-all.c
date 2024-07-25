@@ -1777,6 +1777,7 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
 
     tcg_func_start(tcg_ctx);
 
+    // printf("@@@@@@@ tb_gen_code: pc: 0x%lx\n", tb->pc);
     tcg_ctx->cpu = env_cpu(env);
     UC_TRACE_START(UC_TRACE_TB_TRANS);
     gen_intermediate_code(cpu, tb, max_insns);
