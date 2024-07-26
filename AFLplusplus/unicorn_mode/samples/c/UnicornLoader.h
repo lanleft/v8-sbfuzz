@@ -55,6 +55,69 @@ static void load_registers(uc_engine* uc, cJSON* regs);
 
 
 
+static void load_context(uc_engine** uc, const char* context_dir) {
+    char index_path[256];
+    snprintf(index_path, sizeof(index_path), "%s/_index.json", context_dir);
+
+    FILE* f = fopen(index_path, "rb");
+    if (!f) {
+        fprintf(stderr, "Failed to open _index.json\n");
+        exit(1);
+    }
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char* json_str = malloc(fsize + 1);
+    fread(json_str, 1, fsize, f);
+    fclose(f);
+
+    json_str[fsize] = 0;
+
+    cJSON* context = cJSON_Parse(json_str);
+    free(json_str);
+
+    if (!context) {
+        fprintf(stderr, "Failed to parse _index.json\n");
+        exit(1);
+    }
+
+
+    cJSON* arch = cJSON_GetObjectItemCaseSensitive(context, "arch");
+    arch = cJSON_GetObjectItemCaseSensitive(arch, "arch");
+    // cJSON* mode = cJSON_GetObjectItemCaseSensitive(context, "mode");
+    if (!cJSON_IsString(arch)) {
+        fprintf(stderr, "Invalid or missing 'arch' in _index.json\n");
+        exit(1);
+    }
+
+    struct uc_settings settings = get_arch_and_mode(arch->valuestring);
+
+    uc_err err = uc_open(settings.arch, settings.mode, uc);
+    if (err != UC_ERR_OK) {
+        fprintf(stderr, "Failed to initialize Unicorn engine: %s\n", uc_strerror(err));
+        exit(1);
+    }
+
+    cJSON* regs = cJSON_GetObjectItemCaseSensitive(context, "regs");
+    if (cJSON_IsObject(regs)) {
+        load_registers(*uc, regs);
+    } else {
+        fprintf(stderr, "Invalid or missing 'regs' in _index.json\n");
+        exit(1);
+    }
+
+    cJSON* segments = cJSON_GetObjectItemCaseSensitive(context, "segments");
+    if (cJSON_IsArray(segments)) {
+        map_segments(*uc, segments, context_dir);
+    } else {
+        fprintf(stderr, "Invalid or missing 'segments' in _index.json\n");
+        exit(1);
+    }
+
+    cJSON_Delete(context);
+}
 
 char* read_index(const char* context_dir){
     // Making full path of index file

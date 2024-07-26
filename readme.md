@@ -1264,3 +1264,26 @@ pwndbg> bt
 
 Now, the problem is how to find the address of `test` jit funciton on baseline memory??
 why they don't have optimized jit memory?
+
+
+```js
+pwndbg> bl
+Num     Type           Disp Enb Address            What
+2       breakpoint     keep y   0x00005555b6b80054 
+	breakpoint already hit 1 time
+3       breakpoint     keep y   0x00005555b6b800a9 
+
+
+ ► 0x5555b6b80163    ret    0x18
+// ================
+0x1e5c00049c55 <SharedArrayBuffer map = 0x1e5c00191c89>
+0x1e5c00049c89 <Uint16Array map = 0x1e5c0018d9dd>
+
+
+```
+
+Run fuzzer:
+
+```bash
+CONTEXT_DIR=UnicornContext_20240726_142026 AFL_DEBUG=1 afl-fuzz -U -m none -i sample_inputs/ -o fuzz_out1 -- ./harness @@
+```

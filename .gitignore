@@ -34,3 +34,5 @@ sandbox_fuzzer/cov_report
 AFLplusplus/unicorn_mode/samples/c/core
 AFLplusplus/unicorn_mode/samples/c/UnicornContext*
 sandbox_fuzzer/UnicornContext*
+
+AFLplusplus/unicorn_mode/samples/c/fuzz_out*

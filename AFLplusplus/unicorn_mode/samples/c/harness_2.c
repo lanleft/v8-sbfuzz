@@ -45,25 +45,6 @@ uint64_t current_input_index = 0;
 
 uint64_t key_arr[16] = {0};
 
-// Memory range to hook
-#define HOOK_START 0x1e5c00000000
-#define HOOK_END 0x1e5d00000000
-
-void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data) {
-    if (address >= HOOK_START && address < HOOK_END) {
-        if (type == UC_MEM_READ) {
-            // Redirect read to INPUT_ADDR
-            uc_mem_read(uc, INPUT_ADDR + current_input_index, &value, size);
-
-            DEBUG("##### Intercepted read at 0x%"PRIx64", redirected read from 0x%lx size: %d  value: 0x%lx", address, (uint64_t)INPUT_ADDR + current_input_index, size, value);
-
-            current_input_index += size;
-        } else if (type == UC_MEM_WRITE) {
-            // Handle write if necessary
-        }
-    }
-}
-
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
 
     uint64_t rdi, rsi, rdx, rsp, new_rip;
@@ -80,9 +61,57 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
     size_t count = cs_disasm(handle, code, size, address, 0, &insn);
 
     if (count > 0) {
-        // cs_x86 *x86 = &(insn[0].detail->x86);
+        cs_x86 *x86 = &(insn[0].detail->x86);
         
         DEBUG("0x%"PRIx64": %s %s", address, insn[0].mnemonic, insn[0].op_str);
+        // Check if it's a mov instruction
+        if (insn[0].id == X86_INS_MOV) {
+            printf("00000 x86->operands[1].type %d\n", x86->operands[1].type);
+            // Check if the second operand is a memory operand
+            if (x86->op_count == 2 && x86->operands[1].type == X86_OP_MEM) {
+                cs_x86_op *mem_op = &(x86->operands[1]);
+                uint64_t mem_addr = 0;
+
+                printf("11111\n");
+                // Calculate the memory address
+                if (mem_op->mem.base != X86_REG_INVALID)
+                    uc_reg_read(uc, mem_op->mem.base, &mem_addr);
+                if (mem_op->mem.index != X86_REG_INVALID) {
+                    uint64_t index_value;
+                    uc_reg_read(uc, mem_op->mem.index, &index_value);
+                    mem_addr += index_value * mem_op->mem.scale;
+                }
+                mem_addr += mem_op->mem.disp;
+                printf("mem_addr: 0x%"PRIx64"\n", mem_addr);
+
+                // Check if the memory address is in the target range
+                if (mem_addr >= TARGET_RANGE_START && mem_addr < TARGET_RANGE_END) {
+                    uint32_t read_size = x86->operands[0].size;
+                    
+                    // Read from INPUT_ADDR instead
+                    uint64_t input_data;
+                    uc_mem_read(uc, INPUT_ADDR + current_input_index, &input_data, read_size);
+                    current_input_index += read_size;
+
+                    // Write the data to the destination operand
+                    if (x86->operands[0].type == X86_OP_REG) {
+                        uc_reg_write(uc, x86->operands[0].reg, &input_data);
+                    } else if (x86->operands[0].type == X86_OP_MEM) {
+                        uint64_t dest_addr;
+                        uc_reg_read(uc, x86->operands[0].mem.base, &dest_addr);
+                        dest_addr += x86->operands[0].mem.disp;
+                        uc_mem_write(uc, dest_addr, &input_data, read_size);
+                    }
+
+                    // Skip the original instruction
+                    uint64_t new_rip = address + insn[0].size;
+                    uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
+
+                    DEBUG("Intercepted mov at 0x%"PRIx64", redirected read from INPUT_ADDR+0x%"PRIx64"", 
+                               address, current_input_index - read_size);
+                }
+            }
+        }
 
     } else {
         DEBUG("0x%"PRIx64": invalid instruction", address);
@@ -134,20 +163,11 @@ static bool place_input_callback(
         return false;
     }
 
-    // print 0x10 first bytes of input
-
-
     // We need a valid c string, make sure it never goes out of bounds.
     input[input_len-1] = '\0';
     // Write the testcase to unicorn.
     uc_mem_write(uc,  INPUT_ADDR, input, input_len);
     DEBUG("### Placed input with len %ld to 0x%x", input_len, INPUT_ADDR);
-
-    if (tracing) {
-        uint64_t tmp_data = 0;
-        uc_mem_read(uc, INPUT_ADDR, &tmp_data, 8);
-        DEBUG("### First 8 bytes of input: 0x%lx", tmp_data);
-    }
 
     // store input_len for the faux strlen hook
     current_input_len = input_len;
@@ -198,8 +218,6 @@ int main(int argc, char **argv, char **envp) {
     // ===================== start unicorn ===============================
     uc_engine* uc = init_unicorn(context_dir_env);
     
-    // address for input 
-    uc_mem_map(uc, INPUT_ADDR, 0x5000, UC_PROT_ALL);
     // ======================= load context ===============================
 
     // Set the program counter to the start of the code
@@ -209,8 +227,6 @@ int main(int argc, char **argv, char **envp) {
     // If we want tracing output, set the callbacks here
     uc_hook hooks[2];
     uc_hook_add(uc, &hooks[0], UC_HOOK_CODE, hook_code, NULL, start_address, end_address);
-    uc_hook_add(uc, &hooks[1], UC_HOOK_MEM_READ, hook_mem_access, NULL, HOOK_START, HOOK_END);
-
 
     // start fuzzing
     DEBUG("Starting to fuzz...");
