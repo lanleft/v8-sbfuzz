@@ -1479,6 +1479,9 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
 
         uc->reg_read(uc->cpu->env_ptr, uc->mode, UC_X86_REG_RBP, &tmp_reg, &tmp_size);
         printf("\t#### rbp: 0x%lx\n", tmp_reg);
+
+        uc->reg_read(uc->cpu->env_ptr, uc->mode, UC_X86_REG_R12, &tmp_reg, &tmp_size);
+        printf("\t#### r12: 0x%lx\n", tmp_reg);
         
         // if ((1)) __builtin_trap();
         handled = false;

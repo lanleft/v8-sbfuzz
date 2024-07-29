@@ -19,12 +19,26 @@
 #include <stdio.h>
 #include <stdlib.h>
                     
+// ANSI color codes
+#define COLOR_RESET   "\033[0m"
+#define COLOR_RED     "\033[0;31m"
+#define COLOR_GREEN   "\033[0;32m"
+#define COLOR_YELLOW  "\033[0;33m"
+#define COLOR_BLUE    "\033[0;34m"
+#define COLOR_MAGENTA "\033[0;35m"
+#define COLOR_CYAN    "\033[0;36m"
+#define COLOR_WHITE   "\033[0;37m"
 
-
-#define DEBUG(fmt, ...) do { \
-    if (tracing) { printf(fmt, ##__VA_ARGS__); putchar('\n'); } \
+// Macro to print debug logs with color
+#define DEBUG_COLOR(color, fmt, ...) do { \
+    if (tracing) { \
+        printf(color fmt COLOR_RESET, ##__VA_ARGS__); \
+        putchar('\n'); \
+    } \
 } while (0)
 
+// Macro to print debug logs without color
+#define DEBUG(fmt, ...) DEBUG_COLOR(COLOR_RESET, fmt, ##__VA_ARGS__)
 
 struct uc_settings{
     uc_arch arch;
@@ -285,7 +299,7 @@ static void map_segments(uc_engine* uc, cJSON* segments, const char* context_dir
         uint64_t seg_end = (uint64_t)end->valuedouble;
         const char* seg_name = name->valuestring;
 
-        DEBUG(" ===== Map segment name: %s, start: 0x%lx, end: 0x%lx ==========", seg_name, seg_start, seg_end);
+        // DEBUG(" ===== Map segment name: %s, start: 0x%lx, end: 0x%lx ==========", seg_name, seg_start, seg_end);
 
         if (!cJSON_IsString(name) || !cJSON_IsNumber(start) || !cJSON_IsNumber(end) || !cJSON_IsObject(permissions)) {
             fprintf(stderr, "Invalid segment data\n");
@@ -318,7 +332,7 @@ static void map_segments(uc_engine* uc, cJSON* segments, const char* context_dir
                 return;
             }
 
-            DEBUG("Loading content for segment %s from file %s", seg_name, content_file_path);
+            // DEBUG("Loading content for segment %s from file %s", seg_name, content_file_path);
             // Get file size
             fseek(content_file_handle, 0, SEEK_END);
             long file_size = ftell(content_file_handle);
@@ -341,14 +355,14 @@ static void map_segments(uc_engine* uc, cJSON* segments, const char* context_dir
                 return;
             }
 
-            DEBUG("Read %ld bytes from file %s", file_size, content_file_path);
+            // DEBUG("Read %ld bytes from file %s", file_size, content_file_path);
             // Write content to memory
             uc_err err = uc_mem_write(uc, seg_start, content, file_size);
             if (err != UC_ERR_OK) {
                 fprintf(stderr, "Failed to write memory: %s\n", uc_strerror(err));
             }
 
-            DEBUG("Loaded content for segment %s @ 0x%016lx\n", seg_name, seg_start);
+            // DEBUG("Loaded content for segment %s @ 0x%016lx\n", seg_name, seg_start);
 
             free(content);
         } else {
@@ -379,7 +393,7 @@ static void map_segment(uc_engine* uc, const char* name, uint64_t address, uint6
         return;
     }
 
-    DEBUG("Mapped segment %s: 0x%lx - 0x%lx, perms: %d", name, address, address + size, perms);
+    // DEBUG("Mapped segment %s: 0x%lx - 0x%lx, perms: %d", name, address, address + size, perms);
 }
 
 void cleanup_unicorn(uc_engine* uc) {

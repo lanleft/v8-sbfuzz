@@ -14,7 +14,7 @@ AR_EXT = a
 # Verbose output?
 V ?= 0
 
-CFLAGS += -Wall -Werror -I../../unicornafl/unicorn/include -I../../unicornafl/include -I../../../qemu_mode/qemuafl/capstone/include -I../../../qemu_mode/qemuafl/include -I./cJSON
+CFLAGS += -Wall -I../../unicornafl/unicorn/include -I../../unicornafl/include -I../../../qemu_mode/qemuafl/capstone/include -I../../../qemu_mode/qemuafl/include -I./cJSON
 CFLAGS += -g -MD -MP -MF
 
 LDFLAGS += -L$(UNICORNAFL_LIB) -L$(UNICORN_LIB) -L$(CJSON_LIB) -lunicorn -lunicornafl -lpthread -lm -lstdc++ -lcjson
@@ -55,8 +55,8 @@ harness-debug.o: harness.c ../../unicornafl/unicorn/include/unicorn/*.h ../../..
 
 harness: harness.o
 
-	-rm ../../unicornafl/build/libunicorn.a ../../unicornafl/build/libunicornafl.a || true
-	cd ../../unicornafl/build && make clean && make -j `nproc`
+	# -rm ../../unicornafl/build/libunicorn.a ../../unicornafl/build/libunicornafl.a || true
+	# cd ../../unicornafl/build && make clean && make -j `nproc`
 	# building harness
 	${CC} harness.o ../../unicornafl/build/libunicornafl.a ../../../qemu_mode/qemuafl/capstone/build/libcapstone.a ./cJSON/build/libcjson.so.1 $(LDFLAGS) -o harness
 

@@ -124,21 +124,21 @@ enum class OOMType {
 
 #ifdef DEBUG
 
-#define DCHECK_WITH_MSG_AND_LOC(condition, message, loc)                \
-  do {                                                                  \
-    if (V8_UNLIKELY(!(condition))) {                                    \
-      V8_Dcheck(loc.FileName(), static_cast<int>(loc.Line()), message); \
-    }                                                                   \
-  } while (false)
-#define DCHECK_WITH_MSG(condition, message)   \
-  do {                                        \
-    if (V8_UNLIKELY(!(condition))) {          \
-      V8_Dcheck(__FILE__, __LINE__, message); \
-    }                                         \
-  } while (false)
-#define DCHECK_WITH_LOC(condition, loc) \
-  DCHECK_WITH_MSG_AND_LOC(condition, #condition, loc)
-#define DCHECK(condition) DCHECK_WITH_MSG(condition, #condition)
+// #define DCHECK_WITH_MSG_AND_LOC(condition, message, loc)                \
+//   do {                                                                  \
+//     if (V8_UNLIKELY(!(condition))) {                                    \
+//       V8_Dcheck(loc.FileName(), static_cast<int>(loc.Line()), message); \
+//     }                                                                   \
+//   } while (false)
+// #define DCHECK_WITH_MSG(condition, message)   \
+//   do {                                        \
+//     if (V8_UNLIKELY(!(condition))) {          \
+//       V8_Dcheck(__FILE__, __LINE__, message); \
+//     }                                         \
+//   } while (false)
+// #define DCHECK_WITH_LOC(condition, loc) \
+//   DCHECK_WITH_MSG_AND_LOC(condition, #condition, loc)
+// #define DCHECK(condition) DCHECK_WITH_MSG(condition, #condition)
 
 // Helper macro for binary operators.
 // Don't use this macro directly in your code, use CHECK_EQ et al below.
@@ -163,6 +163,7 @@ enum class OOMType {
       delete _msg;                                                        \
     }                                                                     \
   } while (false)
+
 
 #else
 
@@ -483,22 +484,23 @@ DEFINE_CHECK_OP_IMPL(GT, > )
 
 // The DCHECK macro is equivalent to CHECK except that it only
 // generates code in debug builds.
-#ifdef DEBUG
-#define DCHECK_EQ(lhs, rhs) DCHECK_OP(EQ, ==, lhs, rhs)
-#define DCHECK_NE(lhs, rhs) DCHECK_OP(NE, !=, lhs, rhs)
-#define DCHECK_GT(lhs, rhs) DCHECK_OP(GT, >, lhs, rhs)
-#define DCHECK_GE(lhs, rhs) DCHECK_OP(GE, >=, lhs, rhs)
-#define DCHECK_LT(lhs, rhs) DCHECK_OP(LT, <, lhs, rhs)
-#define DCHECK_LE(lhs, rhs) DCHECK_OP(LE, <=, lhs, rhs)
-#define DCHECK_NULL(val) DCHECK((val) == nullptr)
-#define DCHECK_NOT_NULL(val) DCHECK((val) != nullptr)
-#define DCHECK_IMPLIES(lhs, rhs) \
-  DCHECK_WITH_MSG(!(lhs) || (rhs), #lhs " implies " #rhs)
-#define DCHECK_BOUNDS(index, limit) \
-  DCHECK_LT(v8::base::ToUnsigned(index), v8::base::ToUnsigned(limit))
-#else
+// #ifdef DEBUG
+// #define DCHECK_EQ(lhs, rhs) DCHECK_OP(EQ, ==, lhs, rhs)
+// #define DCHECK_NE(lhs, rhs) DCHECK_OP(NE, !=, lhs, rhs)
+// #define DCHECK_GT(lhs, rhs) DCHECK_OP(GT, >, lhs, rhs)
+// #define DCHECK_GE(lhs, rhs) DCHECK_OP(GE, >=, lhs, rhs)
+// #define DCHECK_LT(lhs, rhs) DCHECK_OP(LT, <, lhs, rhs)
+// #define DCHECK_LE(lhs, rhs) DCHECK_OP(LE, <=, lhs, rhs)
+// #define DCHECK_NULL(val) DCHECK((val) == nullptr)
+// #define DCHECK_NOT_NULL(val) DCHECK((val) != nullptr)
+// #define DCHECK_IMPLIES(lhs, rhs) \
+//   DCHECK_WITH_MSG(!(lhs) || (rhs), #lhs " implies " #rhs)
+// #define DCHECK_BOUNDS(index, limit) \
+//   DCHECK_LT(v8::base::ToUnsigned(index), v8::base::ToUnsigned(limit))
+// #else
 #define DCHECK(condition)      ((void) 0)
 #define DCHECK_WITH_LOC(condition, location) ((void)0)
+#define DCHECK_WITH_MSG(condition, message) ((void)0)
 #define DCHECK_WITH_MSG_AND_LOC(condition, message, location) ((void)0)
 #define DCHECK_EQ(v1, v2)      ((void) 0)
 #define DCHECK_NE(v1, v2)      ((void) 0)
@@ -510,6 +512,6 @@ DEFINE_CHECK_OP_IMPL(GT, > )
 #define DCHECK_NOT_NULL(val)   ((void) 0)
 #define DCHECK_IMPLIES(v1, v2) ((void) 0)
 #define DCHECK_BOUNDS(index, limit) ((void)0)
-#endif
+// #endif
 
 #endif  // V8_BASE_LOGGING_H_

@@ -1782,7 +1782,7 @@ uc_err uc_hook_add(uc_engine *uc, uc_hook *hh, int type, void *callback,
                     }
                 }
                 uc->hooks_count[i]++;
-                printf("uc->hooks_count[%d]: %d\n", i, uc->hooks_count[i]);
+                // printf("uc->hooks_count[%d]: %d\n", i, uc->hooks_count[i]);
             }
         }
         i++;

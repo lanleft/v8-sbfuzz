@@ -25,8 +25,8 @@
 
 
 #define INPUT_ADDR 0x5000
-#define TARGET_RANGE_START 0x1e5c00000000
-#define TARGET_RANGE_END 0x1e5d00000000
+#define TARGET_RANGE_START 0xba900000000
+#define TARGET_RANGE_END TARGET_RANGE_START+0x100000000
 
 uint64_t current_input_len = 0;
 uint64_t current_input_index = 0;
@@ -39,23 +39,48 @@ uint64_t current_input_index = 0;
 //     // printf(">>> Tracing basic block at 0x%"PRIx64 ", block size = 0x%x\n", address, size);
 // }
 
-// hook function avx2
+// Callback function for invalid memory accesses
+bool hook_mem_invalid(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data) {
+    const char *access_type;
 
-#define MEMSET_ADDR 0x555556ec7940
+    switch (type) {
+        case UC_MEM_READ_UNMAPPED:
+            access_type = "READ";
+            break;
+        case UC_MEM_WRITE_UNMAPPED:
+            access_type = "WRITE";
+            break;
+        case UC_MEM_FETCH_UNMAPPED:
+            access_type = "FETCH";
+            break;
+        default:
+            return false;
+    }
+
+    // Handle the invalid access without crashing
+    uc_mem_map(uc, address, 0x100, UC_PROT_ALL);
+
+    uc_emu_stop(uc);
+
+    DEBUG("==== Invalid memory access detected: %s at 0x%lx, size = %d, value = 0x%lx",
+           access_type, address, size, value);
+    // Return true to indicate we've handled it
+    return true;
+}
+
+// hook function avx2
 
 uint64_t key_arr[16] = {0};
 
-// Memory range to hook
-#define HOOK_START 0x1e5c00000000
-#define HOOK_END 0x1e5d00000000
-
+// using flip bits to ensure each chunk bytes changed exactly one time
 void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data) {
-    if (address >= HOOK_START && address < HOOK_END) {
+    if (address >= TARGET_RANGE_START && address < TARGET_RANGE_END) {
         if (type == UC_MEM_READ) {
             // Redirect read to INPUT_ADDR
             uc_mem_read(uc, INPUT_ADDR + current_input_index, &value, size);
+            uc_mem_write(uc, address, &value, size);
 
-            DEBUG("##### Intercepted read at 0x%"PRIx64", redirected read from 0x%lx size: %d  value: 0x%lx", address, (uint64_t)INPUT_ADDR + current_input_index, size, value);
+            DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", address, (uint64_t)INPUT_ADDR + current_input_index, size, value);
 
             current_input_index += size;
         } else if (type == UC_MEM_WRITE) {
@@ -67,7 +92,7 @@ void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
 
     uint64_t rdi, rsi, rdx, rsp, new_rip;
-    // uint64_t rip, rax;
+    uint64_t r8, rax, rip, rcx;
     // uint64_t  key, permission;
     // unsigned char tmp_data[0x100] = {0};
 
@@ -94,22 +119,31 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
     // hooking address 
     switch (address){
 
-        case MEMSET_ADDR:
+        case 0x7fff60000769:
             uc_reg_read(uc, UC_X86_REG_RDI, &rdi);
-            uc_reg_read(uc, UC_X86_REG_RSI, &rsi);
-            uc_reg_read(uc, UC_X86_REG_RDX, &rdx);
-            uint8_t memset_byte = rsi & 0xff;
-            for (int i=0; i<rdx; i++){
-                uc_mem_write(uc, rdi+i, &memset_byte, 1);
+            uc_reg_read(uc, UC_X86_REG_RCX, &rcx);
+            DEBUG("\trdi: 0x%"PRIx64 ", rcx: 0x%"PRIx64 "", rdi, rcx);
+
+            if (rdi < rcx) { // sub overflow
+                DEBUG_COLOR(COLOR_RED, ">>> underflow is detected");
+                // uc_emu_stop(uc);
+                uint64_t invalid_address = 0xFFFFFFFFFFFFFFFF; // Invalid address
+                uc_reg_write(uc, UC_X86_REG_RIP, &invalid_address); // For x86-64
             }
-            DEBUG(">>> memset(0x%"PRIx64 ", 0x%"PRIx64 ", 0x%"PRIx64 ")", rdi, rsi, rdx);
+            break;
 
-            uc_reg_read(uc, UC_X86_REG_RSP, &rsp);
-            // read 8 bytes at rsp 
-            uc_mem_read(uc, rsp, &new_rip, 8);
-            DEBUG("\t new_rip: 0x%"PRIx64 "", new_rip);
-            uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
+        case 0x7fff60000760:
+            uc_reg_read(uc, UC_X86_REG_RCX, &rcx);
+            DEBUG("\trcx: 0x%"PRIx64 "", rcx);
 
+        case 0x7fff600007e8:
+            uc_reg_read(uc, UC_X86_REG_R8, &r8);
+            uc_reg_read(uc, UC_X86_REG_RAX, &rax);
+            DEBUG("\tr8: 0x%"PRIx64 ", rax: 0x%"PRIx64 "", r8, rax);
+            if (rax >= r8 ) { // jump to out of bound in js -> no need to continue
+                DEBUG_COLOR(COLOR_GREEN, ">>> rax >= r8");
+                uc_emu_stop(uc);
+            }
             break;
 
         default:
@@ -129,7 +163,7 @@ static bool place_input_callback(
     void *data
 ){
     // printf("Placing input with len %ld to %x\n", input_len, DATA_ADDRESS);
-    if (input_len < 0x100) {
+    if (input_len < 2) {
         // Test input too short ignore this testcase
         return false;
     }
@@ -172,6 +206,17 @@ uc_engine* init_unicorn(const char* context_dir) {
     memcpy(a, "\x80\xbc\xc3\xf7\xff\x7f\x00\x00", 8);
     uc_mem_write(uc, 0, a, 8); // canary
 
+    // 0x7ffff7e28d78
+    uc_mem_map(uc, 0x7ffff7e28d78, 0x1000, UC_PROT_ALL);
+    uint8_t b[8] = "\x50\x00\x00\x00\x00\x00\x00\x00";
+    uc_mem_write(uc, 0x7ffff7e28d78, b, 8); // mov    rax,QWORD PTR fs:[r12]
+    // write 0x555557004010 to fs:0x50
+    memcpy(b, "\x10\x40\x00\x57\x55\x55\x00\x00", 8);
+    uc_mem_write(uc, 0x50, b, 8);
+    // nop 0x7fff6000073f
+    uc_mem_write(uc, 0x7fff6000073f, nop_arr, 5);
+
+
 
     return uc;
 }
@@ -203,22 +248,24 @@ int main(int argc, char **argv, char **envp) {
     // ======================= load context ===============================
 
     // Set the program counter to the start of the code
-    uint64_t start_address = 0x00005555b6b80054;      // address of entry point of main()
-    uint64_t end_address = 0x5555b6b8015d; // Address of last instruction in main()
+    uint64_t start_address = 0x7fff6000066d;     
+    uint64_t end_address = 0x7fff60000814; 
 
     // If we want tracing output, set the callbacks here
-    uc_hook hooks[2];
+    uc_hook hooks[3];
     uc_hook_add(uc, &hooks[0], UC_HOOK_CODE, hook_code, NULL, start_address, end_address);
-    uc_hook_add(uc, &hooks[1], UC_HOOK_MEM_READ, hook_mem_access, NULL, HOOK_START, HOOK_END);
+    uc_hook_add(uc, &hooks[1], UC_HOOK_MEM_READ, hook_mem_access, NULL, TARGET_RANGE_START, TARGET_RANGE_END);
 
+    uc_hook_add(uc, &hooks[2], UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_FETCH_UNMAPPED,
+                      (void *)hook_mem_invalid, NULL, 1, 0); // all addresses
 
     // start fuzzing
     DEBUG("Starting to fuzz...");
     fflush(stdout);
 
-    if (tracing) {
-        dump_registers(uc);
-    }
+    // if (tracing) {
+    //     dump_registers(uc);
+    // }
 
     // let's gooo
     uc_afl_ret afl_ret = uc_afl_fuzz(
@@ -232,6 +279,7 @@ int main(int argc, char **argv, char **envp) {
         10, // For persistent mode: How many rounds to run
         NULL // additional data pointer
     );
+    DEBUG("=== afl_ret: %d", afl_ret);
     switch(afl_ret) {
         case UC_AFL_RET_ERROR:
             DEBUG("Error starting to fuzz");

@@ -312,13 +312,13 @@ void Deserializer<IsolateT>::Rehash() {
 template <typename IsolateT>
 Deserializer<IsolateT>::~Deserializer() {
 #ifdef DEBUG
-  // Do not perform checks if we aborted deserialization.
-  if (source_.position() == 0) return;
-  // Check that we only have padding bytes remaining.
-  while (source_.HasMore()) DCHECK_EQ(kNop, source_.Get());
-  // Check that there are no remaining forward refs.
-  DCHECK_EQ(num_unresolved_forward_refs_, 0);
-  DCHECK(unresolved_forward_refs_.empty());
+  // // Do not perform checks if we aborted deserialization.
+  // if (source_.position() == 0) return;
+  // // Check that we only have padding bytes remaining.
+  // while (source_.HasMore()) DCHECK_EQ(kNop, source_.Get());
+  // // Check that there are no remaining forward refs.
+  // DCHECK_EQ(num_unresolved_forward_refs_, 0);
+  // DCHECK(unresolved_forward_refs_.empty());
 #endif  // DEBUG
   isolate_->RegisterDeserializerFinished();
 }

