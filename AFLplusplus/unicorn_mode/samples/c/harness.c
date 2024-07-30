@@ -30,44 +30,20 @@
 
 uint64_t current_input_len = 0;
 uint64_t current_input_index = 0;
+// Global flag to indicate if we encountered an invalid memory read
+bool invalid_read_occurred = false;
 
-
-
-// ========================================================================================
-
-// static void hook_block(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
-//     // printf(">>> Tracing basic block at 0x%"PRIx64 ", block size = 0x%x\n", address, size);
-// }
-
-// Callback function for invalid memory accesses
-bool hook_mem_invalid(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data) {
-    const char *access_type;
-
-    switch (type) {
-        case UC_MEM_READ_UNMAPPED:
-            access_type = "READ";
-            break;
-        case UC_MEM_WRITE_UNMAPPED:
-            access_type = "WRITE";
-            break;
-        case UC_MEM_FETCH_UNMAPPED:
-            access_type = "FETCH";
-            break;
-        default:
-            return false;
+// Callback function for invalid memory reads
+static bool hook_mem_invalid(uc_engine *uc, uc_mem_type type,
+                             uint64_t address, int size, int64_t value, void *user_data) {
+    if (type == UC_MEM_READ_UNMAPPED || type == UC_MEM_READ_PROT) {
+        DEBUG_COLOR(COLOR_YELLOW, "Invalid memory read at 0x%" PRIx64 ", size: %d", address, size);
+        invalid_read_occurred = true;
+        uc_emu_stop(uc);  // Stop the emulation
+        return true;  // Indicate that we've handled the error
     }
-
-    // Handle the invalid access without crashing
-    uc_mem_map(uc, address, 0x100, UC_PROT_ALL);
-
-    uc_emu_stop(uc);
-
-    DEBUG("==== Invalid memory access detected: %s at 0x%lx, size = %d, value = 0x%lx",
-           access_type, address, size, value);
-    // Return true to indicate we've handled it
-    return true;
+    return false;  // For other types of memory errors, let Unicorn handle it
 }
-
 // hook function avx2
 
 uint64_t key_arr[16] = {0};
@@ -148,6 +124,12 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
 
         default:
             break;
+    }
+
+    // Add this check at the end of the function
+    if (invalid_read_occurred) {
+        uc_emu_stop(uc);
+        return;
     }
 
 }

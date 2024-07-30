@@ -1,11 +1,17 @@
 
-# Table of content
+# Table of contents
+<!-- toc -->
 
 - [References](#references)
 - [Setup](#setup)
 - [Unicorn fuzzer](#unicorn-fuzzer)
-    - [Dumpper](#Dumpper)
-    - [Run sample fuzz](#Run-sample-fuzz)
+  * [Dumpper](#dumpper)
+    + [Run sample fuzz](#run-sample-fuzz)
+    + [New SSE instructions](#new-sse-instructions)
+    + [Solution](#solution)
+    + [Reproducing Manfred's bug](#reproducing-manfreds-bug)
+
+<!-- tocstop -->
 
 # References
 
@@ -28,6 +34,13 @@ Generate `compile_command.json` file:
 
 ```bash
 /tools/clang/scripts/generate_compdb.py -p out/debug > compile_commands.json
+```
+
+Adding table of contents for markdown file:
+
+```bash
+# https://github.com/jonschlinkert/markdown-toc
+/usr/local/bin/markdown-toc -i readme.md
 ```
 
 
