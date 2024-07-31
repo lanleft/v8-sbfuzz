@@ -45,7 +45,7 @@ instance.exports.func1(0n);
 
 // ===============================
 %SystemBreak();
-v8_write64(addrOf(instance.exports.func1)-0x30+0x18,0x4141n);
+// v8_write64(addrOf(instance.exports.func1)-0x30+0x18,0x1fn);
 
 // trigger
 instance.exports.func1(0x4141n);

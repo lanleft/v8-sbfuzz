@@ -179,7 +179,7 @@ enum class OOMType {
     CHECK_WITH_MSG(_cmp, #lhs " " #op " " #rhs);                             \
   } while (false)
 
-#define DCHECK_WITH_MSG(condition, msg) void(0);
+// #define DCHECK_WITH_MSG(condition, msg) void(0);
 
 #endif
 

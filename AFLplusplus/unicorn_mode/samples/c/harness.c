@@ -25,7 +25,7 @@
 
 
 #define INPUT_ADDR 0x5000
-#define TARGET_RANGE_START 0xba900000000
+#define TARGET_RANGE_START 0x9b300000000
 #define TARGET_RANGE_END TARGET_RANGE_START+0x100000000
 
 uint64_t current_input_len = 0;
@@ -60,34 +60,31 @@ void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size
         return;
     }
 
-    if (address >= TARGET_RANGE_START && address < TARGET_RANGE_END) {
+    if ((address >= TARGET_RANGE_START+40000 && address < TARGET_RANGE_START+143000) | (address >= TARGET_RANGE_START+0x180000 && address < TARGET_RANGE_START+0x280000) | (address >= TARGET_RANGE_START+0x2c0000 && address < TARGET_RANGE_START+0x340000)) {
         if (type == UC_MEM_READ) {
 
             switch (address) {
-                // for __RT_impl_Runtime_GrowableSharedArrayBufferByteLength
-                case 0xba900049c94:
-                    value = 0x00049c51;
+
+                case 0x9b3001dca0c:
+                    value = 0x001dc9c9;
                     uc_mem_write(uc, address, &value, size);
-                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%x hooking", 
-                                address, 0x00049c51);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
+                                address, (uint64_t)0x001dc9c9, size, value);
                     break;
-                case 0xba900049c64:
-                    value = 0;
+
+                case 0x9b3001dc9cc: // trusted data pointer 
+                    // 0x555556ccf0cc <Builtins_JSToWasmWrapper+76>     and    r8, qword ptr [r9 + rcx]          R8 => 0x16aa000c4935
+                    value = 0x00405e00;
                     uc_mem_write(uc, address, &value, size);
-                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%x hooking", 
-                                address, 0);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
+                                address, (uint64_t)0x00405e00, size, value);
                     break;
-                case 0xba900040008:
-                    value = 1;
+
+                case 0x9b30019ab68:
+                    value = 0x00000831;
                     uc_mem_write(uc, address, &value, size);
-                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%x hooking", 
-                                address, 1);
-                    break;
-                case 0xba900049c7c:
-                    value = 0x001000c0;
-                    uc_mem_write(uc, address, &value, size);
-                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%x hooking", 
-                                address, 0x001000c0);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
+                                address, (uint64_t)0x00000831, size, value);
                     break;
 
                 default:
@@ -96,14 +93,10 @@ void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size
                     uc_mem_write(uc, address, &value, size);
                     DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
                                 address, (uint64_t)INPUT_ADDR + current_input_index, size, value);
+                    current_input_index += size;
                     break;
             }
 
-
-
-
-
-            current_input_index += size;
         } else if (type == UC_MEM_WRITE) {
             // Handle write if necessary
             // For now, we're just logging the write operation
@@ -141,33 +134,10 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
 
     // hooking address 
     switch (address){
-
-        case 0x7fff60000769:
-            uc_reg_read(uc, UC_X86_REG_RDI, &rdi);
+        case 0x555556ccfc68:
+            uc_reg_read(uc, UC_X86_REG_RSP, &rsp);
             uc_reg_read(uc, UC_X86_REG_RCX, &rcx);
-            DEBUG("\trdi: 0x%"PRIx64 ", rcx: 0x%"PRIx64 "", rdi, rcx);
-
-            if (rdi < rcx) { // sub overflow
-                DEBUG_COLOR(COLOR_RED, ">>> underflow is detected");
-                uint64_t invalid_address = 0xFFFFFFFFFFFFFFFF; // Invalid address
-                uc_reg_write(uc, UC_X86_REG_RIP, &invalid_address); // For x86-64
-            }
-            break;
-
-        case 0x7fff60000760:
-            uc_reg_read(uc, UC_X86_REG_RCX, &rcx);
-            DEBUG("\trcx: 0x%"PRIx64 "", rcx);
-            break;
-
-        case 0x7fff600007e8:
-            uc_reg_read(uc, UC_X86_REG_R8, &r8);
-            uc_reg_read(uc, UC_X86_REG_RAX, &rax);
-            DEBUG("\tr8: 0x%"PRIx64 ", rax: 0x%"PRIx64 "", r8, rax);
-            if (rax >= r8 ) { // jump to out of bound in js -> no need to continue
-                DEBUG_COLOR(COLOR_YELLOW, "### jump to OOB js function");
-                is_invalid = true;
-                uc_emu_stop(uc);
-            }
+            DEBUG_COLOR(COLOR_RED, ">> rsp: 0x%lx rcx: 0x%lx", rsp, rcx);
             break;
 
         default:
@@ -245,9 +215,6 @@ uc_engine* init_unicorn(const char* context_dir) {
     // write 0x555557004010 to fs:0x50
     memcpy(b, "\x10\x40\x00\x57\x55\x55\x00\x00", 8);
     uc_mem_write(uc, 0x50, b, 8);
-    // nop 0x7fff6000073f
-    // uc_mem_write(uc, 0x7fff6000073f, nop_arr, 5);
-
 
 
     return uc;
@@ -280,8 +247,8 @@ int main(int argc, char **argv, char **envp) {
     // ======================= load context ===============================
 
     // Set the program counter to the start of the code
-    uint64_t start_address = 0x7fff6000066d;     
-    uint64_t end_address = 0x7fff600007e8; 
+    uint64_t start_address = 0x555556ccf080; // <Builtins_JSToWasmWrapper>       push   rbp  
+    uint64_t end_address = 0x555556ccfc6e; // <Builtins_JSToWasmWrapper+3054>              ret 
 
     // If we want tracing output, set the callbacks here
     uc_hook hooks[3];

