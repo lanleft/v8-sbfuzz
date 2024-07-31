@@ -32,8 +32,10 @@
 #include "translate-all.h"
 #include "exec/cpu-common.h"
 #include "trace/mem.h"
+#include "unicorn/unicorn.h"
 #include "unicorn/x86.h"
 
+#include <stdint.h>
 #include <uc_priv.h>
 
 #include <glib_compat.h>
@@ -1460,6 +1462,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
         tlb_addr &= ~TLB_INVALID_MASK;
     }
 
+    // printf("### entry->paddr: 0x%lx  addr: 0x%lx\n", entry->paddr, addr);
     paddr = entry->paddr | (addr & ~TARGET_PAGE_MASK);
     mr = uc->memory_mapping(uc, paddr);
 
@@ -1572,6 +1575,7 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
             if (!HOOK_BOUND_CHECK(hook, paddr))
                 continue;
             ((uc_cb_hookmem_t)hook->callback)(env->uc, UC_MEM_READ, paddr, size, 0, hook->user_data);
+            // printf("### HOOK_MEM_READ\n");
 
             // the last callback may already asked to stop emulation
             if (uc->stop_request)
@@ -1727,6 +1731,13 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
     }
 
     haddr = (void *)((uintptr_t)addr + entry->addend);
+
+    // hardcode T_T
+    if (((uint64_t)haddr & 0xfff00000000) == 0xba900000000) {
+        printf("### haddr: 0x%lx\n", (uint64_t)haddr);
+        uc_emu_stop(uc);
+        return 0x90;
+    }
     res = load_memop(haddr, op);
 
 _out:

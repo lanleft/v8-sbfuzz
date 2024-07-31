@@ -689,6 +689,9 @@ class UCAFL {
              */
 
             child_ret = this->_handle_child_requests();
+            if (afl_debug_enabled) {
+                printf("######## child_ret=%d\n", child_ret);
+            }
 
             if (child_ret == AFL_CHILD_NEXT) {
 
@@ -703,6 +706,8 @@ class UCAFL {
                  * (even though it's still alive for persistent mode) */
 
                 status = this->wifsignaled_;
+                // printf("######## crashes status=%d\n", status);
+                // exit(-2);
 
             } else if (child_ret == AFL_CHILD_EXITED) {
 
