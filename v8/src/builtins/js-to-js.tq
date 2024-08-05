@@ -140,7 +140,8 @@ transitioning javascript builtin JSToJSWrapper(
   // if not enough actual parameters were provided, i.e.
   // `SharedFunctionInfo::length`.
   let popCount = arguments.length;
-  const declaredArgCount = paramCount;
+  printf("popCount: 0x%x", popCount);
+  console.log("popCount: " + popCount);
   if (declaredArgCount > popCount) {
     popCount = declaredArgCount;
   }

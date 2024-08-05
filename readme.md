@@ -1658,3 +1658,82 @@ macro JSToWasmWrapperHelper( // in default namespace
 }
 
 ```
+
+## Stack 2
+
+Wanna test these fields of  `shared_function_info`
+
+```js
+macro JSToWasmWrapperHelper(
+    context: NativeContext, _receiver: JSAny, target: JSFunction,
+    arguments: Arguments, promise: constexpr Promise): never {
+  const functionData = target.shared_function_info.wasm_exported_function_data;
+    }//...
+
+// ======================================
+DebugPrint: 0x3740002dca1d: [Function] in OldSpace
+ - map: 0x374000293025 <Map[32](HOLEY_ELEMENTS)> [FastProperties]
+ - prototype: 0x374000281f31 <JSFunction (sfi = 0x3740001474c5)>
+ - elements: 0x374000000725 <FixedArray[0]> [HOLEY_ELEMENTS]
+ - function prototype: <no-prototype-slot>
+ - shared_info: 0x3740002dc9ed <SharedFunctionInfo js-to-wasm:l:l>
+ - name: 0x374000002831 <String[1]: #0>
+ - builtin: JSToWasmWrapper
+ - formal_parameter_count: 1
+ - kind: NormalFunction
+ - context: 0x374000281885 <NativeContext[297]>
+ - code: 0x374000265a91 <Code BUILTIN JSToWasmWrapper>
+ - Wasm instance data: 0x1669000c4859 <Other heap object (WASM_TRUSTED_INSTANCE_DATA_TYPE)>
+// ===================================
+pwndbg> job 0x3740002dc9ed
+0x3740002dc9ed: [SharedFunctionInfo] in OldSpace
+ - map: 0x374000000d61 <Map[48](SHARED_FUNCTION_INFO_TYPE)>
+ - name: 0x374000002831 <String[1]: #0>
+ - kind: NormalFunction
+ - syntax kind: AnonymousExpression
+ - function_map_index: 213
+ - formal_parameter_count: 1
+ - expected_nof_properties: 0
+ - language_mode: sloppy
+ - function_data: -1
+ - code (from function_data): 0x374000265a91 <Code BUILTIN JSToWasmWrapper>
+ - script: 0x3740002b0fbd <Script>
+ - function token position: 60
+ - start position: 60
+ - end position: 71
+ - scope info: 0x374000000f11 <ScopeInfo>
+ - length: 1
+ - feedback_metadata: <none>
+ - function_literal_id: -1
+ - unique_id: 983
+ - age: 0
+
+
+```
+
+
+```js
+transitioning javascript builtin JSToJSWrapper(
+    js-implicit context: NativeContext, receiver: JSAny, target: JSFunction)(
+    ...arguments): JSAny {
+  const functionData = target.shared_function_info.wasm_js_function_data;
+  //...
+  
+  // The normal return sequence of Torque-generated JavaScript builtins does not
+  // consider the case where the caller may push additional "undefined"
+  // parameters on the stack, and therefore does not generate code to pop these
+  // additional parameters. Here we calculate the actual number of parameters on
+  // the stack. This number is the number of actual parameters provided by the
+  // caller, which is `arguments.length`, or the number of declared arguments,
+  // if not enough actual parameters were provided, i.e.
+  // `SharedFunctionInfo::length`.
+  let popCount = arguments.length;
+  const declaredArgCount = paramCount;
+  if (declaredArgCount > popCount) {
+    popCount = declaredArgCount;
+  }
+  // Also pop the receiver.
+  PopAndReturn(popCount + 1, result);
+}
+// ================
+```
