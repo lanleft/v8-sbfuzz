@@ -38,8 +38,8 @@ function test(iii,val) {
 
 test(1,0);
 
-%DebugPrint(test);
-%SystemBreak();
+// %DebugPrint(test);
+// %SystemBreak();
 
 
 test(2,0);
