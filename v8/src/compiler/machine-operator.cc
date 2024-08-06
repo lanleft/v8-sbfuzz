@@ -4,6 +4,8 @@
 
 #include "src/compiler/machine-operator.h"
 
+#include <optional>
+
 #include "src/base/lazy-instance.h"
 #include "src/compiler/opcodes.h"
 #include "src/compiler/operator.h"
@@ -416,6 +418,7 @@ std::ostream& operator<<(std::ostream& os, TruncateKind kind) {
   IF_WASM(V, F32x4Trunc, Operator::kNoProperties, 1, 0, 1)                     \
   IF_WASM(V, F32x4NearestInt, Operator::kNoProperties, 1, 0, 1)                \
   IF_WASM(V, F32x4DemoteF64x2Zero, Operator::kNoProperties, 1, 0, 1)           \
+  IF_WASM(V, F16x8Splat, Operator::kNoProperties, 1, 0, 1)                     \
   IF_WASM(V, I64x4Splat, Operator::kNoProperties, 1, 0, 1)                     \
   IF_WASM(V, I64x2Splat, Operator::kNoProperties, 1, 0, 1)                     \
   IF_WASM(V, I64x2SplatI32Pair, Operator::kNoProperties, 2, 0, 1)              \
@@ -1099,6 +1102,7 @@ std::ostream& operator<<(std::ostream& os, TruncateKind kind) {
   V(F32x4, 4)                \
   V(I64x2, 2)                \
   V(I32x4, 4)                \
+  V(F16x8, 8)                \
   V(I16x8, 8)                \
   V(I8x16, 16)
 
@@ -2102,7 +2106,7 @@ const Operator* MachineOperatorBuilder::StoreIndirectPointer(
   }
 }
 
-base::Optional<const Operator*> MachineOperatorBuilder::TryStorePair(
+std::optional<const Operator*> MachineOperatorBuilder::TryStorePair(
     StoreRepresentation store_rep1, StoreRepresentation store_rep2) {
   DCHECK_NE(store_rep1.representation(), MachineRepresentation::kMapWord);
 
@@ -2611,6 +2615,7 @@ EXTRACT_LANE_OP(F64x2, , 2)
 EXTRACT_LANE_OP(F32x4, , 4)
 EXTRACT_LANE_OP(I64x2, , 2)
 EXTRACT_LANE_OP(I32x4, , 4)
+EXTRACT_LANE_OP(F16x8, , 8)
 EXTRACT_LANE_OP(I16x8, U, 8)
 EXTRACT_LANE_OP(I16x8, S, 8)
 EXTRACT_LANE_OP(I8x16, U, 16)

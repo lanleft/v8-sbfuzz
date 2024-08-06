@@ -1,0 +1,190 @@
+diff --git a/src/base/logging.h b/src/base/logging.h
+index 94fac83d21e..ef8f7bc52f4 100644
+--- a/src/base/logging.h
++++ b/src/base/logging.h
+@@ -124,21 +124,21 @@ enum class OOMType {
+ 
+ #ifdef DEBUG
+ 
+-#define DCHECK_WITH_MSG_AND_LOC(condition, message, loc)                \
+-  do {                                                                  \
+-    if (V8_UNLIKELY(!(condition))) {                                    \
+-      V8_Dcheck(loc.FileName(), static_cast<int>(loc.Line()), message); \
+-    }                                                                   \
+-  } while (false)
+-#define DCHECK_WITH_MSG(condition, message)   \
+-  do {                                        \
+-    if (V8_UNLIKELY(!(condition))) {          \
+-      V8_Dcheck(__FILE__, __LINE__, message); \
+-    }                                         \
+-  } while (false)
+-#define DCHECK_WITH_LOC(condition, loc) \
+-  DCHECK_WITH_MSG_AND_LOC(condition, #condition, loc)
+-#define DCHECK(condition) DCHECK_WITH_MSG(condition, #condition)
++// #define DCHECK_WITH_MSG_AND_LOC(condition, message, loc)                \
++//   do {                                                                  \
++//     if (V8_UNLIKELY(!(condition))) {                                    \
++//       V8_Dcheck(loc.FileName(), static_cast<int>(loc.Line()), message); \
++//     }                                                                   \
++//   } while (false)
++// #define DCHECK_WITH_MSG(condition, message)   \
++//   do {                                        \
++//     if (V8_UNLIKELY(!(condition))) {          \
++//       V8_Dcheck(__FILE__, __LINE__, message); \
++//     }                                         \
++//   } while (false)
++// #define DCHECK_WITH_LOC(condition, loc) \
++//   DCHECK_WITH_MSG_AND_LOC(condition, #condition, loc)
++// #define DCHECK(condition) DCHECK_WITH_MSG(condition, #condition)
+ 
+ // Helper macro for binary operators.
+ // Don't use this macro directly in your code, use CHECK_EQ et al below.
+@@ -164,6 +164,7 @@ enum class OOMType {
+     }                                                                     \
+   } while (false)
+ 
++
+ #else
+ 
+ // Make all CHECK functions discard their log strings to reduce code
+@@ -178,7 +179,7 @@ enum class OOMType {
+     CHECK_WITH_MSG(_cmp, #lhs " " #op " " #rhs);                             \
+   } while (false)
+ 
+-#define DCHECK_WITH_MSG(condition, msg) void(0);
++// #define DCHECK_WITH_MSG(condition, msg) void(0);
+ 
+ #endif
+ 
+@@ -483,22 +484,23 @@ DEFINE_CHECK_OP_IMPL(GT, > )
+ 
+ // The DCHECK macro is equivalent to CHECK except that it only
+ // generates code in debug builds.
+-#ifdef DEBUG
+-#define DCHECK_EQ(lhs, rhs) DCHECK_OP(EQ, ==, lhs, rhs)
+-#define DCHECK_NE(lhs, rhs) DCHECK_OP(NE, !=, lhs, rhs)
+-#define DCHECK_GT(lhs, rhs) DCHECK_OP(GT, >, lhs, rhs)
+-#define DCHECK_GE(lhs, rhs) DCHECK_OP(GE, >=, lhs, rhs)
+-#define DCHECK_LT(lhs, rhs) DCHECK_OP(LT, <, lhs, rhs)
+-#define DCHECK_LE(lhs, rhs) DCHECK_OP(LE, <=, lhs, rhs)
+-#define DCHECK_NULL(val) DCHECK((val) == nullptr)
+-#define DCHECK_NOT_NULL(val) DCHECK((val) != nullptr)
+-#define DCHECK_IMPLIES(lhs, rhs) \
+-  DCHECK_WITH_MSG(!(lhs) || (rhs), #lhs " implies " #rhs)
+-#define DCHECK_BOUNDS(index, limit) \
+-  DCHECK_LT(v8::base::ToUnsigned(index), v8::base::ToUnsigned(limit))
+-#else
++// #ifdef DEBUG
++// #define DCHECK_EQ(lhs, rhs) DCHECK_OP(EQ, ==, lhs, rhs)
++// #define DCHECK_NE(lhs, rhs) DCHECK_OP(NE, !=, lhs, rhs)
++// #define DCHECK_GT(lhs, rhs) DCHECK_OP(GT, >, lhs, rhs)
++// #define DCHECK_GE(lhs, rhs) DCHECK_OP(GE, >=, lhs, rhs)
++// #define DCHECK_LT(lhs, rhs) DCHECK_OP(LT, <, lhs, rhs)
++// #define DCHECK_LE(lhs, rhs) DCHECK_OP(LE, <=, lhs, rhs)
++// #define DCHECK_NULL(val) DCHECK((val) == nullptr)
++// #define DCHECK_NOT_NULL(val) DCHECK((val) != nullptr)
++// #define DCHECK_IMPLIES(lhs, rhs) \
++//   DCHECK_WITH_MSG(!(lhs) || (rhs), #lhs " implies " #rhs)
++// #define DCHECK_BOUNDS(index, limit) \
++//   DCHECK_LT(v8::base::ToUnsigned(index), v8::base::ToUnsigned(limit))
++// #else
+ #define DCHECK(condition)      ((void) 0)
+ #define DCHECK_WITH_LOC(condition, location) ((void)0)
++#define DCHECK_WITH_MSG(condition, message) ((void)0)
+ #define DCHECK_WITH_MSG_AND_LOC(condition, message, location) ((void)0)
+ #define DCHECK_EQ(v1, v2)      ((void) 0)
+ #define DCHECK_NE(v1, v2)      ((void) 0)
+@@ -510,6 +512,6 @@ DEFINE_CHECK_OP_IMPL(GT, > )
+ #define DCHECK_NOT_NULL(val)   ((void) 0)
+ #define DCHECK_IMPLIES(v1, v2) ((void) 0)
+ #define DCHECK_BOUNDS(index, limit) ((void)0)
+-#endif
++// #endif
+ 
+ #endif  // V8_BASE_LOGGING_H_
+diff --git a/src/builtins/js-to-js.tq b/src/builtins/js-to-js.tq
+index 06fa18d139d..0229d765c15 100644
+--- a/src/builtins/js-to-js.tq
++++ b/src/builtins/js-to-js.tq
+@@ -140,6 +140,7 @@ transitioning javascript builtin JSToJSWrapper(
+   // if not enough actual parameters were provided, i.e.
+   // `SharedFunctionInfo::length`.
+   let popCount = arguments.length;
++  Print('popCount', Convert<Number>(popCount));
+   const declaredArgCount = paramCount;
+   if (declaredArgCount > popCount) {
+     popCount = declaredArgCount;
+diff --git a/src/compiler/graph-assembler.cc b/src/compiler/graph-assembler.cc
+index 64f6deab861..44601d81f64 100644
+--- a/src/compiler/graph-assembler.cc
++++ b/src/compiler/graph-assembler.cc
+@@ -684,17 +684,20 @@ class ArrayBufferViewAccessBuilder {
+           AccessBuilder::ForJSArrayBufferViewByteOffset(), view,
+           UseInfo::Word());
+ 
+-      return a
+-          .MachineSelectIf<UintPtrT>(
+-              a.UintPtrLessThanOrEqual(byte_offset, byte_length))
+-          .Then([&]() {
+-            // length = floor((byte_length - byte_offset) / element_size)
+-            return a.UintPtrDiv(a.UintPtrSub(byte_length, byte_offset),
+-                                a.ChangeUint32ToUintPtr(element_size));
+-          })
+-          .Else([&]() { return a.UintPtrConstant(0); })
+-          .ExpectTrue()
+-          .Value();
++      // return a
++      //     .MachineSelectIf<UintPtrT>(
++      //         a.UintPtrLessThanOrEqual(byte_offset, byte_length))
++      //     .Then([&]() {
++      //       // length = floor((byte_length - byte_offset) / element_size)
++      //       return a.UintPtrDiv(a.UintPtrSub(byte_length, byte_offset),
++      //                           a.ChangeUint32ToUintPtr(element_size));
++      //     })
++      //     .Else([&]() { return a.UintPtrConstant(0); })
++      //     .ExpectTrue()
++      //     .Value();
++
++      return a.UintPtrDiv(a.UintPtrSub(byte_length, byte_offset),
++                          a.ChangeUint32ToUintPtr(element_size));
+     };
+ 
+     return a.MachineSelectIf<UintPtrT>(length_tracking_bit)
+diff --git a/src/snapshot/deserializer.cc b/src/snapshot/deserializer.cc
+index 7bc0586cd37..cde69632110 100644
+--- a/src/snapshot/deserializer.cc
++++ b/src/snapshot/deserializer.cc
+@@ -312,13 +312,13 @@ void Deserializer<IsolateT>::Rehash() {
+ template <typename IsolateT>
+ Deserializer<IsolateT>::~Deserializer() {
+ #ifdef DEBUG
+-  // Do not perform checks if we aborted deserialization.
+-  if (source_.position() == 0) return;
+-  // Check that we only have padding bytes remaining.
+-  while (source_.HasMore()) DCHECK_EQ(kNop, source_.Get());
+-  // Check that there are no remaining forward refs.
+-  DCHECK_EQ(num_unresolved_forward_refs_, 0);
+-  DCHECK(unresolved_forward_refs_.empty());
++  // // Do not perform checks if we aborted deserialization.
++  // if (source_.position() == 0) return;
++  // // Check that we only have padding bytes remaining.
++  // while (source_.HasMore()) DCHECK_EQ(kNop, source_.Get());
++  // // Check that there are no remaining forward refs.
++  // DCHECK_EQ(num_unresolved_forward_refs_, 0);
++  // DCHECK(unresolved_forward_refs_.empty());
+ #endif  // DEBUG
+   isolate_->RegisterDeserializerFinished();
+ }
+diff --git a/tools/gdbinit b/tools/gdbinit
+index 8432e2ecd41..1dc29e6c0ea 100644
+--- a/tools/gdbinit
++++ b/tools/gdbinit
+@@ -92,7 +92,7 @@ PrintV8InternalHandleCommand()
+ end
+ 
+ alias jlh = print-v8-local
+-alias jl = print-v8-local
++# alias jl = print-v8-local
+ alias jh = print-v8-internal-handle
+ 
+ # Print Code objects containing given PC.

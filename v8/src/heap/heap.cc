@@ -6270,7 +6270,6 @@ void Heap::TearDown() {
     space_[i].reset();
   }
 
-  isolate()->read_only_heap()->OnHeapTearDown(this);
   read_only_space_ = nullptr;
 
   memory_allocator()->TearDown();
@@ -6511,6 +6510,7 @@ void Heap::ClearRecordedSlotRange(Address start, Address end) {
     // This method will be invoked on objects in shared space for
     // internalization and string forwarding during GC.
     DCHECK(page->owner_identity() == OLD_SPACE ||
+           page->owner_identity() == TRUSTED_SPACE ||
            page->owner_identity() == SHARED_SPACE);
 
     if (!page->SweepingDone()) {
@@ -6636,7 +6636,7 @@ class UnreachableObjectsFilter : public HeapObjectsFilter {
       // Treat weak references as strong.
       for (TSlot p = start; p < end; ++p) {
         typename TSlot::TObject object = p.load(cage_base());
-#ifdef V8_ENABLE_DIRECT_LOCAL
+#ifdef V8_ENABLE_DIRECT_HANDLE
         if (object.ptr() == kTaggedNullAddress) continue;
 #endif
         Tagged<HeapObject> heap_object;

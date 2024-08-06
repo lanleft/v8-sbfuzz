@@ -193,7 +193,7 @@ class FullMarkingVerifier : public MarkingVerifierBase {
         GetPtrComprCageBaseFromOnHeapAddress(start.address());
     for (TSlot slot = start; slot < end; ++slot) {
       typename TSlot::TObject object = slot.load(cage_base);
-#ifdef V8_ENABLE_DIRECT_LOCAL
+#ifdef V8_ENABLE_DIRECT_HANDLE
       if (object.ptr() == kTaggedNullAddress) continue;
 #endif
       Tagged<HeapObject> heap_object;
@@ -1309,8 +1309,14 @@ class RecordMigratedSlotVisitor : public ObjectVisitorWithCageBases {
           // references we want to use the OLD_TO_OLD remembered set, so here
           // we need to check that both the value chunk and the host chunk are
           // trusted space chunks.
-          RememberedSet<TRUSTED_TO_TRUSTED>::Insert<AccessMode::NON_ATOMIC>(
-              host_metadata, host_chunk->Offset(slot));
+          if (value_chunk->InWritableSharedSpace()) {
+            RememberedSet<TRUSTED_TO_SHARED_TRUSTED>::Insert<
+                AccessMode::NON_ATOMIC>(host_metadata,
+                                        host_chunk->Offset(slot));
+          } else {
+            RememberedSet<TRUSTED_TO_TRUSTED>::Insert<AccessMode::NON_ATOMIC>(
+                host_metadata, host_chunk->Offset(slot));
+          }
         } else {
           RememberedSet<OLD_TO_OLD>::Insert<AccessMode::NON_ATOMIC>(
               host_metadata, host_chunk->Offset(slot));
@@ -1319,8 +1325,14 @@ class RecordMigratedSlotVisitor : public ObjectVisitorWithCageBases {
                  !InWritableSharedSpace(host)) {
         MutablePageMetadata* host_metadata =
             MutablePageMetadata::cast(host_chunk->Metadata());
-        RememberedSet<OLD_TO_SHARED>::Insert<AccessMode::NON_ATOMIC>(
-            host_metadata, host_chunk->Offset(slot));
+        if (value_chunk->IsFlagSet(MemoryChunk::IS_TRUSTED) &&
+            host_chunk->IsFlagSet(MemoryChunk::IS_TRUSTED)) {
+          RememberedSet<TRUSTED_TO_SHARED_TRUSTED>::Insert<
+              AccessMode::NON_ATOMIC>(host_metadata, host_chunk->Offset(slot));
+        } else {
+          RememberedSet<OLD_TO_SHARED>::Insert<AccessMode::NON_ATOMIC>(
+              host_metadata, host_chunk->Offset(slot));
+        }
       }
     }
   }
@@ -3177,19 +3189,26 @@ void MarkCompactCollector::FlushBytecodeFromSFI(
       [](Tagged<HeapObject> object, ObjectSlot slot,
          Tagged<HeapObject> target) { RecordSlot(object, slot, target); });
 
-  // Replace the bytecode with an uncompiled data object.
-  // As the bytecode arrays itself is located in trusted space, we cannot
-  // convert that object, but instead need to convert another object living
-  // inside the main pointer compression cage. The wrapper object is suitable
-  // for that purpose. The size of the bytecode wrapper must therefore match
-  // that of an UncompiledData object (it could also be larger, but it's most
-  // efficient if the sizes match because then we can avoid creating a filler
-  // object for the leftover space in the wrapper object).
-  static_assert(BytecodeWrapper::kSize ==
+  // The size of the bytecode array should always be larger than an
+  // UncompiledData object.
+  static_assert(BytecodeArray::SizeFor(0) >=
                 UncompiledDataWithoutPreparseData::kSize);
+
+  // Replace the bytecode with an uncompiled data object.
   Tagged<BytecodeArray> bytecode_array =
       shared_info->GetBytecodeArray(heap_->isolate());
-  Tagged<HeapObject> compiled_data = bytecode_array->wrapper();
+
+#ifdef V8_ENABLE_SANDBOX
+  // Zap the old entry in the trusted pointer table.
+  TrustedPointerTable& table = heap_->isolate()->trusted_pointer_table();
+  IndirectPointerSlot self_indirect_pointer_slot =
+      bytecode_array->RawIndirectPointerField(
+          BytecodeArray::kSelfIndirectPointerOffset,
+          kBytecodeArrayIndirectPointerTag);
+  table.Zap(self_indirect_pointer_slot.Relaxed_LoadHandle());
+#endif
+
+  Tagged<HeapObject> compiled_data = bytecode_array;
   Address compiled_data_start = compiled_data.address();
   int compiled_data_size = ALIGN_TO_ALLOCATION_ALIGNMENT(compiled_data->Size());
   MutablePageMetadata* chunk =
@@ -3208,6 +3227,9 @@ void MarkCompactCollector::FlushBytecodeFromSFI(
   RememberedSet<OLD_TO_OLD>::RemoveRange(
       chunk, compiled_data_start, compiled_data_start + compiled_data_size,
       SlotSet::FREE_EMPTY_BUCKETS);
+  RememberedSet<TRUSTED_TO_TRUSTED>::RemoveRange(
+      chunk, compiled_data_start, compiled_data_start + compiled_data_size,
+      SlotSet::FREE_EMPTY_BUCKETS);
 
   // Swap the map, using set_map_after_allocation to avoid verify heap checks
   // which are not necessary since we are doing this during the GC atomic pause.
@@ -3215,10 +3237,19 @@ void MarkCompactCollector::FlushBytecodeFromSFI(
       ReadOnlyRoots(heap_).uncompiled_data_without_preparse_data_map(),
       SKIP_WRITE_BARRIER);
 
+  // Create a filler object for any left over space in the bytecode array.
+  if (!heap_->IsLargeObject(compiled_data)) {
+    const int aligned_filler_offset =
+        ALIGN_TO_ALLOCATION_ALIGNMENT(UncompiledDataWithoutPreparseData::kSize);
+    heap_->CreateFillerObjectAt(compiled_data.address() + aligned_filler_offset,
+                                compiled_data_size - aligned_filler_offset);
+  }
+
   // Initialize the uncompiled data.
   Tagged<UncompiledData> uncompiled_data = Cast<UncompiledData>(compiled_data);
+
   uncompiled_data->InitAfterBytecodeFlush(
-      inferred_name, start_position, end_position,
+      heap_->isolate(), inferred_name, start_position, end_position,
       [](Tagged<HeapObject> object, ObjectSlot slot,
          Tagged<HeapObject> target) { RecordSlot(object, slot, target); });
 
@@ -3228,6 +3259,12 @@ void MarkCompactCollector::FlushBytecodeFromSFI(
              MarkingHelper::LivenessMode::kAlwaysLive ||
          marking_state_->IsMarked(inferred_name));
   marking_state_->TryMarkAndAccountLiveBytes(uncompiled_data);
+
+#ifdef V8_ENABLE_SANDBOX
+  // Mark the new entry in the trusted pointer table as alive.
+  TrustedPointerTable::Space* space = heap_->trusted_pointer_space();
+  table.Mark(space, self_indirect_pointer_slot.Relaxed_LoadHandle());
+#endif
 
   shared_info->set_uncompiled_data(uncompiled_data);
   DCHECK(!shared_info->is_compiled());
@@ -3249,15 +3286,18 @@ void MarkCompactCollector::ProcessOldCodeCandidates() {
 
     if (!is_bytecode_live) number_of_flushed_sfis++;
 
-    // Now record the slot, which has either been updated to an uncompiled data,
-    // Baseline code or BytecodeArray which is still alive. If the sandbox is
-    // enabled, the slot may be empty though as BytecodeArrays are referenced
-    // through an indirect pointer. In that case, no action is necessary here.
-    ObjectSlot slot =
-        flushing_candidate->RawField(SharedFunctionInfo::kFunctionDataOffset);
+    // Now record the data slots, which have been updated to an uncompiled
+    // data, Baseline code or BytecodeArray which is still alive.
+#ifndef V8_ENABLE_SANDBOX
+    // If the sandbox is enabled, the slot contains an indirect pointer which
+    // does not need to be updated during mark-compact (because the pointer in
+    // the pointer table will be updated), so no action is needed here.
+    ObjectSlot slot = flushing_candidate->RawField(
+        SharedFunctionInfo::kTrustedFunctionDataOffset);
     if (IsHeapObject(*slot)) {
       RecordSlot(flushing_candidate, slot, Cast<HeapObject>(*slot));
     }
+#endif
   }
 
   if (v8_flags.trace_flush_code) {
@@ -3403,20 +3443,11 @@ void MarkCompactCollector::ClearFullMapTransitions() {
   while (local_weak_objects()->transition_arrays_local.Pop(&array)) {
     int num_transitions = array->number_of_entries();
     if (num_transitions > 0) {
-      int first = 0;
-      // Search for the owner of this transition array by scanning over sidestep
-      // transitions.
-      while (first < num_transitions &&
-             TransitionsAccessor::IsSpecialSidestepTransition(
-                 roots, array->GetKey(first))) {
-        first++;
-      }
-      if (first < num_transitions) {
         Tagged<Map> map;
         // The array might contain "undefined" elements because it's not yet
         // filled. Allow it.
-        if (array->GetTargetIfExists(first, isolate, &map)) {
-          DCHECK(!map.is_null());
+        if (array->GetTargetIfExists(0, isolate, &map)) {
+          DCHECK(!map.is_null());  // Weak pointers aren't cleared yet.
           Tagged<Object> constructor_or_back_pointer =
               map->constructor_or_back_pointer();
           if (IsSmi(constructor_or_back_pointer)) {
@@ -3437,7 +3468,6 @@ void MarkCompactCollector::ClearFullMapTransitions() {
           }
         }
       }
-    }
   }
 }
 
@@ -3461,23 +3491,15 @@ bool MarkCompactCollector::TransitionArrayNeedsCompaction(
       }
 #endif
       return false;
-    }
-    Tagged<Map> map;
-    if (transitions->GetTargetIfExists(i, heap_->isolate(), &map)) {
-      if (non_atomic_marking_state_->IsUnmarked(map)) {
+    } else if (non_atomic_marking_state_->IsUnmarked(
+                   TransitionsAccessor::GetTargetFromRaw(raw_target))) {
 #ifdef DEBUG
-        // Targets can only be dead iff this array is fully deserialized.
-        for (int j = 0; j < num_transitions; ++j) {
-          DCHECK(!transitions->GetRawTarget(j).IsSmi());
-        }
-#endif
-        return true;
+      // Targets can only be dead iff this array is fully deserialized.
+      for (int j = 0; j < num_transitions; ++j) {
+        DCHECK(!transitions->GetRawTarget(j).IsSmi());
       }
-    } else {
-      // Cleared entries are used as sentinels in sidestep transitions. In all
-      // other cases the transition array is always compacted.
-      DCHECK(TransitionsAccessor::IsSpecialSidestepTransition(
-          roots, transitions->GetKey(i)));
+#endif
+      return true;
     }
   }
   return false;
@@ -3496,30 +3518,16 @@ bool MarkCompactCollector::CompactTransitionArray(
   int transition_index = 0;
   // Compact all live transitions to the left.
   for (int i = 0; i < num_transitions; ++i) {
-    {
-      Tagged<Map> target;
-      if (transitions->GetTargetIfExists(i, heap_->isolate(), &target)) {
-        if (non_atomic_marking_state_->IsUnmarked(target)) {
-          if (TransitionsAccessor::IsSpecialSidestepTransition(
-                  roots, transitions->GetKey(i))) {
-            // In case of side-step transition the back pointer might not be
-            // equal to the descriptor owner.
-            continue;
-          }
-          if (!descriptors.is_null() &&
-              target->instance_descriptors(heap_->isolate()) == descriptors) {
-            DCHECK(!target->is_prototype_map());
-            descriptors_owner_died = true;
-          }
-          continue;
-        }
-      } else {
-        // In sidestep transitions we use cleared entries as sentinels. Thus we
-        // keep them in the transition array to remember the absence of a
-        // particular sidestep transition.
-        DCHECK(TransitionsAccessor::IsSpecialSidestepTransition(
-            roots, transitions->GetKey(i)));
+    Tagged<Map> target = transitions->GetTarget(i);
+    DCHECK_EQ(target->constructor_or_back_pointer(), map);
+
+    if (non_atomic_marking_state_->IsUnmarked(target)) {
+      if (!descriptors.is_null() &&
+          target->instance_descriptors(heap_->isolate()) == descriptors) {
+        DCHECK(!target->is_prototype_map());
+        descriptors_owner_died = true;
       }
+      continue;
     }
 
     if (i != transition_index) {
@@ -3529,11 +3537,8 @@ bool MarkCompactCollector::CompactTransitionArray(
       RecordSlot(transitions, key_slot, key);
       Tagged<MaybeObject> raw_target = transitions->GetRawTarget(i);
       transitions->SetRawTarget(transition_index, raw_target);
-      if (!raw_target.IsCleared()) {
-        HeapObjectSlot target_slot =
-            transitions->GetTargetSlot(transition_index);
-        RecordSlot(transitions, target_slot, raw_target.GetHeapObject());
-      }
+      HeapObjectSlot target_slot = transitions->GetTargetSlot(transition_index);
+      RecordSlot(transitions, target_slot, raw_target.GetHeapObject());
     }
     transition_index++;
   }
@@ -3703,7 +3708,7 @@ void MarkCompactCollector::ClearTrivialWeakReferences() {
     // as MaybeObjectSlot.
     MaybeObjectSlot location(slot.slot);
     if ((*location).GetHeapObjectIfWeak(&value)) {
-      DCHECK(!IsCell(value));
+      DCHECK(!IsWeakCell(value));
       // Values in RO space have already been filtered, but a non-RO value may
       // have been overwritten by a RO value since marking.
       if (InReadOnlySpace(value) ||
@@ -3730,7 +3735,7 @@ void MarkCompactCollector::FilterNonTrivialWeakReferences() {
     // as MaybeObjectSlot.
     MaybeObjectSlot location(slot.slot);
     if ((*location).GetHeapObjectIfWeak(&value)) {
-      DCHECK(!IsCell(value));
+      DCHECK(!IsWeakCell(value));
       // Values in RO space have already been filtered, but a non-RO value may
       // have been overwritten by a RO value since marking.
       if (InReadOnlySpace(value) ||
@@ -3760,7 +3765,7 @@ void MarkCompactCollector::ClearNonTrivialWeakReferences() {
     // The slot may not have been overwritten since it was filtered, so we can
     // directly read its value.
     Tagged<HeapObject> value = (*slot.slot).GetHeapObjectAssumeWeak();
-    DCHECK(!IsCell(value));
+    DCHECK(!IsWeakCell(value));
     DCHECK(!InReadOnlySpace(value));
     DCHECK(!non_atomic_marking_state_->IsMarked(value));
     DCHECK(!MainMarkingVisitor::IsTrivialWeakReferenceValue(slot.heap_object,
@@ -4079,7 +4084,7 @@ static inline SlotCallbackResult UpdateOldToSharedSlot(
 template <typename TSlot>
 static inline void UpdateStrongSlot(PtrComprCageBase cage_base, TSlot slot) {
   typename TSlot::TObject obj = slot.Relaxed_Load(cage_base);
-#ifdef V8_ENABLE_DIRECT_LOCAL
+#ifdef V8_ENABLE_DIRECT_HANDLE
   if (obj.ptr() == kTaggedNullAddress) return;
 #endif
   DCHECK(!HAS_WEAK_HEAP_OBJECT_TAG(obj.ptr()));
@@ -4092,7 +4097,7 @@ static inline void UpdateStrongSlot(PtrComprCageBase cage_base, TSlot slot) {
 static inline SlotCallbackResult UpdateStrongOldToSharedSlot(
     PtrComprCageBase cage_base, FullMaybeObjectSlot slot) {
   Tagged<MaybeObject> obj = slot.Relaxed_Load(cage_base);
-#ifdef V8_ENABLE_DIRECT_LOCAL
+#ifdef V8_ENABLE_DIRECT_HANDLE
   if (obj.ptr() == kTaggedNullAddress) return REMOVE_SLOT;
 #endif
   DCHECK(!HAS_WEAK_HEAP_OBJECT_TAG(obj.ptr()));
@@ -5378,6 +5383,14 @@ void MarkCompactCollector::UpdatePointersAfterEvacuation() {
     CollectRememberedSetUpdatingItems(&updating_items, heap_->trusted_space());
     CollectRememberedSetUpdatingItems(&updating_items,
                                       heap_->trusted_lo_space());
+    if (heap_->shared_trusted_space()) {
+      CollectRememberedSetUpdatingItems(&updating_items,
+                                        heap_->shared_trusted_space());
+    }
+    if (heap_->shared_trusted_lo_space()) {
+      CollectRememberedSetUpdatingItems(&updating_items,
+                                        heap_->shared_trusted_lo_space());
+    }
 
     // Iterating to space may require a valid body descriptor for e.g.
     // WasmStruct which races with updating a slot in Map. Since to space is

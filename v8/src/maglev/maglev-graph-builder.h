@@ -8,12 +8,12 @@
 #include <cmath>
 #include <iomanip>
 #include <map>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
 #include "src/base/functional.h"
 #include "src/base/logging.h"
-#include "src/base/optional.h"
 #include "src/base/vector.h"
 #include "src/codegen/external-reference.h"
 #include "src/codegen/source-position-table.h"
@@ -175,6 +175,7 @@ enum class ToNumberHint {
   kDisallowToNumber,
   kAssumeSmi,
   kAssumeNumber,
+  kAssumeNumberOrBoolean,
   kAssumeNumberOrOddball
 };
 
@@ -191,6 +192,7 @@ class MaglevGraphBuilder {
       LocalIsolate* local_isolate, MaglevCompilationUnit* compilation_unit,
       Graph* graph, float call_frequency = 1.0f,
       BytecodeOffset caller_bytecode_offset = BytecodeOffset::None(),
+      bool caller_is_inside_loop = false,
       int inlining_id = SourcePosition::kNotInlined,
       MaglevGraphBuilder* parent = nullptr);
 
@@ -264,7 +266,6 @@ class MaglevGraphBuilder {
       source_position_iterator_.Advance();
       UpdateSourceAndBytecodePosition(source_position_iterator_.code_offset());
     }
-
     for (iterator_.SetOffset(entrypoint_); !iterator_.done();
          iterator_.Advance()) {
       local_isolate_->heap()->Safepoint();
@@ -307,8 +308,6 @@ class MaglevGraphBuilder {
   }
 
   Int32Constant* GetInt32Constant(int32_t constant) {
-    // The constant must fit in a Smi, since it could be later tagged in a Phi.
-    DCHECK(Smi::IsValid(constant));
     auto it = graph_->int32().find(constant);
     if (it == graph_->int32().end()) {
       Int32Constant* node = CreateNewConstantNode<Int32Constant>(0, constant);
@@ -319,8 +318,6 @@ class MaglevGraphBuilder {
   }
 
   Uint32Constant* GetUint32Constant(int constant) {
-    // The constant must fit in a Smi, since it could be later tagged in a Phi.
-    DCHECK(Smi::IsValid(constant));
     auto it = graph_->uint32().find(constant);
     if (it == graph_->uint32().end()) {
       Uint32Constant* node = CreateNewConstantNode<Uint32Constant>(0, constant);
@@ -736,6 +733,9 @@ class MaglevGraphBuilder {
     if (V8_UNLIKELY(merge_state != nullptr)) {
       bool preserve_known_node_aspects = in_optimistic_peeling_iteration() &&
                                          loop_headers_to_peel_.Contains(offset);
+      if (merge_state->is_resumable_loop()) {
+        current_for_in_state.enum_cache_indices = nullptr;
+      }
       if (current_block_ != nullptr) {
         DCHECK(!preserve_known_node_aspects);
         // TODO(leszeks): Re-evaluate this DCHECK, we might hit it if the only
@@ -785,6 +785,9 @@ class MaglevGraphBuilder {
         ProcessMergePoint(offset, preserve_known_node_aspects);
       }
 
+      if (merge_state->is_loop()) {
+        BeginLoopEffects(offset);
+      }
       // We pass nullptr for the `predecessor` argument of StartNewBlock because
       // this block is guaranteed to have a merge_state_, and hence to not have
       // a `predecessor_` field.
@@ -1151,6 +1154,7 @@ class MaglevGraphBuilder {
                                 ValueNode* value);
   ValueNode* TryGetParentContext(ValueNode* node);
   void MinimizeContextChainDepth(ValueNode** context, size_t* depth);
+  void EscapeContext();
   void BuildLoadContextSlot(ValueNode* context, size_t depth, int slot_index,
                             ContextSlotMutability slot_mutability);
   void BuildStoreContextSlotHelper(ValueNode* context, size_t depth,
@@ -1353,6 +1357,9 @@ class MaglevGraphBuilder {
 
   ValueNode* GetConstant(compiler::ObjectRef ref);
 
+  ValueNode* GetTrustedConstant(compiler::HeapObjectRef ref,
+                                IndirectPointerTag tag);
+
   ValueNode* GetRegisterInput(Register reg) {
     DCHECK(!graph_->register_inputs().has(reg));
     graph_->register_inputs().set(reg);
@@ -1431,6 +1438,8 @@ class MaglevGraphBuilder {
                                       hint);
   }
 
+  std::optional<int32_t> TryGetInt32Constant(ValueNode* value);
+
   // Get an Int32 representation node whose value is equivalent to the given
   // node.
   //
@@ -1446,6 +1455,9 @@ class MaglevGraphBuilder {
   void EnsureInt32(interpreter::Register reg) {
     EnsureInt32(current_interpreter_frame_.get(reg));
   }
+
+  std::optional<double> TryGetFloat64Constant(ValueNode* value,
+                                              ToNumberHint hint);
 
   // Get a Float64 representation node whose value is equivalent to the given
   // node.
@@ -1549,16 +1561,18 @@ class MaglevGraphBuilder {
         iterator_.GetRegisterOperand(operand_index), hint);
   }
 
-  ValueNode* BuildLoadFixedArrayElement(ValueNode* node, int index) {
-    return AddNewNode<LoadTaggedField>({node},
-                                       FixedArray::OffsetOfElementAt(index));
-  }
-
   template <typename NodeT>
   void SetAccumulator(NodeT* node) {
     // Accumulator stores are equivalent to stores to the virtual accumulator
     // register.
     StoreRegister(interpreter::Register::virtual_accumulator(), node);
+  }
+
+  void ClobberAccumulator() {
+    DCHECK(interpreter::Bytecodes::ClobbersAccumulator(
+        iterator_.current_bytecode()));
+    current_interpreter_frame_.set_accumulator(
+        GetRootConstant(RootIndex::kOptimizedOut));
   }
 
   ValueNode* GetSecondValue(ValueNode* result) {
@@ -1649,6 +1663,12 @@ class MaglevGraphBuilder {
 
   template <typename NodeT>
   void MarkPossibleSideEffect(NodeT* node) {
+    if constexpr (NodeT::kProperties.can_read() ||
+                  NodeT::kProperties.can_deopt() ||
+                  NodeT::kProperties.can_throw()) {
+      unobserved_context_slot_stores_.clear();
+    }
+
     // Don't do anything for nodes without side effects.
     if constexpr (!NodeT::kProperties.can_write()) return;
 
@@ -1662,8 +1682,8 @@ class MaglevGraphBuilder {
 
     if constexpr (IsElementsArrayWrite(Node::opcode_of<NodeT>)) {
       node->ClearElementsProperties(known_node_aspects());
-      if (WithinAnEffectRecordingPeelingIteration()) {
-        GetCurrentPeeledLoopEffects().keys_cleared.insert(
+      if (is_loop_effect_tracking()) {
+        loop_effects_->keys_cleared.insert(
             KnownNodeAspects::LoadedPropertyMapKey::Elements());
       }
     } else if constexpr (!IsSimpleFieldStore(Node::opcode_of<NodeT>) &&
@@ -1673,8 +1693,8 @@ class MaglevGraphBuilder {
       // loaded properties and context slots, and we invalidate these already as
       // part of emitting the store.
       node->ClearUnstableNodeAspects(known_node_aspects());
-      if (WithinAnEffectRecordingPeelingIteration()) {
-        GetCurrentPeeledLoopEffects().unstable_aspects_cleared = true;
+      if (is_loop_effect_tracking()) {
+        loop_effects_->unstable_aspects_cleared = true;
       }
     }
 
@@ -1793,6 +1813,13 @@ class MaglevGraphBuilder {
     static_assert(!ControlNodeT::kProperties.can_throw());
     static_assert(!ControlNodeT::kProperties.can_write());
     current_block_->set_control_node(control_node);
+    // Clear unobserved context slot stores when there is any controlflow.
+    // TODO(olivf): More precision could be achieved by tracking dominating
+    // stores within known_node_aspects. For this we could use a stack of
+    // stores, which we push on split and pop on merge.
+    if (IsConditionalControlNode(Node::opcode_of<ControlNodeT>)) {
+      unobserved_context_slot_stores_.clear();
+    }
 
     BasicBlock* block = current_block_;
     current_block_ = nullptr;
@@ -1916,7 +1943,7 @@ class MaglevGraphBuilder {
   ReduceResult BuildJSArrayBuiltinMapSwitchOnElementsKind(
       ValueNode* receiver, const MapKindsT& map_kinds,
       MaglevSubGraphBuilder& sub_graph,
-      base::Optional<MaglevSubGraphBuilder::Label>& do_return,
+      std::optional<MaglevSubGraphBuilder::Label>& do_return,
       int unique_kind_count, IndexToElementsKindFunc&& index_to_elements_kind,
       BuildKindSpecificFunc&& build_kind_specific);
 
@@ -2070,19 +2097,22 @@ class MaglevGraphBuilder {
       ValueNode* object, const ZoneVector<compiler::MapRef>& transition_sources,
       compiler::MapRef transition_target);
   ReduceResult BuildCompareMaps(
-      ValueNode* heap_object, base::Optional<ValueNode*> object_map,
+      ValueNode* heap_object, std::optional<ValueNode*> object_map,
       base::Vector<const compiler::MapRef> maps,
       MaglevSubGraphBuilder* sub_graph,
-      base::Optional<MaglevSubGraphBuilder::Label>& if_not_matched);
+      std::optional<MaglevSubGraphBuilder::Label>& if_not_matched);
   ReduceResult BuildTransitionElementsKindAndCompareMaps(
       ValueNode* heap_object,
       const ZoneVector<compiler::MapRef>& transition_sources,
       compiler::MapRef transition_target, MaglevSubGraphBuilder* sub_graph,
-      base::Optional<MaglevSubGraphBuilder::Label>& if_not_matched);
+      std::optional<MaglevSubGraphBuilder::Label>& if_not_matched);
   // Emits an unconditional deopt and returns false if the node is a constant
   // that doesn't match the ref.
   ReduceResult BuildCheckValue(ValueNode* node, compiler::ObjectRef ref);
   ReduceResult BuildCheckValue(ValueNode* node, compiler::HeapObjectRef ref);
+
+  ValueNode* BuildConvertHoleToUndefined(ValueNode* node);
+  ReduceResult BuildCheckNotHole(ValueNode* node);
 
   // Checks whether we're invalidating the constness of a const tracking let
   // variable, and if yes, deopts.
@@ -2097,16 +2127,24 @@ class MaglevGraphBuilder {
 
   bool CanTrackObjectChanges(ValueNode* object, int offset);
   bool CanElideWriteBarrier(ValueNode* object, ValueNode* value);
-  void BuildInitializeStoreTaggedField(InlinedAllocation* alloc,
-                                       ValueNode* value, int offset);
+  void BuildInitializeStore(InlinedAllocation* alloc, ValueNode* value,
+                            int offset);
   void TryBuildStoreTaggedFieldToAllocation(ValueNode* object, ValueNode* value,
                                             int offset);
   ValueNode* BuildLoadTaggedField(ValueNode* object, int offset);
-  void BuildStoreTaggedField(ValueNode* object, ValueNode* value, int offset,
-                             StoreTaggedMode store_mode);
+  Node* BuildStoreTaggedField(ValueNode* object, ValueNode* value, int offset,
+                              StoreTaggedMode store_mode);
   void BuildStoreTaggedFieldNoWriteBarrier(ValueNode* object, ValueNode* value,
                                            int offset,
                                            StoreTaggedMode store_mode);
+  void BuildStoreTrustedPointerField(ValueNode* object, ValueNode* value,
+                                     int offset, IndirectPointerTag tag,
+                                     StoreTaggedMode store_mode);
+
+  void TryBuildStoreFixedArrayElementToAllocation(ValueNode* object,
+                                                  ValueNode* value, int index);
+  ValueNode* BuildLoadFixedArrayElement(ValueNode* elements, int index);
+  ValueNode* BuildLoadFixedArrayElement(ValueNode* elements, ValueNode* index);
   void BuildStoreFixedArrayElement(ValueNode* elements, ValueNode* index,
                                    ValueNode* value);
 
@@ -2133,7 +2171,7 @@ class MaglevGraphBuilder {
   compiler::OptionalObjectRef TryFoldLoadConstantDataField(
       compiler::JSObjectRef holder,
       compiler::PropertyAccessInfo const& access_info);
-  base::Optional<Float64> TryFoldLoadConstantDoubleField(
+  std::optional<Float64> TryFoldLoadConstantDoubleField(
       compiler::JSObjectRef holder,
       compiler::PropertyAccessInfo const& access_info);
 
@@ -2148,19 +2186,29 @@ class MaglevGraphBuilder {
       ValueNode* lookup_start_object);
   ReduceResult TryBuildPropertySetterCall(
       compiler::PropertyAccessInfo const& access_info, ValueNode* receiver,
-      ValueNode* value);
+      ValueNode* lookup_start_object, ValueNode* value);
+  bool TryBuildGetKeyedPropertyWithEnumeratedKey(
+      ValueNode* object, const compiler::FeedbackSource& feedback_source,
+      const compiler::ProcessedFeedback& processed_feedback);
+  void BuildGetKeyedProperty(
+      ValueNode* object, const compiler::FeedbackSource& feedback_source,
+      const compiler::ProcessedFeedback& processed_feedback);
 
   ValueNode* BuildLoadFixedArrayLength(ValueNode* fixed_array);
   ValueNode* BuildLoadJSArrayLength(ValueNode* js_array,
                                     NodeType length_type = NodeType::kSmi);
   ValueNode* BuildLoadElements(ValueNode* object);
 
+  ReduceResult TryBuildCheckInt32Condition(ValueNode* lhs, ValueNode* rhs,
+                                           AssertCondition condition,
+                                           DeoptimizeReason reason);
+
   ReduceResult TryBuildPropertyLoad(
       ValueNode* receiver, ValueNode* lookup_start_object,
       compiler::NameRef name, compiler::PropertyAccessInfo const& access_info);
   ReduceResult TryBuildPropertyStore(
-      ValueNode* receiver, compiler::NameRef name,
-      compiler::PropertyAccessInfo const& access_info,
+      ValueNode* receiver, ValueNode* lookup_start_object,
+      compiler::NameRef name, compiler::PropertyAccessInfo const& access_info,
       compiler::AccessMode access_mode);
   ReduceResult TryBuildPropertyAccess(
       ValueNode* receiver, ValueNode* lookup_start_object,
@@ -2238,6 +2286,7 @@ class MaglevGraphBuilder {
                            compiler::AccessMode access_mode);
   ReduceResult TryReuseKnownPropertyLoad(ValueNode* lookup_start_object,
                                          compiler::NameRef name);
+  ValueNode* BuildLoadStringLength(ValueNode* string);
 
   // Converts the input node to a representation that's valid to store into an
   // array with elements kind |kind|.
@@ -2284,10 +2333,10 @@ class MaglevGraphBuilder {
   VirtualObject* CreateContext(compiler::MapRef map, int length,
                                compiler::ScopeInfoRef scope_info,
                                ValueNode* previous_context,
-                               base::Optional<ValueNode*> extension = {});
+                               std::optional<ValueNode*> extension = {});
   VirtualObject* CreateArgumentsObject(compiler::MapRef map, ValueNode* length,
                                        ValueNode* elements,
-                                       base::Optional<ValueNode*> callee = {});
+                                       std::optional<ValueNode*> callee = {});
   VirtualObject* CreateMappedArgumentsElements(compiler::MapRef map,
                                                int mapped_count,
                                                ValueNode* context,
@@ -2332,7 +2381,7 @@ class MaglevGraphBuilder {
 
   ReduceResult TryBuildFastCreateObjectOrArrayLiteral(
       const compiler::LiteralFeedback& feedback);
-  base::Optional<VirtualObject*> TryReadBoilerplateForFastLiteral(
+  std::optional<VirtualObject*> TryReadBoilerplateForFastLiteral(
       compiler::JSObjectRef boilerplate, AllocationType allocation,
       int max_depth, int* max_properties);
 
@@ -2368,9 +2417,11 @@ class MaglevGraphBuilder {
   bool TryReduceCompareEqualAgainstConstant();
 
   template <Operation kOperation>
-  ValueNode* TryFoldInt32BinaryOperation(ValueNode* left, ValueNode* right);
+  ReduceResult TryFoldInt32UnaryOperation(ValueNode* value);
   template <Operation kOperation>
-  ValueNode* TryFoldInt32BinaryOperation(ValueNode* left, int right);
+  ReduceResult TryFoldInt32BinaryOperation(ValueNode* left, ValueNode* right);
+  template <Operation kOperation>
+  ReduceResult TryFoldInt32BinaryOperation(ValueNode* left, int32_t cst_right);
 
   template <Operation kOperation>
   void BuildInt32UnaryOperationNode();
@@ -2383,6 +2434,19 @@ class MaglevGraphBuilder {
   void BuildTruncatingInt32BinaryOperationNodeForToNumber(ToNumberHint hint);
   template <Operation kOperation>
   void BuildTruncatingInt32BinarySmiOperationNodeForToNumber(ToNumberHint hint);
+
+  template <Operation kOperation>
+  ReduceResult TryFoldFloat64UnaryOperationForToNumber(ToNumberHint hint,
+                                                       ValueNode* value);
+  template <Operation kOperation>
+  ReduceResult TryFoldFloat64BinaryOperationForToNumber(ToNumberHint hint,
+                                                        ValueNode* left,
+                                                        ValueNode* right);
+  template <Operation kOperation>
+  ReduceResult TryFoldFloat64BinaryOperationForToNumber(ToNumberHint hint,
+                                                        ValueNode* left,
+                                                        double cst_right);
+
   template <Operation kOperation>
   void BuildFloat64UnaryOperationNodeForToNumber(ToNumberHint hint);
   template <Operation kOperation>
@@ -2405,6 +2469,8 @@ class MaglevGraphBuilder {
   ReduceResult TryReduceTypeOf(ValueNode* value, const Function& GetResult);
   ReduceResult TryReduceTypeOf(ValueNode* value);
 
+  void BeginLoopEffects(int loop_header);
+  void EndLoopEffects(int loop_header);
   void MergeIntoFrameState(BasicBlock* block, int target);
   void MergeDeadIntoFrameState(int target);
   void MergeDeadLoopIntoFrameState(int target);
@@ -2608,7 +2674,7 @@ class MaglevGraphBuilder {
     const int max_peelings = v8_flags.maglev_optimistic_peeled_loops ? 2 : 1;
     // We count jumps from peeled loops to outside of the loop twice.
     bool is_loop_peeling_iteration = false;
-    base::Optional<int> peeled_loop_end;
+    std::optional<int> peeled_loop_end;
     interpreter::BytecodeArrayIterator iterator(bytecode().object());
     for (iterator.SetOffset(entrypoint_); !iterator.done();
          iterator.Advance()) {
@@ -2722,6 +2788,23 @@ class MaglevGraphBuilder {
     return is_inline() && (argument_count() != parameter_count());
   }
 
+  bool IsInsideLoop() const {
+    if (caller_is_inside_loop_) return true;
+    int loop_header_offset =
+        bytecode_analysis().GetLoopOffsetFor(iterator_.current_offset());
+    if (loop_header_offset != -1) {
+      const compiler::LoopInfo& loop_info =
+          bytecode_analysis().GetLoopInfoFor(loop_header_offset);
+      if (loop_info.parent_offset() == -1) {
+        // This is the outmost loop, if we're actually inside the peel, we are
+        // not really in a loop.
+        return !in_peeled_iteration() || in_optimistic_peeling_iteration();
+      }
+      return true;
+    }
+    return false;
+  }
+
   // The fake offset used as a target for all exits of an inlined function.
   int inline_exit_offset() const {
     DCHECK(is_inline());
@@ -2749,7 +2832,7 @@ class MaglevGraphBuilder {
   bool any_peeled_loop_ = false;
   bool allow_loop_peeling_;
 
-  bool in_peeled_iteration() {
+  bool in_peeled_iteration() const {
     DCHECK_GE(peeled_iteration_count_, 0);
     return peeled_iteration_count_ > 0;
   }
@@ -2758,30 +2841,13 @@ class MaglevGraphBuilder {
   // is the optimistic iteration. At the end we try to compile the JumpLoop and
   // only proceed with the fallback iteration 0, if the loop state is
   // incompatible with the loop end state.
-  bool in_optimistic_peeling_iteration() {
+  bool in_optimistic_peeling_iteration() const {
     return v8_flags.maglev_optimistic_peeled_loops &&
            peeled_iteration_count_ == 1;
   }
-
-  // When loop SPeeling is enabled then peeling iteration 2 (counting backwards)
-  // is used to record effects.
-  bool in_effect_recording_peeling_iteration() {
-    return v8_flags.maglev_optimistic_peeled_loops &&
-           peeled_iteration_count_ > 1;
-  }
-  bool WithinAnEffectRecordingPeelingIteration() {
-    if (in_effect_recording_peeling_iteration()) return true;
-    if (is_inline()) return parent_->WithinAnEffectRecordingPeelingIteration();
-    return false;
-  }
-  LoopEffects& GetCurrentPeeledLoopEffects() {
-    DCHECK(WithinAnEffectRecordingPeelingIteration());
-    if (!in_peeled_iteration()) {
-      return parent_->GetCurrentPeeledLoopEffects();
-    }
-    return peeled_loop_effects_;
-  }
-  LoopEffects peeled_loop_effects_;
+  bool is_loop_effect_tracking() { return loop_effects_; }
+  LoopEffects* loop_effects_ = nullptr;
+  ZoneDeque<LoopEffects> loop_effects_stack_;
 
   // When processing the peeled iteration of a loop, we need to reset the
   // decremented predecessor counts inside of the loop before processing the
@@ -2794,8 +2860,8 @@ class MaglevGraphBuilder {
   // Current block information.
   bool in_prologue_ = true;
   BasicBlock* current_block_ = nullptr;
-  base::Optional<InterpretedDeoptFrame> entry_stack_check_frame_;
-  base::Optional<DeoptFrame> latest_checkpointed_frame_;
+  std::optional<InterpretedDeoptFrame> entry_stack_check_frame_;
+  std::optional<DeoptFrame> latest_checkpointed_frame_;
   SourcePosition current_source_position_;
   struct ForInState {
     ValueNode* receiver = nullptr;
@@ -2820,6 +2886,7 @@ class MaglevGraphBuilder {
 
   base::Vector<ValueNode*> inlined_arguments_;
   BytecodeOffset caller_bytecode_offset_;
+  bool caller_is_inside_loop_;
   ValueNode* inlined_new_target_ = nullptr;
 
   // Bytecode offset at which compilation should start.
@@ -2847,7 +2914,6 @@ class MaglevGraphBuilder {
   std::unordered_set<Node*> new_nodes_;
 #endif
 
- private:
   // Some helpers for CSE
 
   static size_t fast_hash_combine(size_t seed, size_t h) {
@@ -2901,6 +2967,16 @@ class MaglevGraphBuilder {
   bool CanSpeculateCall() const {
     return current_speculation_feedback_.IsValid();
   }
+
+  inline void MarkNodeDead(Node* node) {
+    for (int i = 0; i < node->input_count(); ++i) {
+      node->input(i).clear();
+    }
+    node->OverwriteWith(Opcode::kDead);
+  }
+
+  ZoneUnorderedMap<KnownNodeAspects::LoadedContextSlotsKey, Node*>
+      unobserved_context_slot_stores_;
 };
 
 }  // namespace maglev

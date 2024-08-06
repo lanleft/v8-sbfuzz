@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #include <functional>
+#include <optional>
 
 #include "include/v8-internal.h"
 #include "src/base/macros.h"
@@ -1642,6 +1643,8 @@ void CodeStubAssembler::BranchIfToBooleanIsTrue(TNode<Object> value,
   // Undefined is the first root, so it's the smallest possible pointer
   // value, which means we don't have to subtract it for the range check.
   ReadOnlyRoots roots(isolate());
+  static_assert(StaticReadOnlyRoot::kFirstAllocatedRoot ==
+                StaticReadOnlyRoot::kUndefinedValue);
   static_assert(StaticReadOnlyRoot::kUndefinedValue + sizeof(Undefined) ==
                 StaticReadOnlyRoot::kNullValue);
   static_assert(StaticReadOnlyRoot::kNullValue + sizeof(Null) ==
@@ -1951,6 +1954,11 @@ TNode<RawPtrT> CodeStubAssembler::LoadCodeEntrypointViaCodePointerField(
     CodeEntrypointTag tag) {
   TNode<IndirectPointerHandleT> handle =
       LoadObjectField<IndirectPointerHandleT>(object, field_offset);
+  return LoadCodeEntryFromIndirectPointerHandle(handle, tag);
+}
+
+TNode<RawPtrT> CodeStubAssembler::LoadCodeEntryFromIndirectPointerHandle(
+    TNode<IndirectPointerHandleT> handle, CodeEntrypointTag tag) {
   TNode<RawPtrT> table =
       ExternalConstant(ExternalReference::code_pointer_table_address());
   TNode<UintPtrT> offset = ComputeCodePointerTableEntryOffset(handle);
@@ -1960,8 +1968,8 @@ TNode<RawPtrT> CodeStubAssembler::LoadCodeEntrypointViaCodePointerField(
   }
   return UncheckedCast<RawPtrT>(UncheckedCast<WordT>(entry));
 }
-#endif  // V8_ENABLE_SANDBOX
 
+#endif  // V8_ENABLE_SANDBOX
 
 TNode<Object> CodeStubAssembler::LoadFromParentFrame(int offset) {
   TNode<RawPtrT> frame_pointer = LoadParentFramePointer();
@@ -2033,7 +2041,7 @@ TNode<Uint16T> CodeStubAssembler::LoadInstanceType(TNode<HeapObject> object) {
 TNode<BoolT> CodeStubAssembler::HasInstanceType(TNode<HeapObject> object,
                                                 InstanceType instance_type) {
   if (V8_STATIC_ROOTS_BOOL) {
-    if (base::Optional<RootIndex> expected_map =
+    if (std::optional<RootIndex> expected_map =
             InstanceTypeChecker::UniqueMapOfInstanceType(instance_type)) {
       TNode<Map> map = LoadMap(object);
       return TaggedEqual(map, LoadRoot(*expected_map));
@@ -2045,7 +2053,7 @@ TNode<BoolT> CodeStubAssembler::HasInstanceType(TNode<HeapObject> object,
 TNode<BoolT> CodeStubAssembler::DoesntHaveInstanceType(
     TNode<HeapObject> object, InstanceType instance_type) {
   if (V8_STATIC_ROOTS_BOOL) {
-    if (base::Optional<RootIndex> expected_map =
+    if (std::optional<RootIndex> expected_map =
             InstanceTypeChecker::UniqueMapOfInstanceType(instance_type)) {
       TNode<Map> map = LoadMap(object);
       return TaggedNotEqual(map, LoadRoot(*expected_map));
@@ -3451,11 +3459,9 @@ TNode<Code> CodeStubAssembler::LoadJSFunctionCode(TNode<JSFunction> function) {
   return LoadCodePointerFromObject(function, JSFunction::kCodeOffset);
 }
 
-TNode<Object> CodeStubAssembler::LoadSharedFunctionInfoData(
+TNode<Object> CodeStubAssembler::LoadSharedFunctionInfoTrustedData(
     TNode<SharedFunctionInfo> sfi) {
 #ifdef V8_ENABLE_SANDBOX
-  // Return the trusted_function_data part if it is non-empty, otherwise the
-  // regular function_data.
   TNode<IndirectPointerHandleT> trusted_data_handle =
       LoadObjectField<IndirectPointerHandleT>(
           sfi, SharedFunctionInfo::kTrustedFunctionDataOffset);
@@ -3463,42 +3469,40 @@ TNode<Object> CodeStubAssembler::LoadSharedFunctionInfoData(
   return Select<Object>(
       Word32Equal(trusted_data_handle,
                   Int32Constant(kNullIndirectPointerHandle)),
-      [=] {
-        return LoadObjectField<Object>(sfi,
-                                       SharedFunctionInfo::kFunctionDataOffset);
-      },
+      [=] { return SmiConstant(0); },
       [=] {
         return ResolveIndirectPointerHandle(trusted_data_handle,
                                             kUnknownIndirectPointerTag);
       });
 #else
-  return LoadObjectField<Object>(sfi, SharedFunctionInfo::kFunctionDataOffset);
+  return LoadObjectField<Object>(
+      sfi, SharedFunctionInfo::kTrustedFunctionDataOffset);
 #endif
+}
+
+TNode<Object> CodeStubAssembler::LoadSharedFunctionInfoUntrustedData(
+    TNode<SharedFunctionInfo> sfi) {
+  return LoadObjectField<Object>(
+      sfi, SharedFunctionInfo::kUntrustedFunctionDataOffset);
 }
 
 TNode<BoolT> CodeStubAssembler::SharedFunctionInfoHasBaselineCode(
     TNode<SharedFunctionInfo> sfi) {
-  TNode<Object> data = LoadSharedFunctionInfoData(sfi);
+  TNode<Object> data = LoadSharedFunctionInfoTrustedData(sfi);
   return TaggedIsCode(data);
 }
 
 TNode<Smi> CodeStubAssembler::LoadSharedFunctionInfoBuiltinId(
     TNode<SharedFunctionInfo> sfi) {
-  return LoadObjectField<Smi>(sfi, SharedFunctionInfo::kFunctionDataOffset);
+  return LoadObjectField<Smi>(sfi,
+                              SharedFunctionInfo::kUntrustedFunctionDataOffset);
 }
 
 TNode<BytecodeArray> CodeStubAssembler::LoadSharedFunctionInfoBytecodeArray(
     TNode<SharedFunctionInfo> sfi) {
-#ifdef V8_ENABLE_SANDBOX
-  // In this case, the bytecode array must be referenced via a trusted pointer.
-  // Loading it from the tagged function_data field would not be safe.
   TNode<HeapObject> function_data = LoadTrustedPointerFromObject(
       sfi, SharedFunctionInfo::kTrustedFunctionDataOffset,
       kUnknownIndirectPointerTag);
-#else
-  TNode<HeapObject> function_data =
-      LoadObjectField<HeapObject>(sfi, SharedFunctionInfo::kFunctionDataOffset);
-#endif  // V8_ENABLE_SANDBOX
 
   TVARIABLE(HeapObject, var_result, function_data);
 
@@ -3541,14 +3545,9 @@ TNode<BytecodeArray> CodeStubAssembler::LoadSharedFunctionInfoBytecodeArray(
 TNode<WasmFunctionData>
 CodeStubAssembler::LoadSharedFunctionInfoWasmFunctionData(
     TNode<SharedFunctionInfo> sfi) {
-#ifdef V8_ENABLE_SANDBOX
   return CAST(LoadTrustedPointerFromObject(
       sfi, SharedFunctionInfo::kTrustedFunctionDataOffset,
       kWasmFunctionDataIndirectPointerTag));
-#else
-  return LoadObjectField<WasmFunctionData>(
-      sfi, SharedFunctionInfo::kFunctionDataOffset);
-#endif  // V8_ENABLE_SANDBOX
 }
 
 TNode<WasmExportedFunctionData>
@@ -3663,6 +3662,16 @@ void CodeStubAssembler::StoreTrustedPointerFieldNoWriteBarrier(
 #else
   StoreObjectFieldNoWriteBarrier(object, offset, value);
 #endif  // V8_ENABLE_SANDBOX
+}
+
+void CodeStubAssembler::ClearTrustedPointerField(TNode<HeapObject> object,
+                                                 int offset) {
+#ifdef V8_ENABLE_SANDBOX
+  StoreObjectFieldNoWriteBarrier(object, offset,
+                                 Uint32Constant(kNullTrustedPointerHandle));
+#else
+  StoreObjectFieldNoWriteBarrier(object, offset, SmiConstant(0));
+#endif
 }
 
 void CodeStubAssembler::UnsafeStoreObjectFieldNoWriteBarrier(
@@ -4533,8 +4542,8 @@ TNode<OrderedHashMap> CodeStubAssembler::AllocateOrderedHashMap() {
 }
 
 TNode<JSObject> CodeStubAssembler::AllocateJSObjectFromMap(
-    TNode<Map> map, base::Optional<TNode<HeapObject>> properties,
-    base::Optional<TNode<FixedArray>> elements, AllocationFlags flags,
+    TNode<Map> map, std::optional<TNode<HeapObject>> properties,
+    std::optional<TNode<FixedArray>> elements, AllocationFlags flags,
     SlackTrackingMode slack_tracking_mode) {
   CSA_DCHECK(this, Word32BinaryNot(IsJSFunctionMap(map)));
   CSA_DCHECK(this, Word32BinaryNot(InstanceTypeEqual(LoadMapInstanceType(map),
@@ -4550,8 +4559,8 @@ TNode<JSObject> CodeStubAssembler::AllocateJSObjectFromMap(
 
 void CodeStubAssembler::InitializeJSObjectFromMap(
     TNode<HeapObject> object, TNode<Map> map, TNode<IntPtrT> instance_size,
-    base::Optional<TNode<HeapObject>> properties,
-    base::Optional<TNode<FixedArray>> elements,
+    std::optional<TNode<HeapObject>> properties,
+    std::optional<TNode<FixedArray>> elements,
     SlackTrackingMode slack_tracking_mode) {
   // This helper assumes that the object is in new-space, as guarded by the
   // check in AllocatedJSObjectFromMap.
@@ -4694,7 +4703,7 @@ TNode<BoolT> CodeStubAssembler::IsValidFastJSArrayCapacity(
 
 TNode<JSArray> CodeStubAssembler::AllocateJSArray(
     TNode<Map> array_map, TNode<FixedArrayBase> elements, TNode<Smi> length,
-    base::Optional<TNode<AllocationSite>> allocation_site,
+    std::optional<TNode<AllocationSite>> allocation_site,
     int array_header_size) {
   Comment("begin allocation of JSArray passing in elements");
   CSA_SLOW_DCHECK(this, TaggedIsPositiveSmi(length));
@@ -4755,7 +4764,7 @@ TNode<IntPtrT> CodeStubAssembler::AlignToAllocationAlignment(
 std::pair<TNode<JSArray>, TNode<FixedArrayBase>>
 CodeStubAssembler::AllocateUninitializedJSArrayWithElements(
     ElementsKind kind, TNode<Map> array_map, TNode<Smi> length,
-    base::Optional<TNode<AllocationSite>> allocation_site,
+    std::optional<TNode<AllocationSite>> allocation_site,
     TNode<IntPtrT> capacity, AllocationFlags allocation_flags,
     int array_header_size) {
   Comment("begin allocation of JSArray with elements");
@@ -4863,7 +4872,7 @@ CodeStubAssembler::AllocateUninitializedJSArrayWithElements(
 
 TNode<JSArray> CodeStubAssembler::AllocateUninitializedJSArray(
     TNode<Map> array_map, TNode<Smi> length,
-    base::Optional<TNode<AllocationSite>> allocation_site,
+    std::optional<TNode<AllocationSite>> allocation_site,
     TNode<IntPtrT> size_in_bytes) {
   CSA_SLOW_DCHECK(this, TaggedIsPositiveSmi(length));
 
@@ -4888,7 +4897,7 @@ TNode<JSArray> CodeStubAssembler::AllocateUninitializedJSArray(
 
 TNode<JSArray> CodeStubAssembler::AllocateJSArray(
     ElementsKind kind, TNode<Map> array_map, TNode<IntPtrT> capacity,
-    TNode<Smi> length, base::Optional<TNode<AllocationSite>> allocation_site,
+    TNode<Smi> length, std::optional<TNode<AllocationSite>> allocation_site,
     AllocationFlags allocation_flags) {
   CSA_SLOW_DCHECK(this, TaggedIsPositiveSmi(length));
 
@@ -4925,19 +4934,19 @@ TNode<JSArray> CodeStubAssembler::ExtractFastJSArray(TNode<Context> context,
   TNode<Map> array_map = LoadJSArrayElementsMap(elements_kind, native_context);
 
   TNode<FixedArrayBase> new_elements = ExtractFixedArray(
-      LoadElements(array), base::Optional<TNode<BInt>>(begin),
-      base::Optional<TNode<BInt>>(count),
-      base::Optional<TNode<BInt>>(base::nullopt),
+      LoadElements(array), std::optional<TNode<BInt>>(begin),
+      std::optional<TNode<BInt>>(count),
+      std::optional<TNode<BInt>>(std::nullopt),
       ExtractFixedArrayFlag::kAllFixedArrays, nullptr, elements_kind);
 
   TNode<JSArray> result = AllocateJSArray(
-      array_map, new_elements, ParameterToTagged(count), base::nullopt);
+      array_map, new_elements, ParameterToTagged(count), std::nullopt);
   return result;
 }
 
 TNode<JSArray> CodeStubAssembler::CloneFastJSArray(
     TNode<Context> context, TNode<JSArray> array,
-    base::Optional<TNode<AllocationSite>> allocation_site,
+    std::optional<TNode<AllocationSite>> allocation_site,
     HoleConversionMode convert_holes) {
   // TODO(dhai): we should be able to assert IsFastJSArray(array) here, but this
   // function is also used to copy boilerplates even when the no-elements
@@ -4962,9 +4971,9 @@ TNode<JSArray> CodeStubAssembler::CloneFastJSArray(
   // Simple extraction that preserves holes.
   new_elements = ExtractFixedArray(
       LoadElements(array),
-      base::Optional<TNode<BInt>>(IntPtrOrSmiConstant<BInt>(0)),
-      base::Optional<TNode<BInt>>(TaggedToParameter<BInt>(CAST(length))),
-      base::Optional<TNode<BInt>>(base::nullopt),
+      std::optional<TNode<BInt>>(IntPtrOrSmiConstant<BInt>(0)),
+      std::optional<TNode<BInt>>(TaggedToParameter<BInt>(CAST(length))),
+      std::optional<TNode<BInt>>(std::nullopt),
       ExtractFixedArrayFlag::kAllFixedArraysDontCopyCOW, nullptr,
       var_elements_kind.value());
   var_new_elements = new_elements;
@@ -4982,9 +4991,9 @@ TNode<JSArray> CodeStubAssembler::CloneFastJSArray(
     // ExtractFixedArrayFlag::kDontCopyCOW.
     new_elements = ExtractFixedArray(
         LoadElements(array),
-        base::Optional<TNode<BInt>>(IntPtrOrSmiConstant<BInt>(0)),
-        base::Optional<TNode<BInt>>(TaggedToParameter<BInt>(CAST(length))),
-        base::Optional<TNode<BInt>>(base::nullopt),
+        std::optional<TNode<BInt>>(IntPtrOrSmiConstant<BInt>(0)),
+        std::optional<TNode<BInt>>(TaggedToParameter<BInt>(CAST(length))),
+        std::optional<TNode<BInt>>(std::nullopt),
         ExtractFixedArrayFlag::kAllFixedArrays, &var_holes_converted);
     var_new_elements = new_elements;
     // If the array type didn't change, use the original elements kind.
@@ -5020,7 +5029,7 @@ TNode<JSArray> CodeStubAssembler::CloneFastJSArray(
 template <typename TIndex>
 TNode<FixedArrayBase> CodeStubAssembler::AllocateFixedArray(
     ElementsKind kind, TNode<TIndex> capacity, AllocationFlags flags,
-    base::Optional<TNode<Map>> fixed_array_map) {
+    std::optional<TNode<Map>> fixed_array_map) {
   static_assert(
       std::is_same<TIndex, Smi>::value || std::is_same<TIndex, IntPtrT>::value,
       "Only Smi or IntPtrT capacity is allowed");
@@ -5081,7 +5090,7 @@ TNode<FixedArrayBase> CodeStubAssembler::AllocateFixedArray(
 template V8_EXPORT_PRIVATE TNode<FixedArrayBase>
     CodeStubAssembler::AllocateFixedArray<IntPtrT>(ElementsKind, TNode<IntPtrT>,
                                                    AllocationFlags,
-                                                   base::Optional<TNode<Map>>);
+                                                   std::optional<TNode<Map>>);
 
 template <typename TIndex>
 TNode<FixedArray> CodeStubAssembler::ExtractToFixedArray(
@@ -5089,7 +5098,7 @@ TNode<FixedArray> CodeStubAssembler::ExtractToFixedArray(
     TNode<TIndex> capacity, TNode<Map> source_map, ElementsKind from_kind,
     AllocationFlags allocation_flags, ExtractFixedArrayFlags extract_flags,
     HoleConversionMode convert_holes, TVariable<BoolT>* var_holes_converted,
-    base::Optional<TNode<Int32T>> source_elements_kind) {
+    std::optional<TNode<Int32T>> source_elements_kind) {
   static_assert(
       std::is_same<TIndex, Smi>::value || std::is_same<TIndex, IntPtrT>::value,
       "Only Smi or IntPtrT first, count, and capacity are allowed");
@@ -5271,10 +5280,10 @@ TNode<FixedArrayBase> CodeStubAssembler::ExtractFixedDoubleArrayFillingHoles(
 
 template <typename TIndex>
 TNode<FixedArrayBase> CodeStubAssembler::ExtractFixedArray(
-    TNode<FixedArrayBase> source, base::Optional<TNode<TIndex>> first,
-    base::Optional<TNode<TIndex>> count, base::Optional<TNode<TIndex>> capacity,
+    TNode<FixedArrayBase> source, std::optional<TNode<TIndex>> first,
+    std::optional<TNode<TIndex>> count, std::optional<TNode<TIndex>> capacity,
     ExtractFixedArrayFlags extract_flags, TVariable<BoolT>* var_holes_converted,
-    base::Optional<TNode<Int32T>> source_elements_kind) {
+    std::optional<TNode<Int32T>> source_elements_kind) {
   static_assert(
       std::is_same<TIndex, Smi>::value || std::is_same<TIndex, IntPtrT>::value,
       "Only Smi or IntPtrT first, count, and capacity are allowed");
@@ -5369,15 +5378,15 @@ TNode<FixedArrayBase> CodeStubAssembler::ExtractFixedArray(
 
 template V8_EXPORT_PRIVATE TNode<FixedArrayBase>
 CodeStubAssembler::ExtractFixedArray<Smi>(
-    TNode<FixedArrayBase>, base::Optional<TNode<Smi>>,
-    base::Optional<TNode<Smi>>, base::Optional<TNode<Smi>>,
-    ExtractFixedArrayFlags, TVariable<BoolT>*, base::Optional<TNode<Int32T>>);
+    TNode<FixedArrayBase>, std::optional<TNode<Smi>>, std::optional<TNode<Smi>>,
+    std::optional<TNode<Smi>>, ExtractFixedArrayFlags, TVariable<BoolT>*,
+    std::optional<TNode<Int32T>>);
 
 template V8_EXPORT_PRIVATE TNode<FixedArrayBase>
 CodeStubAssembler::ExtractFixedArray<IntPtrT>(
-    TNode<FixedArrayBase>, base::Optional<TNode<IntPtrT>>,
-    base::Optional<TNode<IntPtrT>>, base::Optional<TNode<IntPtrT>>,
-    ExtractFixedArrayFlags, TVariable<BoolT>*, base::Optional<TNode<Int32T>>);
+    TNode<FixedArrayBase>, std::optional<TNode<IntPtrT>>,
+    std::optional<TNode<IntPtrT>>, std::optional<TNode<IntPtrT>>,
+    ExtractFixedArrayFlags, TVariable<BoolT>*, std::optional<TNode<Int32T>>);
 
 void CodeStubAssembler::InitializePropertyArrayLength(
     TNode<PropertyArray> property_array, TNode<IntPtrT> length) {
@@ -6005,9 +6014,9 @@ void CodeStubAssembler::CopyPropertyArrayValues(TNode<HeapObject> from_array,
 TNode<FixedArrayBase> CodeStubAssembler::CloneFixedArray(
     TNode<FixedArrayBase> source, ExtractFixedArrayFlags flags) {
   return ExtractFixedArray(
-      source, base::Optional<TNode<BInt>>(IntPtrOrSmiConstant<BInt>(0)),
-      base::Optional<TNode<BInt>>(base::nullopt),
-      base::Optional<TNode<BInt>>(base::nullopt), flags);
+      source, std::optional<TNode<BInt>>(IntPtrOrSmiConstant<BInt>(0)),
+      std::optional<TNode<BInt>>(std::nullopt),
+      std::optional<TNode<BInt>>(std::nullopt), flags);
 }
 
 template <>
@@ -7086,9 +7095,9 @@ void CodeStubAssembler::ThrowIfNotCallable(TNode<Context> context,
 
 void CodeStubAssembler::ThrowRangeError(TNode<Context> context,
                                         MessageTemplate message,
-                                        base::Optional<TNode<Object>> arg0,
-                                        base::Optional<TNode<Object>> arg1,
-                                        base::Optional<TNode<Object>> arg2) {
+                                        std::optional<TNode<Object>> arg0,
+                                        std::optional<TNode<Object>> arg1,
+                                        std::optional<TNode<Object>> arg2) {
   TNode<Smi> template_index = SmiConstant(static_cast<int>(message));
   if (!arg0) {
     CallRuntime(Runtime::kThrowRangeError, context, template_index);
@@ -7107,18 +7116,18 @@ void CodeStubAssembler::ThrowRangeError(TNode<Context> context,
 void CodeStubAssembler::ThrowTypeError(TNode<Context> context,
                                        MessageTemplate message,
                                        char const* arg0, char const* arg1) {
-  base::Optional<TNode<Object>> arg0_node;
+  std::optional<TNode<Object>> arg0_node;
   if (arg0) arg0_node = StringConstant(arg0);
-  base::Optional<TNode<Object>> arg1_node;
+  std::optional<TNode<Object>> arg1_node;
   if (arg1) arg1_node = StringConstant(arg1);
   ThrowTypeError(context, message, arg0_node, arg1_node);
 }
 
 void CodeStubAssembler::ThrowTypeError(TNode<Context> context,
                                        MessageTemplate message,
-                                       base::Optional<TNode<Object>> arg0,
-                                       base::Optional<TNode<Object>> arg1,
-                                       base::Optional<TNode<Object>> arg2) {
+                                       std::optional<TNode<Object>> arg0,
+                                       std::optional<TNode<Object>> arg1,
+                                       std::optional<TNode<Object>> arg2) {
   TNode<Smi> template_index = SmiConstant(static_cast<int>(message));
   if (!arg0) {
     CallRuntime(Runtime::kThrowTypeError, context, template_index);
@@ -7478,6 +7487,74 @@ TNode<BoolT> CodeStubAssembler::IsJSReceiverInstanceType(
                                  Int32Constant(FIRST_JS_RECEIVER_TYPE));
 }
 
+TNode<BoolT> CodeStubAssembler::IsSequentialStringMap(TNode<Map> map) {
+#if V8_STATIC_ROOTS_BOOL
+  // Both sequential string maps are allocated at the start of the read only
+  // heap, so we can use a single comparison to check for them.
+  static_assert(
+      InstanceTypeChecker::kUniqueMapRangeOfStringType::kSeqString.first == 0);
+  return IsInRange(
+      TruncateIntPtrToInt32(BitcastTaggedToWord(map)),
+      InstanceTypeChecker::kUniqueMapRangeOfStringType::kSeqString.first,
+      InstanceTypeChecker::kUniqueMapRangeOfStringType::kSeqString.second);
+#else
+  return IsSequentialStringInstanceType(LoadMapInstanceType(map));
+#endif
+}
+
+TNode<BoolT> CodeStubAssembler::IsExternalStringMap(TNode<Map> map) {
+#if V8_STATIC_ROOTS_BOOL
+  return IsInRange(
+      TruncateIntPtrToInt32(BitcastTaggedToWord(map)),
+      InstanceTypeChecker::kUniqueMapRangeOfStringType::kExternalString.first,
+      InstanceTypeChecker::kUniqueMapRangeOfStringType::kExternalString.second);
+#else
+  return IsExternalStringInstanceType(LoadMapInstanceType(map));
+#endif
+}
+
+TNode<BoolT> CodeStubAssembler::IsUncachedExternalStringMap(TNode<Map> map) {
+#if V8_STATIC_ROOTS_BOOL
+  return IsInRange(
+      TruncateIntPtrToInt32(BitcastTaggedToWord(map)),
+      InstanceTypeChecker::kUniqueMapRangeOfStringType::kUncachedExternalString
+          .first,
+      InstanceTypeChecker::kUniqueMapRangeOfStringType::kUncachedExternalString
+          .second);
+#else
+  return IsUncachedExternalStringInstanceType(LoadMapInstanceType(map));
+#endif
+}
+
+TNode<BoolT> CodeStubAssembler::IsOneByteStringMap(TNode<Map> map) {
+#if V8_STATIC_ROOTS_BOOL
+  CSA_DCHECK(this, IsStringInstanceType(LoadMapInstanceType(map)));
+
+  // These static asserts make sure that the following bit magic on the map word
+  // is safe. See the definition of kStringMapEncodingMask for an explanation.
+#define VALIDATE_STRING_MAP_ENCODING_BIT(instance_type, size, name, Name) \
+  static_assert(                                                          \
+      ((instance_type & kStringEncodingMask) == kOneByteStringTag) ==     \
+      ((StaticReadOnlyRoot::k##Name##Map &                                \
+        InstanceTypeChecker::kStringMapEncodingMask) ==                   \
+       InstanceTypeChecker::kOneByteStringMapBit));                       \
+  static_assert(                                                          \
+      ((instance_type & kStringEncodingMask) == kTwoByteStringTag) ==     \
+      ((StaticReadOnlyRoot::k##Name##Map &                                \
+        InstanceTypeChecker::kStringMapEncodingMask) ==                   \
+       InstanceTypeChecker::kTwoByteStringMapBit));
+  STRING_TYPE_LIST(VALIDATE_STRING_MAP_ENCODING_BIT)
+#undef VALIDATE_STRING_TYPE_RANGES
+
+  return Word32Equal(
+      Word32And(TruncateIntPtrToInt32(BitcastTaggedToWord(map)),
+                Int32Constant(InstanceTypeChecker::kStringMapEncodingMask)),
+      Int32Constant(InstanceTypeChecker::kOneByteStringMapBit));
+#else
+  return IsOneByteStringInstanceType(LoadMapInstanceType(map));
+#endif
+}
+
 TNode<BoolT> CodeStubAssembler::IsJSReceiverMap(TNode<Map> map) {
   return IsJSReceiverInstanceType(LoadMapInstanceType(map));
 }
@@ -7801,7 +7878,7 @@ TNode<BoolT> CodeStubAssembler::IsName(TNode<HeapObject> object) {
 #if V8_STATIC_ROOTS_BOOL
   TNode<Map> map = LoadMap(object);
   TNode<Word32T> map_as_word32 = ReinterpretCast<Word32T>(map);
-  static_assert(InstanceTypeChecker::kLastStringMap + Map::kSize ==
+  static_assert(InstanceTypeChecker::kStringMapUpperBound + Map::kSize ==
                 StaticReadOnlyRoot::kSymbolMap);
   return Uint32LessThanOrEqual(map_as_word32,
                                Int32Constant(StaticReadOnlyRoot::kSymbolMap));
@@ -7821,7 +7898,7 @@ TNode<BoolT> CodeStubAssembler::IsString(TNode<HeapObject> object) {
   TNode<Word32T> map_as_word32 =
       TruncateIntPtrToInt32(BitcastTaggedToWord(map));
   return Uint32LessThanOrEqual(
-      map_as_word32, Int32Constant(InstanceTypeChecker::kLastStringMap));
+      map_as_word32, Int32Constant(InstanceTypeChecker::kStringMapUpperBound));
 #else
   return IsStringInstanceType(LoadInstanceType(object));
 #endif
@@ -8196,12 +8273,11 @@ TNode<Uint16T> CodeStubAssembler::StringCharCodeAt(TNode<String> string,
   to_direct.TryToDirect(&if_runtime);
   const TNode<UintPtrT> offset =
       UintPtrAdd(index, Unsigned(to_direct.offset()));
-  const TNode<Int32T> instance_type = to_direct.instance_type();
+  const TNode<BoolT> is_one_byte = to_direct.IsOneByte();
   const TNode<RawPtrT> string_data = to_direct.PointerToData(&if_runtime);
 
   // Check if the {string} is a TwoByteSeqString or a OneByteSeqString.
-  Branch(IsOneByteStringInstanceType(instance_type), &if_stringisonebyte,
-         &if_stringistwobyte);
+  Branch(is_one_byte, &if_stringisonebyte, &if_stringistwobyte);
 
   BIND(&if_stringisonebyte);
   {
@@ -8270,25 +8346,80 @@ ToDirectStringAssembler::ToDirectStringAssembler(
     compiler::CodeAssemblerState* state, TNode<String> string, Flags flags)
     : CodeStubAssembler(state),
       var_string_(string, this),
+#if V8_STATIC_ROOTS_BOOL
+      var_map_(LoadMap(string), this),
+#else
       var_instance_type_(LoadInstanceType(string), this),
+#endif
       var_offset_(IntPtrConstant(0), this),
       var_is_external_(Int32Constant(0), this),
-      flags_(flags) {}
+      flags_(flags) {
+}
 
 TNode<String> ToDirectStringAssembler::TryToDirect(Label* if_bailout) {
-  Label dispatch(this, {&var_string_, &var_offset_, &var_instance_type_});
+  Label dispatch(this, {&var_string_, &var_offset_,
+#if V8_STATIC_ROOTS_BOOL
+                        &var_map_
+#else
+                        &var_instance_type_
+#endif
+                       });
   Label if_iscons(this);
   Label if_isexternal(this);
   Label if_issliced(this);
   Label if_isthin(this);
   Label out(this);
 
+#if V8_STATIC_ROOTS_BOOL
+  // The seq string check is in the dispatch.
+  Goto(&dispatch);
+#else
   Branch(IsSequentialStringInstanceType(var_instance_type_.value()), &out,
          &dispatch);
+#endif
 
   // Dispatch based on string representation.
   BIND(&dispatch);
   {
+#if V8_STATIC_ROOTS_BOOL
+    TNode<Int32T> map_bits =
+        TruncateIntPtrToInt32(BitcastTaggedToWord(var_map_.value()));
+
+    using StringTypeRange = InstanceTypeChecker::kUniqueMapRangeOfStringType;
+    // Check the string map ranges in dense increasing order, to avoid needing
+    // to subtract away the lower bound. Do these couple of range checks instead
+    // of a switch, since we can make them all single dense compares.
+    static_assert(StringTypeRange::kSeqString.first == 0);
+    GotoIf(Uint32LessThanOrEqual(
+               map_bits, Int32Constant(StringTypeRange::kSeqString.second)),
+           &out);
+
+    static_assert(StringTypeRange::kSeqString.second + Map::kSize ==
+                  StringTypeRange::kExternalString.first);
+    GotoIf(
+        Uint32LessThanOrEqual(
+            map_bits, Int32Constant(StringTypeRange::kExternalString.second)),
+        &if_isexternal);
+
+    static_assert(StringTypeRange::kExternalString.second + Map::kSize ==
+                  StringTypeRange::kConsString.first);
+    GotoIf(Uint32LessThanOrEqual(
+               map_bits, Int32Constant(StringTypeRange::kConsString.second)),
+           &if_iscons);
+
+    static_assert(StringTypeRange::kConsString.second + Map::kSize ==
+                  StringTypeRange::kSlicedString.first);
+    GotoIf(Uint32LessThanOrEqual(
+               map_bits, Int32Constant(StringTypeRange::kSlicedString.second)),
+           &if_issliced);
+
+    static_assert(StringTypeRange::kSlicedString.second + Map::kSize ==
+                  StringTypeRange::kThinString.first);
+    // No need to check for thin strings, they're the last string map.
+    static_assert(StringTypeRange::kThinString.second ==
+                  InstanceTypeChecker::kStringMapUpperBound);
+    Goto(&if_isthin);
+#else
     int32_t values[] = {
         kSeqStringTag,    kConsStringTag, kExternalStringTag,
         kSlicedStringTag, kThinStringTag,
@@ -8301,6 +8432,7 @@ TNode<String> ToDirectStringAssembler::TryToDirect(Label* if_bailout) {
     const TNode<Int32T> representation = Word32And(
         var_instance_type_.value(), Int32Constant(kStringRepresentationMask));
     Switch(representation, if_bailout, values, labels, arraysize(values));
+#endif
   }
 
   // Cons string.  Check whether it is flat, then fetch first part.
@@ -8315,7 +8447,11 @@ TNode<String> ToDirectStringAssembler::TryToDirect(Label* if_bailout) {
     const TNode<String> lhs =
         LoadObjectField<String>(string, offsetof(ConsString, first_));
     var_string_ = lhs;
+#if V8_STATIC_ROOTS_BOOL
+    var_map_ = LoadMap(lhs);
+#else
     var_instance_type_ = LoadInstanceType(lhs);
+#endif
 
     Goto(&dispatch);
   }
@@ -8334,7 +8470,11 @@ TNode<String> ToDirectStringAssembler::TryToDirect(Label* if_bailout) {
       const TNode<String> parent =
           LoadObjectField<String>(string, offsetof(SlicedString, parent_));
       var_string_ = parent;
+#if V8_STATIC_ROOTS_BOOL
+      var_map_ = LoadMap(parent);
+#else
       var_instance_type_ = LoadInstanceType(parent);
+#endif
 
       Goto(&dispatch);
     }
@@ -8346,10 +8486,13 @@ TNode<String> ToDirectStringAssembler::TryToDirect(Label* if_bailout) {
     const TNode<String> string = var_string_.value();
     const TNode<String> actual_string =
         LoadObjectField<String>(string, offsetof(ThinString, actual_));
-    const TNode<Uint16T> actual_instance_type = LoadInstanceType(actual_string);
 
     var_string_ = actual_string;
-    var_instance_type_ = actual_instance_type;
+#if V8_STATIC_ROOTS_BOOL
+    var_map_ = LoadMap(actual_string);
+#else
+    var_instance_type_ = LoadInstanceType(actual_string);
+#endif
 
     Goto(&dispatch);
   }
@@ -8361,6 +8504,14 @@ TNode<String> ToDirectStringAssembler::TryToDirect(Label* if_bailout) {
 
   BIND(&out);
   return var_string_.value();
+}
+
+TNode<BoolT> ToDirectStringAssembler::IsOneByte() {
+#if V8_STATIC_ROOTS_BOOL
+  return IsOneByteStringMap(var_map_.value());
+#else
+  return IsOneByteStringInstanceType(var_instance_type_.value());
+#endif
 }
 
 TNode<RawPtrT> ToDirectStringAssembler::TryToSequential(
@@ -8388,8 +8539,12 @@ TNode<RawPtrT> ToDirectStringAssembler::TryToSequential(
 
   BIND(&if_isexternal);
   {
+#if V8_STATIC_ROOTS_BOOL
+    GotoIf(IsUncachedExternalStringMap(var_map_.value()), if_bailout);
+#else
     GotoIf(IsUncachedExternalStringInstanceType(var_instance_type_.value()),
            if_bailout);
+#endif
 
     TNode<String> string = var_string_.value();
     TNode<RawPtrT> result = LoadExternalStringResourceDataPtr(CAST(string));
@@ -9361,7 +9516,7 @@ void CodeStubAssembler::StringWriteToFlatOneByte(TNode<String> source,
                                                  TNode<Int32T> length) {
   TNode<ExternalReference> function =
       ExternalConstant(ExternalReference::string_write_to_flat_one_byte());
-  CallCFunction(function, base::nullopt,
+  CallCFunction(function, std::nullopt,
                 std::make_pair(MachineType::AnyTagged(), source),
                 std::make_pair(MachineType::Pointer(), sink),
                 std::make_pair(MachineType::Int32(), start),
@@ -9374,7 +9529,7 @@ void CodeStubAssembler::StringWriteToFlatTwoByte(TNode<String> source,
                                                  TNode<Int32T> length) {
   TNode<ExternalReference> function =
       ExternalConstant(ExternalReference::string_write_to_flat_two_byte());
-  CallCFunction(function, base::nullopt,
+  CallCFunction(function, std::nullopt,
                 std::make_pair(MachineType::AnyTagged(), source),
                 std::make_pair(MachineType::Pointer(), sink),
                 std::make_pair(MachineType::Int32(), start),
@@ -10080,7 +10235,7 @@ void CodeStubAssembler::InsertEntry<GlobalDictionary>(
 template <class Dictionary>
 void CodeStubAssembler::AddToDictionary(
     TNode<Dictionary> dictionary, TNode<Name> key, TNode<Object> value,
-    Label* bailout, base::Optional<TNode<IntPtrT>> insertion_index) {
+    Label* bailout, std::optional<TNode<IntPtrT>> insertion_index) {
   CSA_DCHECK(this, Word32BinaryNot(IsEmptyPropertyDictionary(dictionary)));
   TNode<Smi> capacity = GetCapacity<Dictionary>(dictionary);
   TNode<Smi> nof = GetNumberOfElements<Dictionary>(dictionary);
@@ -10122,7 +10277,7 @@ void CodeStubAssembler::AddToDictionary(
 template <>
 void CodeStubAssembler::AddToDictionary(
     TNode<SwissNameDictionary> dictionary, TNode<Name> key, TNode<Object> value,
-    Label* bailout, base::Optional<TNode<IntPtrT>> insertion_index) {
+    Label* bailout, std::optional<TNode<IntPtrT>> insertion_index) {
   PropertyDetails d(PropertyKind::kData, NONE,
                     PropertyDetails::kConstIfDictConstnessTracking);
 
@@ -10147,7 +10302,7 @@ void CodeStubAssembler::AddToDictionary(
 
 template void CodeStubAssembler::AddToDictionary<NameDictionary>(
     TNode<NameDictionary>, TNode<Name>, TNode<Object>, Label*,
-    base::Optional<TNode<IntPtrT>>);
+    std::optional<TNode<IntPtrT>>);
 
 template <class Dictionary>
 TNode<Smi> CodeStubAssembler::GetNumberOfElements(
@@ -13047,7 +13202,7 @@ void CodeStubAssembler::EmitElementStore(
   // In case value is stored into a fast smi array, assure that the value is
   // a smi before manipulating the backing store. Otherwise the backing store
   // may be left in an invalid state.
-  base::Optional<TNode<Float64T>> float_value;
+  std::optional<TNode<Float64T>> float_value;
   if (IsSmiElementsKind(elements_kind)) {
     GotoIfNot(TaggedIsSmi(value), bailout);
   } else if (IsDoubleElementsKind(elements_kind)) {
@@ -16744,8 +16899,9 @@ TNode<BoolT> CodeStubAssembler::IsContextPromiseHookEnabled(
 }
 #endif
 
-TNode<BoolT> CodeStubAssembler::
-    IsIsolatePromiseHookEnabledOrHasAsyncEventDelegate(TNode<Uint32T> flags) {
+TNode<BoolT>
+CodeStubAssembler::IsIsolatePromiseHookEnabledOrHasAsyncEventDelegate(
+    TNode<Uint32T> flags) {
   uint32_t mask = Isolate::PromiseHookFields::HasIsolatePromiseHook::kMask |
                   Isolate::PromiseHookFields::HasAsyncEventDelegate::kMask;
   return IsSetWord32(flags, mask);
@@ -16778,131 +16934,157 @@ TNode<Code> CodeStubAssembler::LoadBuiltin(TNode<Smi> builtin_id) {
 TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
     TNode<SharedFunctionInfo> shared_info, TVariable<Uint16T>* data_type_out,
     Label* if_compile_lazy) {
-  TNode<Object> sfi_data = LoadSharedFunctionInfoData(shared_info);
-
-  TVARIABLE(Code, sfi_code);
 
   Label done(this);
-  Label check_instance_type(this);
+  Label use_untrusted_data(this);
+  Label unknown_data(this);
+  TVARIABLE(Code, sfi_code);
 
-  // IsSmi: Is builtin
-  GotoIf(TaggedIsNotSmi(sfi_data), &check_instance_type);
-  if (data_type_out) {
-    *data_type_out = Uint16Constant(0);
-  }
-  if (if_compile_lazy) {
-    GotoIf(SmiEqual(CAST(sfi_data), SmiConstant(Builtin::kCompileLazy)),
-           if_compile_lazy);
-  }
-  sfi_code = LoadBuiltin(CAST(sfi_data));
-  Goto(&done);
-
-  // Switch on data's instance type.
-  BIND(&check_instance_type);
-  TNode<Uint16T> data_type = LoadInstanceType(CAST(sfi_data));
-  if (data_type_out) {
-    *data_type_out = data_type;
-  }
-
-  int32_t case_values[] = {
-    BYTECODE_ARRAY_TYPE,
-    CODE_TYPE,
-    UNCOMPILED_DATA_WITHOUT_PREPARSE_DATA_TYPE,
-    UNCOMPILED_DATA_WITH_PREPARSE_DATA_TYPE,
-    UNCOMPILED_DATA_WITHOUT_PREPARSE_DATA_WITH_JOB_TYPE,
-    UNCOMPILED_DATA_WITH_PREPARSE_DATA_AND_JOB_TYPE,
-    FUNCTION_TEMPLATE_INFO_TYPE,
-#if V8_ENABLE_WEBASSEMBLY
-    WASM_CAPI_FUNCTION_DATA_TYPE,
-    WASM_EXPORTED_FUNCTION_DATA_TYPE,
-    WASM_JS_FUNCTION_DATA_TYPE,
-    ASM_WASM_DATA_TYPE,
-    WASM_RESUME_DATA_TYPE,
-#endif  // V8_ENABLE_WEBASSEMBLY
-  };
-  Label check_is_bytecode_array(this);
-  Label check_is_baseline_data(this);
-  Label check_is_asm_wasm_data(this);
-  Label check_is_uncompiled_data(this);
-  Label check_is_function_template_info(this);
-  Label check_is_interpreter_data(this);
-  Label check_is_wasm_function_data(this);
-  Label check_is_wasm_resume(this);
-  Label* case_labels[] = {
-    &check_is_bytecode_array,
-    &check_is_baseline_data,
-    &check_is_uncompiled_data,
-    &check_is_uncompiled_data,
-    &check_is_uncompiled_data,
-    &check_is_uncompiled_data,
-    &check_is_function_template_info,
-#if V8_ENABLE_WEBASSEMBLY
-    &check_is_wasm_function_data,
-    &check_is_wasm_function_data,
-    &check_is_wasm_function_data,
-    &check_is_asm_wasm_data,
-    &check_is_wasm_resume,
-#endif  // V8_ENABLE_WEBASSEMBLY
-  };
-  static_assert(arraysize(case_values) == arraysize(case_labels));
-  Switch(data_type, &check_is_interpreter_data, case_values, case_labels,
-         arraysize(case_labels));
-
-  // IsBytecodeArray: Interpret bytecode
-  BIND(&check_is_bytecode_array);
-  sfi_code =
-      HeapConstantNoHole(BUILTIN_CODE(isolate(), InterpreterEntryTrampoline));
-  Goto(&done);
-
-  // IsBaselineData: Execute baseline code
-  BIND(&check_is_baseline_data);
+  TNode<Object> sfi_data = LoadSharedFunctionInfoTrustedData(shared_info);
+  GotoIf(TaggedEqual(sfi_data, SmiConstant(0)), &use_untrusted_data);
   {
-    TNode<Code> baseline_code = CAST(sfi_data);
-    sfi_code = baseline_code;
+    TNode<Uint16T> data_type = LoadInstanceType(CAST(sfi_data));
+    if (data_type_out) {
+      *data_type_out = data_type;
+    }
+
+    int32_t case_values[] = {
+        BYTECODE_ARRAY_TYPE,
+        CODE_TYPE,
+        INTERPRETER_DATA_TYPE,
+        UNCOMPILED_DATA_WITHOUT_PREPARSE_DATA_TYPE,
+        UNCOMPILED_DATA_WITH_PREPARSE_DATA_TYPE,
+        UNCOMPILED_DATA_WITHOUT_PREPARSE_DATA_WITH_JOB_TYPE,
+        UNCOMPILED_DATA_WITH_PREPARSE_DATA_AND_JOB_TYPE,
+#if V8_ENABLE_WEBASSEMBLY
+        WASM_CAPI_FUNCTION_DATA_TYPE,
+        WASM_EXPORTED_FUNCTION_DATA_TYPE,
+        WASM_JS_FUNCTION_DATA_TYPE,
+#endif  // V8_ENABLE_WEBASSEMBLY
+    };
+    Label check_is_bytecode_array(this);
+    Label check_is_baseline_data(this);
+    Label check_is_interpreter_data(this);
+    Label check_is_uncompiled_data(this);
+    Label check_is_wasm_function_data(this);
+    Label* case_labels[] = {
+        &check_is_bytecode_array,     &check_is_baseline_data,
+        &check_is_interpreter_data,   &check_is_uncompiled_data,
+        &check_is_uncompiled_data,    &check_is_uncompiled_data,
+        &check_is_uncompiled_data,
+#if V8_ENABLE_WEBASSEMBLY
+        &check_is_wasm_function_data, &check_is_wasm_function_data,
+        &check_is_wasm_function_data,
+#endif  // V8_ENABLE_WEBASSEMBLY
+    };
+    static_assert(arraysize(case_values) == arraysize(case_labels));
+    Switch(data_type, &unknown_data, case_values, case_labels,
+           arraysize(case_labels));
+
+    // IsBytecodeArray: Interpret bytecode
+    BIND(&check_is_bytecode_array);
+    sfi_code =
+        HeapConstantNoHole(BUILTIN_CODE(isolate(), InterpreterEntryTrampoline));
     Goto(&done);
-  }
 
-  // IsUncompiledDataWithPreparseData | IsUncompiledDataWithoutPreparseData:
-  // Compile lazy
-  BIND(&check_is_uncompiled_data);
-  sfi_code = HeapConstantNoHole(BUILTIN_CODE(isolate(), CompileLazy));
-  Goto(if_compile_lazy ? if_compile_lazy : &done);
+    // IsBaselineData: Execute baseline code
+    BIND(&check_is_baseline_data);
+    {
+      TNode<Code> baseline_code = CAST(sfi_data);
+      sfi_code = baseline_code;
+      Goto(&done);
+    }
 
-  // IsFunctionTemplateInfo: API call
-  BIND(&check_is_function_template_info);
-  sfi_code =
-      HeapConstantNoHole(BUILTIN_CODE(isolate(), HandleApiCallOrConstruct));
-  Goto(&done);
+    // IsInterpreterData: Interpret bytecode
+    BIND(&check_is_interpreter_data);
+    {
+      TNode<Code> trampoline = CAST(LoadProtectedPointerField(
+          CAST(sfi_data), InterpreterData::kInterpreterTrampolineOffset));
+      sfi_code = trampoline;
+    }
+    Goto(&done);
 
-  // IsInterpreterData: Interpret bytecode
-  BIND(&check_is_interpreter_data);
-  // This is the default branch, so assert that we have the expected data type.
-  CSA_DCHECK(this,
-             Word32Equal(data_type, Int32Constant(INTERPRETER_DATA_TYPE)));
-  {
-    TNode<Code> trampoline = CAST(LoadProtectedPointerField(
-        CAST(sfi_data), InterpreterData::kInterpreterTrampolineOffset));
-    sfi_code = trampoline;
-  }
-  Goto(&done);
+    // IsUncompiledDataWithPreparseData | IsUncompiledDataWithoutPreparseData:
+    // Compile lazy
+    BIND(&check_is_uncompiled_data);
+    sfi_code = HeapConstantNoHole(BUILTIN_CODE(isolate(), CompileLazy));
+    Goto(if_compile_lazy ? if_compile_lazy : &done);
 
 #if V8_ENABLE_WEBASSEMBLY
-  // IsWasmFunctionData: Use the wrapper code
-  BIND(&check_is_wasm_function_data);
-  sfi_code = CAST(LoadObjectField(
-      CAST(sfi_data), WasmExportedFunctionData::kWrapperCodeOffset));
-  Goto(&done);
-
-  // IsAsmWasmData: Instantiate using AsmWasmData
-  BIND(&check_is_asm_wasm_data);
-  sfi_code = HeapConstantNoHole(BUILTIN_CODE(isolate(), InstantiateAsmJs));
-  Goto(&done);
-
-  // IsWasmResumeData: Resume the suspended wasm continuation.
-  BIND(&check_is_wasm_resume);
-  sfi_code = HeapConstantNoHole(BUILTIN_CODE(isolate(), WasmResume));
-  Goto(&done);
+    // IsWasmFunctionData: Use the wrapper code
+    BIND(&check_is_wasm_function_data);
+    sfi_code = CAST(LoadObjectField(
+        CAST(sfi_data), WasmExportedFunctionData::kWrapperCodeOffset));
+    Goto(&done);
 #endif  // V8_ENABLE_WEBASSEMBLY
+  }
+
+  BIND(&use_untrusted_data);
+  {
+    sfi_data = LoadSharedFunctionInfoUntrustedData(shared_info);
+    Label check_instance_type(this);
+
+    // IsSmi: Is builtin
+    GotoIf(TaggedIsNotSmi(sfi_data), &check_instance_type);
+    if (data_type_out) {
+      *data_type_out = Uint16Constant(0);
+    }
+    if (if_compile_lazy) {
+      GotoIf(SmiEqual(CAST(sfi_data), SmiConstant(Builtin::kCompileLazy)),
+             if_compile_lazy);
+    }
+    sfi_code = LoadBuiltin(CAST(sfi_data));
+    Goto(&done);
+
+    // Switch on data's instance type.
+    BIND(&check_instance_type);
+    TNode<Uint16T> data_type = LoadInstanceType(CAST(sfi_data));
+    if (data_type_out) {
+      *data_type_out = data_type;
+    }
+
+    int32_t case_values[] = {
+        FUNCTION_TEMPLATE_INFO_TYPE,
+#if V8_ENABLE_WEBASSEMBLY
+        ASM_WASM_DATA_TYPE,
+        WASM_RESUME_DATA_TYPE,
+#endif  // V8_ENABLE_WEBASSEMBLY
+    };
+    Label check_is_function_template_info(this);
+    Label check_is_asm_wasm_data(this);
+    Label check_is_wasm_resume(this);
+    Label* case_labels[] = {
+        &check_is_function_template_info,
+#if V8_ENABLE_WEBASSEMBLY
+        &check_is_asm_wasm_data,
+        &check_is_wasm_resume,
+#endif  // V8_ENABLE_WEBASSEMBLY
+    };
+    static_assert(arraysize(case_values) == arraysize(case_labels));
+    Switch(data_type, &unknown_data, case_values, case_labels,
+           arraysize(case_labels));
+
+    // IsFunctionTemplateInfo: API call
+    BIND(&check_is_function_template_info);
+    sfi_code =
+        HeapConstantNoHole(BUILTIN_CODE(isolate(), HandleApiCallOrConstruct));
+    Goto(&done);
+
+#if V8_ENABLE_WEBASSEMBLY
+    // IsAsmWasmData: Instantiate using AsmWasmData
+    BIND(&check_is_asm_wasm_data);
+    sfi_code = HeapConstantNoHole(BUILTIN_CODE(isolate(), InstantiateAsmJs));
+    Goto(&done);
+
+    // IsWasmResumeData: Resume the suspended wasm continuation.
+    BIND(&check_is_wasm_resume);
+    sfi_code = HeapConstantNoHole(BUILTIN_CODE(isolate(), WasmResume));
+    Goto(&done);
+#endif  // V8_ENABLE_WEBASSEMBLY
+  }
+
+  BIND(&unknown_data);
+  Unreachable();
 
   BIND(&done);
   return sfi_code.value();

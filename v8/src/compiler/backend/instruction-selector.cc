@@ -5,6 +5,7 @@
 #include "src/compiler/backend/instruction-selector.h"
 
 #include <limits>
+#include <optional>
 
 #include "include/v8-internal.h"
 #include "src/base/iterator.h"
@@ -123,7 +124,7 @@ InstructionSelectorT<Adapter>::InstructionSelectorT(
 }
 
 template <typename Adapter>
-base::Optional<BailoutReason>
+std::optional<BailoutReason>
 InstructionSelectorT<Adapter>::SelectInstructions() {
   // Mark the inputs of all phis in loop headers as used.
   block_range_t blocks = this->rpo_order(schedule());
@@ -175,7 +176,7 @@ InstructionSelectorT<Adapter>::SelectInstructions() {
 #if DEBUG
   sequence()->ValidateSSA();
 #endif
-  return base::nullopt;
+  return std::nullopt;
 }
 
 template <typename Adapter>
@@ -645,14 +646,15 @@ InstructionOperand OperandForDeopt(Isolate* isolate,
         return g->UseImmediate(input);
       case Kind::kNumber:
         if (rep == MachineRepresentation::kWord32) {
-          const double d = constant->number();
+          const double d = constant->number().get_scalar();
           Tagged<Smi> smi = Smi::FromInt(static_cast<int32_t>(d));
           CHECK_EQ(smi.value(), d);
           return g->UseImmediate(static_cast<int32_t>(smi.ptr()));
         }
         return g->UseImmediate(input);
       case turboshaft::ConstantOp::Kind::kHeapObject:
-      case turboshaft::ConstantOp::Kind::kCompressedHeapObject: {
+      case turboshaft::ConstantOp::Kind::kCompressedHeapObject:
+      case turboshaft::ConstantOp::Kind::kTrustedHeapObject: {
         if (!CanBeTaggedOrCompressedPointer(rep)) {
           // If we have inconsistent static and dynamic types, e.g. if we
           // smi-check a string, we can get here with a heap object that
@@ -728,8 +730,9 @@ InstructionOperand OperandForDeopt(Isolate* isolate,
       } else {
         return g->UseImmediate(input);
       }
+    case IrOpcode::kHeapConstant:
     case IrOpcode::kCompressedHeapConstant:
-    case IrOpcode::kHeapConstant: {
+    case IrOpcode::kTrustedHeapConstant: {
       if (!CanBeTaggedOrCompressedPointer(rep)) {
         // If we have inconsistent static and dynamic types, e.g. if we
         // smi-check a string, we can get here with a heap object that
@@ -1787,9 +1790,25 @@ void InstructionSelectorT<Adapter>::VisitBlock(block_t block) {
 
     SourcePosition source_position;
     if constexpr (Adapter::IsTurboshaft) {
+#if V8_ENABLE_WEBASSEMBLY && V8_TARGET_ARCH_X64
+      if (V8_UNLIKELY(
+              this->Get(node)
+                  .template Is<
+                      turboshaft::Opmask::kSimd128F64x2PromoteLowF32x4>())) {
+        // On x64 there exists an optimization that folds
+        // `kF64x2PromoteLowF32x4` and `kS128Load64Zero` together into a single
+        // instruction. If the instruction causes an out-of-bounds memory
+        // access exception, then the stack trace has to show the source
+        // position of the `kS128Load64Zero` and not of the
+        // `kF64x2PromoteLowF32x4`.
+        if (this->CanOptimizeF64x2PromoteLowF32x4(node)) {
+          node = this->input_at(node, 0);
+        }
+      }
+#endif  // V8_ENABLE_WEBASSEMBLY && V8_TARGET_ARCH_X64
       source_position = (*source_positions_)[node];
     } else {
-#if V8_ENABLE_WEBASSEMBLY
+#if V8_ENABLE_WEBASSEMBLY && V8_TARGET_ARCH_X64
       if (V8_UNLIKELY(node->opcode() == IrOpcode::kF64x2PromoteLowF32x4)) {
         // On x64 there exists an optimization that folds
         // `kF64x2PromoteLowF32x4` and `kS128Load64Zero` together into a single
@@ -1805,7 +1824,7 @@ void InstructionSelectorT<Adapter>::VisitBlock(block_t block) {
           node = input;
         }
       }
-#endif  // V8_ENABLE_WEBASSEMBLY
+#endif  // V8_ENABLE_WEBASSEMBLY && V8_TARGET_ARCH_X64
       source_position = source_positions_->GetSourcePosition(node);
     }
     if (source_position.IsKnown() && IsSourcePositionUsed(node)) {
@@ -3249,6 +3268,8 @@ void InstructionSelectorT<TurbofanAdapter>::VisitNode(Node* node) {
       return MarkAsTagged(node), VisitConstant(node);
     case IrOpcode::kCompressedHeapConstant:
       return MarkAsCompressed(node), VisitConstant(node);
+    case IrOpcode::kTrustedHeapConstant:
+      return MarkAsTagged(node), VisitConstant(node);
     case IrOpcode::kNumberConstant: {
       double value = OpParameter<double>(node->op());
       if (!IsSmiDouble(value)) MarkAsTagged(node);
@@ -4225,6 +4246,12 @@ void InstructionSelectorT<TurbofanAdapter>::VisitNode(Node* node) {
       return MarkAsSimd128(node), VisitI16x8DotI8x16I7x16S(node);
     case IrOpcode::kI32x4DotI8x16I7x16AddS:
       return MarkAsSimd128(node), VisitI32x4DotI8x16I7x16AddS(node);
+    case IrOpcode::kF16x8Splat:
+      return MarkAsSimd128(node), VisitF16x8Splat(node);
+    case IrOpcode::kF16x8ExtractLane:
+      return MarkAsFloat32(node), VisitF16x8ExtractLane(node);
+    case IrOpcode::kF16x8ReplaceLane:
+      return MarkAsSimd128(node), VisitF16x8ReplaceLane(node);
 
       // SIMD256
 #if defined(V8_TARGET_ARCH_X64) && defined(V8_ENABLE_WASM_SIMD256_REVEC)
@@ -4743,13 +4770,14 @@ void InstructionSelectorT<TurboshaftAdapter>::VisitNode(
           MarkAsFloat64(node);
           break;
         case ConstantOp::Kind::kHeapObject:
+        case ConstantOp::Kind::kTrustedHeapObject:
           MarkAsTagged(node);
           break;
         case ConstantOp::Kind::kCompressedHeapObject:
           MarkAsCompressed(node);
           break;
         case ConstantOp::Kind::kNumber:
-          if (!IsSmiDouble(constant.number())) MarkAsTagged(node);
+          if (!IsSmiDouble(constant.number().get_scalar())) MarkAsTagged(node);
           break;
         case ConstantOp::Kind::kRelocatableWasmCall:
         case ConstantOp::Kind::kRelocatableWasmStubCall:
@@ -5469,6 +5497,8 @@ void InstructionSelectorT<TurboshaftAdapter>::VisitNode(
           return VisitI32x4ReplaceLane(node);
         case Simd128ReplaceLaneOp::Kind::kI64x2:
           return VisitI64x2ReplaceLane(node);
+        case Simd128ReplaceLaneOp::Kind::kF16x8:
+          return VisitF16x8ReplaceLane(node);
         case Simd128ReplaceLaneOp::Kind::kF32x4:
           return VisitF32x4ReplaceLane(node);
         case Simd128ReplaceLaneOp::Kind::kF64x2:
@@ -5496,6 +5526,9 @@ void InstructionSelectorT<TurboshaftAdapter>::VisitNode(
         case Simd128ExtractLaneOp::Kind::kI64x2:
           MarkAsWord64(node);
           return VisitI64x2ExtractLane(node);
+        case Simd128ExtractLaneOp::Kind::kF16x8:
+          MarkAsFloat32(node);
+          return VisitF16x8ExtractLane(node);
         case Simd128ExtractLaneOp::Kind::kF32x4:
           MarkAsFloat32(node);
           return VisitF32x4ExtractLane(node);
@@ -5877,7 +5910,7 @@ InstructionSelector::~InstructionSelector() {
     return turboshaft_impl_->__VA_ARGS__;        \
   }
 
-base::Optional<BailoutReason> InstructionSelector::SelectInstructions() {
+std::optional<BailoutReason> InstructionSelector::SelectInstructions() {
   DISPATCH_TO_IMPL(SelectInstructions())
 }
 

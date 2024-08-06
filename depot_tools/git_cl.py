@@ -28,6 +28,8 @@ import sys
 import tempfile
 import textwrap
 import time
+import typing
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -35,6 +37,7 @@ import webbrowser
 import zlib
 
 from typing import Any
+from typing import AnyStr
 from typing import Callable
 from typing import List
 from typing import Mapping
@@ -48,6 +51,7 @@ import clang_format
 import gclient_paths
 import gclient_utils
 import gerrit_util
+import git_auth
 import git_common
 import git_footers
 import git_new_branch
@@ -855,7 +859,7 @@ class Settings(object):
                     '"git cl config".')
         return self.tree_status_url
 
-    def GetViewVCUrl(self):
+    def GetViewVCUrl(self) -> str:
         if not self.viewvc_url:
             self.viewvc_url = self._GetConfig('rietveld.viewvc-url')
         return self.viewvc_url
@@ -2237,7 +2241,7 @@ class Changelist(object):
             # Still raise exception so that stack trace is printed.
             raise
 
-    def GetGerritHost(self):
+    def GetGerritHost(self) -> Optional[str]:
         # Populate self._gerrit_host
         self.GetCodereviewServer()
 
@@ -2258,7 +2262,7 @@ class Changelist(object):
             return None
         return urllib.parse.urlparse(remote_url).netloc
 
-    def _GetGerritHostFromRemoteUrl(self):
+    def _GetGerritHostFromRemoteUrl(self) -> str:
         url = urllib.parse.urlparse(self.GetRemoteUrl())
         parts = url.netloc.split('.')
 
@@ -2274,7 +2278,7 @@ class Changelist(object):
 
         return '.'.join(parts)
 
-    def GetCodereviewServer(self):
+    def GetCodereviewServer(self) -> str:
         if not self._gerrit_server:
             # If we're on a branch then get the server potentially associated
             # with that branch.
@@ -2345,23 +2349,7 @@ class Changelist(object):
             return
 
         if newauth.Enabled():
-            latestVer: int = GitAuthConfigChanger.VERSION
-            v: int = 0
-            try:
-                v = int(
-                    scm.GIT.GetConfig(settings.GetRoot(),
-                                      'depot-tools.gitauthautoconfigured',
-                                      default='0'))
-            except ValueError:
-                v = 0
-            if v < latestVer:
-                logging.debug(
-                    'Automatically configuring Git repo authentication (current version: %r, latest: %r)',
-                    v, latestVer)
-                ConfigureGitRepoAuth()
-                scm.GIT.SetConfig(settings.GetRoot(),
-                                  'depot-tools.gitAuthAutoConfigured',
-                                  str(latestVer))
+            git_auth.AutoConfigure(os.getcwd(), Changelist())
             return
 
         # Lazy-loader to identify Gerrit and Git hosts.
@@ -2709,12 +2697,11 @@ class Changelist(object):
         self._detail_cache.setdefault(cache_key, []).append((options_set, data))
         return data
 
-    def _GetChangeCommit(self, revision='current'):
+    def _GetChangeCommit(self, revision: str = 'current') -> dict:
         assert self.GetIssue(), 'issue must be set to query Gerrit'
         try:
-            data = gerrit_util.GetChangeCommit(self.GetGerritHost(),
-                                               self._GerritChangeIdentifier(),
-                                               revision)
+            data: dict = gerrit_util.GetChangeCommit(
+                self.GetGerritHost(), self._GerritChangeIdentifier(), revision)
         except gerrit_util.GerritError as e:
             if e.http_status == 404:
                 raise GerritChangeNotExists(self.GetIssue(),
@@ -3322,7 +3309,7 @@ class Changelist(object):
                 upstream_branch_name, change_desc)
         return parent
 
-    def _UpdateWithExternalChanges(self):
+    def _UpdateWithExternalChanges(self) -> Optional[str]:
         """Updates workspace with external changes.
 
         Returns the commit hash that should be used as the merge base on upload.
@@ -3367,9 +3354,9 @@ class Changelist(object):
 
         # Get latest Gerrit merge base. Use the first parent even if multiple
         # exist.
-        external_parent = self._GetChangeCommit(
+        external_parent: dict = self._GetChangeCommit(
             revision=external_ps)['parents'][0]
-        external_base = external_parent['commit']
+        external_base: str = external_parent['commit']
 
         branch = git_common.current_branch()
         local_base = self.GetCommonAncestorWithUpstream()
@@ -3661,216 +3648,6 @@ def DownloadGerritHook(force):
                          'chmod +x .git/hooks/commit-msg' % src)
 
 
-def ConfigureGitRepoAuth() -> None:
-    """Configure the current Git repo authentication."""
-    logging.debug('Configuring current Git repo authentication...')
-    cwd = os.getcwd()
-    c = GitAuthConfigChanger.new_from_env(cwd)
-    c.apply(cwd)
-
-
-def ClearGitRepoAuth() -> None:
-    """Clear the current Git repo authentication."""
-    logging.debug('Clearing current Git repo authentication...')
-    c = GitAuthConfigChanger.new_from_env(cwd)
-    c.mode = GitAuthMode.OLD_AUTH
-    c.apply(cwd)
-
-
-class GitAuthMode(enum.Enum):
-    """Modes to pass to GitAuthConfigChanger"""
-    NEW_AUTH = 1
-    NEW_AUTH_SSO = 2
-    OLD_AUTH = 3
-
-
-class GitAuthConfigChanger(object):
-    """Changes Git auth config as needed for Gerrit."""
-
-    # Can be used to determine whether this version of the config has
-    # been applied to a Git repo.
-    #
-    # Increment this when making changes to the config, so that reliant
-    # code can determine whether the config needs to be re-applied.
-    VERSION: int = 2
-
-    def __init__(
-        self,
-        *,
-        mode: GitAuthMode,
-        remote_url: str,
-        set_config_func: Callable[..., None] = scm.GIT.SetConfig,
-    ):
-        """Create a new GitAuthConfigChanger.
-
-        Args:
-            mode: How to configure auth
-            remote_url: Git repository's remote URL, e.g.,
-                https://chromium.googlesource.com/chromium/tools/depot_tools.git
-            set_config_func: Function used to set configuration.  Used
-                for testing.
-        """
-        self.mode: GitAuthMode = mode
-
-        self._remote_url: str = remote_url
-        self._set_config_func: Callable[..., str] = set_config_func
-
-    @functools.cached_property
-    def _shortname(self) -> str:
-        parts: urllib.parse.SplitResult = urllib.parse.urlsplit(
-            self._remote_url)
-        name: str = parts.netloc.split('.')[0]
-        if name.endswith('-review'):
-            name = name[:-len('-review')]
-        return name
-
-    @functools.cached_property
-    def _base_url(self) -> str:
-        # Base URL looks like https://chromium.googlesource.com/
-        parts: urllib.parse.SplitResult = urllib.parse.urlsplit(
-            self._remote_url)
-        return parts._replace(path='/', query='', fragment='').geturl()
-
-    @classmethod
-    def new_from_env(cls, cwd: str) -> 'GitAuthConfigChanger':
-        """Create a GitAuthConfigChanger by inferring from env.
-
-        The Gerrit host is inferred from the current repo/branch.
-        The user, which is used to determine the mode, is inferred using
-        git-config(1) in the given `cwd`.
-        """
-        cl = Changelist()
-        # This is determined either from the branch or repo config.
-        #
-        # Example: chromium-review.googlesource.com
-        gerrit_host: str = cl.GetGerritHost()
-        # This depends on what the user set for their remote.
-        # There are a couple potential variations for the same host+repo.
-        #
-        # Example: https://chromium.googlesource.com/chromium/tools/depot_tools.git
-        remote_url: str = cl.GetRemoteUrl()
-
-        return cls(
-            mode=cls._infer_mode(cwd, gerrit_host),
-            remote_url=remote_url,
-        )
-
-    @staticmethod
-    def _infer_mode(cwd: str, gerrit_host: str) -> GitAuthMode:
-        """Infer default mode to use."""
-        if not newauth.Enabled():
-            return GitAuthMode.OLD_AUTH
-        email: str = scm.GIT.GetConfig(cwd, 'user.email', default='')
-        if gerrit_util.ShouldUseSSO(gerrit_host, email):
-            return GitAuthMode.NEW_AUTH_SSO
-        return GitAuthMode.NEW_AUTH
-
-    def apply(self, cwd: str) -> None:
-        """Apply config changes to the Git repo directory."""
-        self._apply_cred_helper(cwd)
-        self._apply_sso(cwd)
-        self._apply_gitcookies(cwd)
-
-    def apply_global(self, cwd: str) -> None:
-        """Apply config changes to the global (user) Git config.
-
-        This will make the instance's mode (e.g., SSO or not) the global
-        default for the Gerrit host, if not overridden by a specific Git repo.
-        """
-        self._apply_global_cred_helper(cwd)
-        self._apply_global_sso(cwd)
-
-    def _apply_cred_helper(self, cwd: str) -> None:
-        """Apply config changes relating to credential helper."""
-        cred_key: str = f'credential.{self._base_url}.helper'
-        if self.mode == GitAuthMode.NEW_AUTH:
-            self._set_config(cwd, cred_key, '', modify_all=True)
-            self._set_config(cwd, cred_key, 'luci', append=True)
-        elif self.mode == GitAuthMode.NEW_AUTH_SSO:
-            self._set_config(cwd, cred_key, None, modify_all=True)
-        elif self.mode == GitAuthMode.OLD_AUTH:
-            self._set_config(cwd, cred_key, None, modify_all=True)
-        else:
-            raise TypeError(f'Invalid mode {self.mode!r}')
-
-    def _apply_sso(self, cwd: str) -> None:
-        """Apply config changes relating to SSO."""
-        sso_key: str = f'url.sso://{self._shortname}/.insteadOf'
-        if self.mode == GitAuthMode.NEW_AUTH:
-            self._set_config(cwd, 'protocol.sso.allow', None)
-            self._set_config(cwd, sso_key, None, modify_all=True)
-        elif self.mode == GitAuthMode.NEW_AUTH_SSO:
-            self._set_config(cwd, 'protocol.sso.allow', 'always')
-            self._set_config(cwd, sso_key, self._base_url, modify_all=True)
-        elif self.mode == GitAuthMode.OLD_AUTH:
-            self._set_config(cwd, 'protocol.sso.allow', None)
-            self._set_config(cwd, sso_key, None, modify_all=True)
-        else:
-            raise TypeError(f'Invalid mode {self.mode!r}')
-
-    def _apply_gitcookies(self, cwd: str) -> None:
-        """Apply config changes relating to gitcookies."""
-        # TODO(ayatane): Clear invalid setting.  Remove line after a few weeks
-        self._set_config(cwd, 'http.gitcookies', None, modify_all=True)
-        if self.mode == GitAuthMode.NEW_AUTH:
-            # Override potential global setting
-            self._set_config(cwd, 'http.cookieFile', '', modify_all=True)
-        elif self.mode == GitAuthMode.NEW_AUTH_SSO:
-            # Override potential global setting
-            self._set_config(cwd, 'http.cookieFile', '', modify_all=True)
-        elif self.mode == GitAuthMode.OLD_AUTH:
-            self._set_config(cwd, 'http.cookieFile', None, modify_all=True)
-        else:
-            raise TypeError(f'Invalid mode {self.mode!r}')
-
-    def _apply_global_cred_helper(self, cwd: str) -> None:
-        """Apply config changes relating to credential helper."""
-        cred_key: str = f'credential.{self._base_url}.helper'
-        if self.mode == GitAuthMode.NEW_AUTH:
-            self._set_config(cwd, cred_key, '', scope='global', modify_all=True)
-            self._set_config(cwd, cred_key, 'luci', scope='global', append=True)
-        elif self.mode == GitAuthMode.NEW_AUTH_SSO:
-            # Avoid editing the user's config in case they manually
-            # configured something.
-            pass
-        elif self.mode == GitAuthMode.OLD_AUTH:
-            # Avoid editing the user's config in case they manually
-            # configured something.
-            pass
-        else:
-            raise TypeError(f'Invalid mode {self.mode!r}')
-
-    def _apply_global_sso(self, cwd: str) -> None:
-        """Apply config changes relating to SSO."""
-        sso_key: str = f'url.sso://{self._shortname}/.insteadOf'
-        if self.mode == GitAuthMode.NEW_AUTH:
-            # Do not unset protocol.sso.allow because it may be used by other hosts.
-            self._set_config(cwd,
-                             sso_key,
-                             None,
-                             scope='global',
-                             modify_all=True)
-        elif self.mode == GitAuthMode.NEW_AUTH_SSO:
-            self._set_config(cwd,
-                             'protocol.sso.allow',
-                             'always',
-                             scope='global')
-            self._set_config(cwd,
-                             sso_key,
-                             self._base_url,
-                             scope='global',
-                             modify_all=True)
-        elif self.mode == GitAuthMode.OLD_AUTH:
-            # Avoid editing the user's config in case they manually
-            # configured something.
-            pass
-        else:
-            raise TypeError(f'Invalid mode {self.mode!r}')
-
-    def _set_config(self, *args, **kwargs) -> None:
-        self._set_config_func(*args, **kwargs)
-
-
 class _GitCookiesChecker(object):
     """Provides facilities for validating and suggesting fixes to .gitcookies."""
     def __init__(self):
@@ -4100,10 +3877,10 @@ def CMDcreds_check(parser, args):
     _, _ = parser.parse_args(args)
 
     if newauth.Enabled():
-        ConfigureGitRepoAuth()
+        git_auth.Configure(os.getcwd(), Changelist())
         return 0
     if newauth.ExplicitlyDisabled():
-        ClearGitRepoAuth()
+        git_auth.ClearRepoConfig(os.getcwd(), Changelist())
 
     # Code below checks .gitcookies. Abort if using something else.
     auth_name, _ = gerrit_util.debug_auth()
@@ -5486,9 +5263,9 @@ def UploadAllSquashed(options: optparse.Values,
         cl = ordered_cls[0]
         # We can only support external changes when we're only uploading one
         # branch.
-        parent = cl._UpdateWithExternalChanges() if len(
+        parent: Optional[str] = cl._UpdateWithExternalChanges() if len(
             ordered_cls) == 1 else None
-        orig_parent = None
+        orig_parent: Optional[str] = None
         if parent is None:
             origin = '.'
             branch = cl.GetBranch()
@@ -7049,8 +6826,8 @@ def CMDcheckout(parser, args):
 
     target_issue = str(issue_arg.issue)
 
-    output = scm.GIT.YieldConfigRegexp(
-        settings.GetRoot(), re.compile(r'branch\..*\.' + ISSUE_CONFIG_KEY))
+    output = scm.GIT.YieldConfigRegexp(settings.GetRoot(),
+                                       r'branch\..*\.' + ISSUE_CONFIG_KEY)
 
     branches = []
     for key, issue in output:
@@ -7108,7 +6885,23 @@ class OptionParser(optparse.OptionParser):
                         default=0,
                         help='Use 2 times for more debugging info')
 
-    def parse_args(self, args=None, _values=None):
+    @typing.overload
+    def parse_args(
+        self,
+        args: None = None,
+        values: Optional[optparse.Values] = None
+    ) -> tuple[optparse.Values, list[str]]:
+        ...
+
+    @typing.overload
+    def parse_args(  # pylint: disable=signature-differs
+        self,
+        args: Sequence[AnyStr],
+        values: Optional[optparse.Values] = None
+    ) -> tuple[optparse.Values, list[AnyStr]]:
+        ...
+
+    def parse_args(self, args: Sequence[AnyStr] | None = None, values=None):
         try:
             return self._parse_args(args)
         finally:
@@ -7124,11 +6917,22 @@ class OptionParser(optparse.OptionParser):
                     # executed in a repo, it will be raised later.
                     pass
 
-    def _parse_args(self, args=None):
+    @typing.overload
+    def _parse_args(self, args: None) -> tuple[optparse.Values, list[str]]:
+        ...
+
+    @typing.overload
+    def _parse_args(
+            self,
+            args: Sequence[AnyStr]) -> tuple[optparse.Values, list[AnyStr]]:
+        ...
+
+    def _parse_args(self, args: Sequence[AnyStr] | None):
         # Create an optparse.Values object that will store only the actual
         # passed options, without the defaults.
         actual_options = optparse.Values()
-        _, args = optparse.OptionParser.parse_args(self, args, actual_options)
+        _, argslist = optparse.OptionParser.parse_args(self, args,
+                                                       actual_options)
         # Create an optparse.Values object with the default options.
         options = optparse.Values(self.get_default_values().__dict__)
         # Update it with the options passed by the user.
@@ -7145,7 +6949,7 @@ class OptionParser(optparse.OptionParser):
             format='[%(levelname).1s%(asctime)s %(process)d %(thread)d '
             '%(filename)s] %(message)s')
 
-        return options, args
+        return options, argslist
 
 
 def main(argv):

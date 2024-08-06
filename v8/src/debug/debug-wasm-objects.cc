@@ -4,6 +4,8 @@
 
 #include "src/debug/debug-wasm-objects.h"
 
+#include <optional>
+
 #include "src/api/api-inl.h"
 #include "src/api/api-natives.h"
 #include "src/base/strings.h"
@@ -235,8 +237,8 @@ struct NamedDebugProxy : IndexedDebugProxy<T, id, Provider> {
   }
 
   template <typename V>
-  static base::Optional<uint32_t> FindName(
-      Local<v8::Name> name, const PropertyCallbackInfo<V>& info) {
+  static std::optional<uint32_t> FindName(Local<v8::Name> name,
+                                          const PropertyCallbackInfo<V>& info) {
     if (!name->IsString()) return {};
     auto name_str = Utils::OpenHandle(*name.As<v8::String>());
     if (name_str->length() == 0 || name_str->Get(0) != '$') return {};
@@ -1094,9 +1096,9 @@ Handle<WasmValueObject> WasmValueObject::New(
         // `new WebAssembly.Function(...)`, a module for name resolution is not
         // available.
         if (module_object.is_null() &&
-            IsWasmTrustedInstanceData(internal_fct->ref())) {
+            IsWasmTrustedInstanceData(internal_fct->implicit_arg())) {
           module_object =
-              handle(Cast<WasmTrustedInstanceData>(internal_fct->ref())
+              handle(Cast<WasmTrustedInstanceData>(internal_fct->implicit_arg())
                          ->module_object(),
                      isolate);
         }

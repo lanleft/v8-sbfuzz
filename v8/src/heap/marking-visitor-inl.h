@@ -350,9 +350,14 @@ int MarkingVisitorBase<ConcreteVisitor>::VisitSharedFunctionInfo(
                              SharedFunctionInfo::kTrustedFunctionDataOffset,
                              kUnknownIndirectPointerTag),
                          IndirectPointerMode::kStrong);
+#else
+    VisitPointer(
+        shared_info,
+        shared_info->RawField(SharedFunctionInfo::kTrustedFunctionDataOffset));
 #endif
-    VisitPointer(shared_info, shared_info->RawField(
-                                  SharedFunctionInfo::kFunctionDataOffset));
+    VisitPointer(shared_info,
+                 shared_info->RawField(
+                     SharedFunctionInfo::kUntrustedFunctionDataOffset));
   } else if (!IsByteCodeFlushingEnabled(code_flush_mode_)) {
     // If bytecode flushing is disabled but baseline code flushing is enabled
     // then we have to visit the bytecode but not the baseline code.
@@ -384,7 +389,7 @@ bool MarkingVisitorBase<ConcreteVisitor>::HasBytecodeArrayForFlushing(
   // Get a snapshot of the function data field, and if it is a bytecode array,
   // check if it is old. Note, this is done this way since this function can be
   // called by the concurrent marker.
-  Tagged<Object> data = sfi->GetData(heap_->isolate());
+  Tagged<Object> data = sfi->GetTrustedData(heap_->isolate());
   if (IsCode(data)) {
     Tagged<Code> baseline_code = Cast<Code>(data);
     DCHECK_EQ(baseline_code->kind(), CodeKind::BASELINE);

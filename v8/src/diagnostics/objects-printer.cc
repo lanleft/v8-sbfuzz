@@ -4,6 +4,7 @@
 
 #include <iomanip>
 #include <memory>
+#include <optional>
 
 #include "src/api/api-arguments.h"
 #include "src/common/globals.h"
@@ -34,8 +35,7 @@
 #include "src/wasm/wasm-objects-inl.h"
 #endif  // V8_ENABLE_WEBASSEMBLY
 
-namespace v8 {
-namespace internal {
+namespace v8::internal {
 
 namespace {
 constexpr char kUnavailableString[] = "unavailable";
@@ -515,7 +515,7 @@ void DoPrintElements(std::ostream& os, Tagged<Object> object, int length) {
 
 struct Fp16Printer {
   uint16_t val;
-  Fp16Printer(float f) : val(fp16_ieee_from_fp32_value(f)) {}
+  explicit Fp16Printer(float f) : val(fp16_ieee_from_fp32_value(f)) {}
   operator float() const { return fp16_ieee_to_fp32_value(val); }
 };
 
@@ -531,7 +531,7 @@ void PrintTypedArrayElements(std::ostream& os, const ElementType* data_ptr,
   }
 
   ElementType previous_value = data_ptr[0];
-  ElementType value = 0;
+  ElementType value{0};
   for (size_t i = 1; i <= length; i++) {
     if (i < length) value = data_ptr[i];
     if (i != length && previous_value == value) {
@@ -851,11 +851,67 @@ void JSPromise::JSPromisePrint(std::ostream& os) {
 
 void JSRegExp::JSRegExpPrint(std::ostream& os) {
   JSObjectPrintHeader(os, *this, "JSRegExp");
-  os << "\n - data: " << Brief(data());
+  Isolate* isolate = GetIsolateForSandbox(*this);
+  os << "\n - data: " << Brief(data(isolate));
   os << "\n - source: " << Brief(source());
   FlagsBuffer buffer;
   os << "\n - flags: " << JSRegExp::FlagsToString(flags(), &buffer);
   JSObjectPrintBody(os, *this);
+}
+
+void RegExpData::RegExpDataPrint(std::ostream& os) {
+  switch (type_tag()) {
+    case RegExpData::Type::ATOM:
+      PrintHeader(os, "AtomRegExpData");
+      break;
+    case RegExpData::Type::IRREGEXP:
+      PrintHeader(os, "IrRegExpData");
+      break;
+    case RegExpData::Type::EXPERIMENTAL:
+      PrintHeader(os, "IrRegExpData");
+      break;
+    default:
+      UNREACHABLE();
+  }
+  os << "\n - source: " << source();
+  JSRegExp::FlagsBuffer buffer;
+  os << "\n - flags: " << JSRegExp::FlagsToString(flags(), &buffer);
+}
+
+void AtomRegExpData::AtomRegExpDataPrint(std::ostream& os) {
+  RegExpDataPrint(os);
+  os << "\n - pattern: " << pattern();
+  os << "\n";
+}
+
+void IrRegExpData::IrRegExpDataPrint(std::ostream& os) {
+  Isolate* isolate = GetIsolateForSandbox(*this);
+  RegExpDataPrint(os);
+  if (has_latin1_bytecode()) {
+    os << "\n - latin1_bytecode: " << Brief(latin1_bytecode());
+  }
+  if (has_uc16_bytecode()) {
+    os << "\n - uc16_bytecode: " << Brief(uc16_bytecode());
+  }
+  if (has_latin1_code()) {
+    os << "\n - latin1_code: " << Brief(latin1_code(isolate));
+  }
+  if (has_uc16_code()) {
+    os << "\n - uc16_code: " << Brief(uc16_code(isolate));
+  }
+  os << "\n - capture_name_map: " << Brief(capture_name_map());
+  os << "\n - max_register_count: " << max_register_count();
+  os << "\n - capture_count: " << max_register_count();
+  os << "\n - ticks_until_tier_up: " << max_register_count();
+  os << "\n - backtrack_limit: " << max_register_count();
+  os << "\n";
+}
+
+void RegExpDataWrapper::RegExpDataWrapperPrint(std::ostream& os) {
+  PrintHeader(os, "RegExpDataWrapper");
+  Isolate* isolate = GetIsolateForSandbox(*this);
+  os << "\n    data: " << Brief(data(isolate));
+  os << "\n";
 }
 
 void JSRegExpStringIterator::JSRegExpStringIteratorPrint(std::ostream& os) {
@@ -964,6 +1020,16 @@ void ClassBoilerplate::ClassBoilerplatePrint(std::ostream& os) {
   os << "\n - instance_properties_template: " << instance_properties_template();
   os << "\n - instance_elements_template: " << instance_elements_template();
   os << "\n - instance_computed_properties: " << instance_computed_properties();
+  os << "\n";
+}
+
+void RegExpBoilerplateDescription::RegExpBoilerplateDescriptionPrint(
+    std::ostream& os) {
+  Isolate* isolate = GetIsolateForSandbox((*this));
+  PrintHeader(os, "RegExpBoilerplate");
+  os << "\n - data: " << Brief(data(isolate));
+  os << "\n - source: " << source();
+  os << "\n - flags: " << flags();
   os << "\n";
 }
 
@@ -2166,7 +2232,9 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {
   os << "\n - expected_nof_properties: "
      << static_cast<int>(expected_nof_properties());
   os << "\n - language_mode: " << language_mode();
-  os << "\n - function_data: " << Brief(function_data(kAcquireLoad));
+  os << "\n - trusted_function_data: "
+     << Brief(GetTrustedData(GetIsolateForSandbox(*this)));
+  os << "\n - untrusted_function_data: " << Brief(GetUntrustedData());
   os << "\n - code (from function_data): ";
   Isolate* isolate;
   if (GetIsolateFromHeapObject(*this, &isolate)) {
@@ -2650,7 +2718,7 @@ void WasmDispatchTable::WasmDispatchTablePrint(std::ostream& os) {
   for (int i = 0; i < printed; ++i) {
     os << "\n " << std::setw(8) << i << ": sig: " << sig(i)
        << "; target: " << AsHex::Address(target(i))
-       << "; ref: " << Brief(ref(i));
+       << "; implicit_arg: " << Brief(implicit_arg(i));
   }
   if (printed != len) os << "\n  [...]";
   os << "\n";
@@ -2689,8 +2757,8 @@ void WasmResumeData::WasmResumeDataPrint(std::ostream& os) {
   os << '\n';
 }
 
-void WasmApiFunctionRef::WasmApiFunctionRefPrint(std::ostream& os) {
-  PrintHeader(os, "WasmApiFunctionRef");
+void WasmImportData::WasmImportDataPrint(std::ostream& os) {
+  PrintHeader(os, "WasmImportData");
   Isolate* isolate = GetIsolateForSandbox(*this);
   os << "\n - native_context: " << Brief(native_context());
   os << "\n - callable: " << Brief(callable());
@@ -2710,7 +2778,7 @@ void WasmApiFunctionRef::WasmApiFunctionRefPrint(std::ostream& os) {
 void WasmInternalFunction::WasmInternalFunctionPrint(std::ostream& os) {
   PrintHeader(os, "WasmInternalFunction");
   os << "\n - call target: " << reinterpret_cast<void*>(call_target());
-  os << "\n - ref: " << Brief(ref());
+  os << "\n - implicit arg: " << Brief(implicit_arg());
   os << "\n - external: " << Brief(external());
   os << "\n";
 }
@@ -3098,9 +3166,6 @@ void ScopeInfo::ScopeInfoPrint(std::ostream& os) {
   os << "\n - function kind: " << function_kind();
   if (HasOuterScopeInfo()) {
     os << "\n - outer scope info: " << Brief(OuterScopeInfo());
-  }
-  if (HasLocalsBlockList()) {
-    os << "\n - locals blocklist: " << Brief(LocalsBlockList());
   }
   if (HasFunctionName()) {
     os << "\n - function name: " << Brief(FunctionName());
@@ -3757,10 +3822,6 @@ void TransitionsAccessor::PrintOneTransition(std::ostream& os, Tagged<Name> key,
   } else if (key == roots.elements_transition_symbol()) {
     os << "(transition to " << ElementsKindToString(target->elements_kind())
        << ")";
-  } else if (key == roots.clone_object_ic_transition_symbol()) {
-    os << "(clone object ic dependency transition)";
-  } else if (key == roots.object_assign_clone_transition_symbol()) {
-    os << "(object assign clone cache transition)";
   } else if (key == roots.strict_function_transition_symbol()) {
     os << " (transition to strict function)";
   } else {
@@ -3837,10 +3898,9 @@ void TransitionsAccessor::PrintTransitionTree(
   ReadOnlyRoots roots = ReadOnlyRoots(isolate_);
   int pos = 0;
   int proto_pos = 0;
-  ForEachTransition(
+  ForEachTransitionWithKey(
       no_gc,
-      [&](Tagged<Map> target) {
-        Tagged<Name> key = GetKey(pos);
+      [&](Tagged<Name> key, Tagged<Map> target) {
         os << std::endl
            << "  " << level << "/" << pos << ":" << std::setw(level * 2 + 2)
            << " ";
@@ -3859,10 +3919,6 @@ void TransitionsAccessor::PrintTransitionTree(
           os << "to " << ElementsKindToString(target->elements_kind());
         } else if (key == roots.strict_function_transition_symbol()) {
           os << "to strict function";
-        } else if (key == roots.clone_object_ic_transition_symbol()) {
-          os << "clone object ic dependency";
-        } else if (key == roots.object_assign_clone_transition_symbol()) {
-          os << "object assign clone cache";
         } else {
 #ifdef OBJECT_PRINT
           key->NamePrint(os);
@@ -3893,7 +3949,17 @@ void TransitionsAccessor::PrintTransitionTree(
         TransitionsAccessor transitions(isolate_, target);
         transitions.PrintTransitionTree(os, level + 1, no_gc);
       },
-      TransitionsAccessor::IterationMode::kIncludeClearedSideStepTransitions);
+      [&](SideStepTransition::Kind kind, Tagged<Object> side_step) {
+        os << std::endl
+           << "  " << level << "/s:" << std::setw(level * 2 + 2) << " ";
+        std::stringstream ss;
+        ss << Brief(side_step);
+        os << std::left << std::setw(50) << ss.str() << ": sidestep " << kind;
+        if (!side_step.IsSmi()) {
+          TransitionsAccessor transitions(isolate_, Cast<Map>(side_step));
+          transitions.PrintTransitionTree(os, level + 1, no_gc);
+        }
+      });
 }
 
 void JSObject::PrintTransitions(std::ostream& os) {
@@ -3905,8 +3971,7 @@ void JSObject::PrintTransitions(std::ostream& os) {
 }
 
 #endif  // defined(DEBUG) || defined(OBJECT_PRINT)
-}  // namespace internal
-}  // namespace v8
+}  // namespace v8::internal
 
 namespace {
 
@@ -3988,7 +4053,7 @@ V8_EXPORT_PRIVATE extern void _v8_internal_Print_Code(void* object) {
   }
 #endif  // V8_ENABLE_WEBASSEMBLY
 
-  v8::base::Optional<i::Tagged<i::Code>> lookup_result =
+  std::optional<i::Tagged<i::Code>> lookup_result =
       isolate->heap()->TryFindCodeForInnerPointerForPrinting(address);
   if (!lookup_result.has_value()) {
     i::PrintF(
@@ -4023,7 +4088,7 @@ V8_EXPORT_PRIVATE extern void _v8_internal_Print_OnlyCode(void* object,
   }
 #endif  // V8_ENABLE_WEBASSEMBLY
 
-  v8::base::Optional<i::Tagged<i::Code>> lookup_result =
+  std::optional<i::Tagged<i::Code>> lookup_result =
       isolate->heap()->TryFindCodeForInnerPointerForPrinting(address);
   if (!lookup_result.has_value()) {
     i::PrintF(

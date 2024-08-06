@@ -10,6 +10,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <unordered_map>
 #include <vector>
@@ -44,7 +45,6 @@
 #include "src/objects/tagged.h"
 #include "src/runtime/runtime.h"
 #include "src/sandbox/code-pointer-table.h"
-#include "src/sandbox/external-buffer-table.h"
 #include "src/sandbox/external-pointer-table.h"
 #include "src/sandbox/trusted-pointer-table.h"
 #include "src/utils/allocation.h"
@@ -646,7 +646,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   // for legacy API reasons.
   static void Delete(Isolate* isolate);
 
-  void SetUpFromReadOnlyArtifacts(std::shared_ptr<ReadOnlyArtifacts> artifacts,
+  void SetUpFromReadOnlyArtifacts(ReadOnlyArtifacts* artifacts,
                                   ReadOnlyHeap* ro_heap);
   void set_read_only_heap(ReadOnlyHeap* ro_heap) { read_only_heap_ = ro_heap; }
 
@@ -757,7 +757,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   }
 
   ReadOnlyArtifacts* read_only_artifacts() const {
-    ReadOnlyArtifacts* artifacts = artifacts_.get();
+    ReadOnlyArtifacts* artifacts = isolate_group()->read_only_artifacts();
     DCHECK_IMPLIES(ReadOnlyHeap::IsReadOnlySpaceShared(), artifacts != nullptr);
     return artifacts;
   }
@@ -985,6 +985,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   // source URL. The inspected frames are the same as for the detailed stack
   // trace.
   Handle<String> CurrentScriptNameOrSourceURL();
+  MaybeHandle<Script> CurrentReferrerScript();
   bool GetStackTraceLimit(Isolate* isolate, int* result);
 
   Address GetAbstractPC(int* line, int* column);
@@ -2111,18 +2112,6 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   Address trusted_pointer_table_base_address() const {
     return isolate_data_.trusted_pointer_table_.base_address();
   }
-
-  ExternalBufferTable& external_buffer_table() {
-    return isolate_data_.external_buffer_table_;
-  }
-
-  ExternalBufferTable& shared_external_buffer_table() {
-    return *isolate_data_.shared_external_buffer_table_;
-  }
-
-  ExternalBufferTable::Space* shared_external_buffer_space() {
-    return shared_external_buffer_space_;
-  }
 #endif  // V8_ENABLE_SANDBOX
 
   Address continuation_preserved_embedder_data_address() {
@@ -2313,8 +2302,6 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
     EntryStackItem* previous_item;
   };
 
-  static Isolate* process_wide_shared_space_isolate_;
-
   void Deinit();
 
   static void SetIsolateThreadLocals(Isolate* isolate,
@@ -2374,7 +2361,6 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   IsolateGroup* isolate_group_;
   Heap heap_;
   ReadOnlyHeap* read_only_heap_ = nullptr;
-  std::shared_ptr<ReadOnlyArtifacts> artifacts_;
 
   // These are guaranteed empty when !OwnsStringTables().
   std::unique_ptr<StringTable> string_table_;
@@ -2681,7 +2667,7 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   ThreadDataTable thread_data_table_;
 
   // Stores the isolate containing the shared space.
-  base::Optional<Isolate*> shared_space_isolate_;
+  std::optional<Isolate*> shared_space_isolate_;
 
   // Used to deduplicate registered SharedStructType shapes.
   //
@@ -2693,12 +2679,6 @@ class V8_EXPORT_PRIVATE Isolate final : private HiddenFactory {
   // table.
   ExternalPointerTable::Space* shared_external_pointer_space_ = nullptr;
 #endif  // V8_COMPRESS_POINTERS
-
-#ifdef V8_ENABLE_SANDBOX
-  // Stores the external buffer table space for the shared external buffer
-  // table.
-  ExternalBufferTable::Space* shared_external_buffer_space_ = nullptr;
-#endif  // V8_ENABLE_SANDBOX
 
   // List to manage the lifetime of the WaiterQueueNodes used to track async
   // waiters for JSSynchronizationPrimitives.

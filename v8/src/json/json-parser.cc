@@ -4,6 +4,8 @@
 
 #include "src/json/json-parser.h"
 
+#include <optional>
+
 #include "src/base/strings.h"
 #include "src/builtins/builtins.h"
 #include "src/common/assert-scope.h"
@@ -455,7 +457,7 @@ void JsonParser<Char>::CalculateFileLocation(Handle<Object>& line,
 
 template <typename Char>
 void JsonParser<Char>::ReportUnexpectedToken(
-    JsonToken token, base::Optional<MessageTemplate> errorMessage) {
+    JsonToken token, std::optional<MessageTemplate> errorMessage) {
   // Some exception (for example stack overflow) was already thrown.
   if (isolate_->has_exception()) return;
 
@@ -1961,10 +1963,9 @@ Handle<Object> JsonParser<Char>::ParseJsonNumber() {
     }
 
     base::Vector<const Char> chars(start, cursor_ - start);
-    number =
-        StringToDouble(chars,
-                       NO_CONVERSION_FLAGS,  // Hex, octal or trailing junk.
-                       std::numeric_limits<double>::quiet_NaN());
+    number = StringToDouble(chars,
+                            NO_CONVERSION_FLAG,  // Hex, octal or trailing junk.
+                            std::numeric_limits<double>::quiet_NaN());
 
     DCHECK(!std::isnan(number));
   }

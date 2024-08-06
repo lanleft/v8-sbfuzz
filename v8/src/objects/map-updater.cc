@@ -4,6 +4,7 @@
 
 #include "src/objects/map-updater.h"
 
+#include <optional>
 #include <queue>
 
 #include "src/base/platform/mutex.h"
@@ -18,8 +19,7 @@
 #include "src/objects/property-details.h"
 #include "src/objects/transitions.h"
 
-namespace v8 {
-namespace internal {
+namespace v8::internal {
 
 namespace {
 
@@ -348,9 +348,9 @@ IntegrityLevelTransitionInfo DetectIntegrityLevelTransitions(
 }  // namespace
 
 // static
-base::Optional<Tagged<Map>> MapUpdater::TryUpdateNoLock(Isolate* isolate,
-                                                        Tagged<Map> old_map,
-                                                        ConcurrencyMode cmode) {
+std::optional<Tagged<Map>> MapUpdater::TryUpdateNoLock(Isolate* isolate,
+                                                       Tagged<Map> old_map,
+                                                       ConcurrencyMode cmode) {
   DisallowGarbageCollection no_gc;
 
   // Check the state of the root map.
@@ -406,21 +406,19 @@ base::Optional<Tagged<Map>> MapUpdater::TryUpdateNoLock(Isolate* isolate,
   }
 
   // Replay the transitions as they were before the integrity level transition.
-  Tagged<Map> replay = root_map->TryReplayPropertyTransitions(
+  Tagged<Map> result = root_map->TryReplayPropertyTransitions(
       isolate, info.integrity_level_source_map, cmode);
-  if (replay.is_null()) return {};
+  if (result.is_null()) return {};
 
-  std::optional<Tagged<Map>> result = replay;
   if (info.has_integrity_level_transition) {
     // Now replay the integrity level transition.
     result = TransitionsAccessor(isolate, *result, IsConcurrent(cmode))
                  .SearchSpecial(info.integrity_level_symbol);
   }
+  if (result.is_null()) return {};
 
-  if (result) {
-    DCHECK_EQ(old_map->elements_kind(), (*result)->elements_kind());
-    DCHECK_EQ(old_map->instance_type(), (*result)->instance_type());
-  }
+  DCHECK_EQ(old_map->elements_kind(), (*result)->elements_kind());
+  DCHECK_EQ(old_map->instance_type(), (*result)->instance_type());
   return result;
 }
 
@@ -470,8 +468,9 @@ void MapUpdater::CompleteInobjectSlackTracking(Isolate* isolate,
     };
   } else {
     // Stop slack tracking for this map.
-    callback = [](Tagged<Map> map) {
+    callback = [&](Tagged<Map> map) {
       map->set_construction_counter(Map::kNoSlackTracking);
+      DCHECK(!TransitionsAccessor(isolate, map).HasSideStepTransitions());
     };
   }
 
@@ -777,9 +776,9 @@ MapUpdater::State MapUpdater::FindTargetMap() {
     }
 
     // We try to replay the integrity level transition here.
-    if (auto maybe_transition = TransitionsAccessor::SearchSpecial(
-            isolate_, target_map_, *integrity_level_symbol_)) {
-      result_map_ = *maybe_transition;
+    MaybeHandle<Map> maybe_transition = TransitionsAccessor::SearchSpecial(
+        isolate_, target_map_, *integrity_level_symbol_);
+    if (maybe_transition.ToHandle(&result_map_)) {
       state_ = kEnd;
       return state_;  // Done.
     }
@@ -1230,23 +1229,18 @@ void MapUpdater::UpdateFieldType(Isolate* isolate, DirectHandle<Map> map,
     backlog.pop();
 
     TransitionsAccessor transitions(isolate, current);
-    transitions.ForEachTransitionWithKey(
-        &no_gc,
-        [&](Tagged<Name> key, Tagged<Map> target) {
-          if (TransitionsAccessor::IsSpecialSidestepTransition(roots, key)) {
-            if (!target->is_deprecated()) {
-              sidestep_transition.push_back(target);
-            }
-          } else {
-            backlog.push(target);
-          }
-        },
+    transitions.ForEachTransition(
+        &no_gc, [&](Tagged<Map> target) { backlog.push(target); },
         [&](Tagged<Map> target) {
           if (v8_flags.move_prototype_transitions_first) {
             backlog.push(target);
           }
         },
-        TransitionsAccessor::IterationMode::kIncludeSideStepTransitions);
+        [&](Tagged<Object> target) {
+          if (!target.IsSmi() && !Cast<Map>(target)->is_deprecated()) {
+            sidestep_transition.push_back(Cast<Map>(target));
+          }
+        });
 
     Tagged<DescriptorArray> descriptors =
         current->instance_descriptors(isolate);
@@ -1377,5 +1371,4 @@ void MapUpdater::GeneralizeField(Isolate* isolate, DirectHandle<Map> map,
   }
 }
 
-}  // namespace internal
-}  // namespace v8
+}  // namespace v8::internal

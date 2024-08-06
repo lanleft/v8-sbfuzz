@@ -576,8 +576,8 @@ class ExceptionHandlerTrampolineBuilder {
     EmitMaterialisationsAndPushResults(materialising_moves, save_accumulator);
 
     __ RecordComment("EmitMoves");
-    MaglevAssembler::ScratchRegisterScope temps(masm_);
-    Register scratch = temps.GetDefaultScratchRegister();
+    MaglevAssembler::TemporaryRegisterScope temps(masm_);
+    Register scratch = temps.AcquireScratch();
     direct_moves.EmitMoves(scratch);
     EmitPopMaterialisedResults(materialising_moves, save_accumulator, scratch);
     __ Jump(catch_block->label());
@@ -776,6 +776,7 @@ class MaglevCodeGeneratingNodeProcessor {
   }
 
   void PostProcessGraph(Graph* graph) {}
+  void PostPhiProcessing() {}
 
   void PreProcessBasicBlock(BasicBlock* block) {
     if (block->is_loop()) {
@@ -831,7 +832,7 @@ class MaglevCodeGeneratingNodeProcessor {
       }
     }
 
-    MaglevAssembler::ScratchRegisterScope scratch_scope(masm());
+    MaglevAssembler::TemporaryRegisterScope scratch_scope(masm());
     scratch_scope.Include(node->general_temporaries());
     scratch_scope.IncludeDouble(node->double_temporaries());
 
@@ -884,9 +885,9 @@ class MaglevCodeGeneratingNodeProcessor {
 
     int predecessor_id = state.block()->predecessor_id();
 
-    MaglevAssembler::ScratchRegisterScope temps(masm_);
-    Register scratch = temps.GetDefaultScratchRegister();
-    DoubleRegister double_scratch = temps.GetDefaultScratchDoubleRegister();
+    MaglevAssembler::TemporaryRegisterScope temps(masm_);
+    Register scratch = temps.AcquireScratch();
+    DoubleRegister double_scratch = temps.AcquireScratchDouble();
 
     // TODO(leszeks): Move these to fields, to allow their data structure
     // allocations to be reused. Will need some sort of state resetting.
@@ -1107,6 +1108,7 @@ class SafepointingNodeProcessor {
   void PreProcessGraph(Graph* graph) {}
   void PostProcessGraph(Graph* graph) {}
   void PreProcessBasicBlock(BasicBlock* block) {}
+  void PostPhiProcessing() {}
   ProcessResult Process(NodeBase* node, const ProcessingState& state) {
     local_isolate_->heap()->Safepoint();
     return ProcessResult::kContinue;
@@ -1522,7 +1524,7 @@ class MaglevFrameTranslationBuilder {
         GetDuplicatedId(reinterpret_cast<intptr_t>(object->allocation()));
     if (dup_id != kNotDuplicated) {
       translation_array_builder_->DuplicateObject(dup_id);
-      input_location += object->InputLocationSizeNeeded();
+      input_location += object->InputLocationSizeNeeded(virtual_objects);
       return;
     }
     if (object->type() == VirtualObject::kFixedDoubleArray) {
@@ -1553,7 +1555,8 @@ class MaglevFrameTranslationBuilder {
         BuildVirtualObject(vobject, input_location, virtual_objects);
         return;
       }
-      input_locations_to_advance += vobject->InputLocationSizeNeeded();
+      input_locations_to_advance +=
+          vobject->InputLocationSizeNeeded(virtual_objects);
     }
     if (input_location->operand().IsConstant()) {
       translation_array_builder_->StoreLiteral(

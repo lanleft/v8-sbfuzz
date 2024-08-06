@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <optional>
+
 #include "src/base/small-vector.h"
 #include "src/codegen/bailout-reason.h"
 #include "src/codegen/interface-descriptors-inl.h"
@@ -12,6 +14,7 @@
 #include "src/wasm/turboshaft-graph-interface.h"
 #include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-module.h"
+#include "src/wasm/wasm-objects.h"
 #include "src/zone/zone.h"
 
 namespace v8::internal::wasm {
@@ -369,7 +372,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
 
     // Set the ThreadInWasm flag before we do the actual call.
     {
-      base::Optional<ModifyThreadInWasmFlagScope>
+      std::optional<ModifyThreadInWasmFlagScope>
           modify_thread_in_wasm_flag_builder;
       if (set_in_wasm_flag) {
         modify_thread_in_wasm_flag_builder.emplace(this, Asm());
@@ -379,9 +382,10 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
           V<WasmInternalFunction>::Cast(__ LoadProtectedPointerField(
               function_data, LoadOp::Kind::TaggedBase().Immutable(),
               WasmExportedFunctionData::kProtectedInternalOffset));
-      auto [target, ref] =
-          BuildFunctionTargetAndRef(internal, expected_sig_hash);
-      BuildCallWasmFromWrapper(__ phase_zone(), sig_, target, ref, args, rets);
+      auto [target, implicit_arg] =
+          BuildFunctionTargetAndImplicitArg(internal, expected_sig_hash);
+      BuildCallWasmFromWrapper(__ phase_zone(), sig_, target, implicit_arg,
+                               args, rets);
     }
 
     V<Object> jsval;
@@ -429,18 +433,16 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
         __ Load(js_closure, LoadOp::Kind::TaggedBase(),
                 MemoryRepresentation::TaggedPointer(),
                 JSFunction::kSharedFunctionInfoOffset);
-#if V8_ENABLE_SANDBOX
-    static constexpr int kOffset =
-        SharedFunctionInfo::kTrustedFunctionDataOffset;
+#ifdef V8_ENABLE_SANDBOX
     uint64_t signature_hash = SignatureHasher::Hash(sig_);
 #else
-    static constexpr int kOffset = SharedFunctionInfo::kFunctionDataOffset;
     uint64_t signature_hash = 0;
 #endif
     V<WasmFunctionData> function_data =
         V<WasmFunctionData>::Cast(__ LoadTrustedPointerField(
             shared, LoadOp::Kind::TaggedBase(),
-            kWasmFunctionDataIndirectPointerTag, kOffset));
+            kWasmFunctionDataIndirectPointerTag,
+            SharedFunctionInfo::kTrustedFunctionDataOffset));
 
     if (!wasm::IsJSCompatibleSignature(sig_)) {
       // Throw a TypeError. Use the js_context of the calling javascript
@@ -526,25 +528,19 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
 
   void BuildWasmToJSWrapper(wasm::ImportCallKind kind, int expected_arity,
                             wasm::Suspend suspend, const WasmModule* module) {
-    int suspender_count = suspend == kSuspendWithSuspender ? 1 : 0;
-    int wasm_count =
-        static_cast<int>(sig_->parameter_count()) - suspender_count;
+    int wasm_count = static_cast<int>(sig_->parameter_count());
 
     __ Bind(__ NewBlock());
     base::SmallVector<OpIndex, 16> wasm_params(wasm_count);
     OpIndex ref = __ Parameter(0, RegisterRepresentation::Tagged());
-    V<HeapObject> suspender =
-        suspender_count == 1 ? __ Parameter(1, RegisterRepresentation::Tagged())
-                             : OpIndex::Invalid();
     for (int i = 0; i < wasm_count; ++i) {
-      RegisterRepresentation rep =
-          RepresentationFor(sig_->GetParam(i + suspender_count));
-      wasm_params[i] = (__ Parameter(1 + suspender_count + i, rep));
+      RegisterRepresentation rep = RepresentationFor(sig_->GetParam(i));
+      wasm_params[i] = (__ Parameter(1 + i, rep));
     }
 
-    V<Context> native_context = __ Load(
-        ref, LoadOp::Kind::TaggedBase(), MemoryRepresentation::TaggedPointer(),
-        WasmApiFunctionRef::kNativeContextOffset);
+    V<Context> native_context = __ Load(ref, LoadOp::Kind::TaggedBase(),
+                                        MemoryRepresentation::TaggedPointer(),
+                                        WasmImportData::kNativeContextOffset);
 
     if (kind == wasm::ImportCallKind::kRuntimeTypeError) {
       // =======================================================================
@@ -561,17 +557,15 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
     base::SmallVector<OpIndex, 16> args(pushed_count + 4);
     // Position of the first wasm argument in the JS arguments.
     int pos = kind == ImportCallKind::kUseCallBuiltin ? 3 : 1;
-    // If {suspender_count} is 1, {wasm_count} includes the suspender argument,
-    // which is dropped in {AddArgumentNodes}.
     pos = AddArgumentNodes(base::VectorOf(args), pos, wasm_params, sig_,
-                           native_context, suspender_count);
+                           native_context);
     for (int i = wasm_count; i < expected_arity; ++i) {
       args[pos++] = undefined_node;
     }
 
     V<JSFunction> callable_node = __ Load(ref, LoadOp::Kind::TaggedBase(),
                                           MemoryRepresentation::TaggedPointer(),
-                                          WasmApiFunctionRef::kCallableOffset);
+                                          WasmImportData::kCallableOffset);
     OpIndex old_sp = BuildSwitchToTheCentralStackIfNeeded();
     BuildModifyThreadInWasmFlag(__ phase_zone(), false);
     OpIndex call = OpIndex::Invalid();
@@ -644,8 +638,6 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
 
     if (suspend == kSuspend) {
       call = BuildSuspend(call, LOAD_ROOT(ActiveSuspender), ref, &old_sp);
-    } else if (suspend == kSuspendWithSuspender) {
-      call = BuildSuspend(call, suspender, ref, &old_sp);
     }
 
     // Convert the return value(s) back.
@@ -711,19 +703,14 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
       offset += type.value_kind_size();
     }
 
-    V<Object> function_node = __ LoadTaggedField(
-        incoming_params[0], WasmApiFunctionRef::kCallableOffset);
+    V<Object> function_node =
+        __ LoadTaggedField(incoming_params[0], WasmImportData::kCallableOffset);
     V<HeapObject> shared = LoadSharedFunctionInfo(function_node);
-#if V8_ENABLE_SANDBOX
-    static constexpr int kOffset =
-        SharedFunctionInfo::kTrustedFunctionDataOffset;
-#else
-    static constexpr int kOffset = SharedFunctionInfo::kFunctionDataOffset;
-#endif
     V<WasmFunctionData> function_data =
         V<WasmFunctionData>::Cast(__ LoadTrustedPointerField(
             shared, LoadOp::Kind::TaggedBase(),
-            kWasmFunctionDataIndirectPointerTag, kOffset));
+            kWasmFunctionDataIndirectPointerTag,
+            SharedFunctionInfo::kTrustedFunctionDataOffset));
     V<Object> host_data_foreign = __ LoadTaggedField(
         function_data, WasmCapiFunctionData::kEmbedderDataOffset);
 
@@ -761,7 +748,7 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
       V<Context> context =
           __ Load(incoming_params[0], LoadOp::Kind::TaggedBase(),
                   MemoryRepresentation::TaggedPointer(),
-                  WasmApiFunctionRef::kNativeContextOffset);
+                  WasmImportData::kNativeContextOffset);
       __ Call(call_target, {return_value, context}, ts_call_descriptor);
       __ Unreachable();
     }
@@ -1103,12 +1090,10 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
   // Must be called in the first block to emit the Parameter ops.
   int AddArgumentNodes(base::Vector<OpIndex> args, int pos,
                        base::SmallVector<OpIndex, 16> wasm_params,
-                       const wasm::FunctionSig* sig, V<Context> context,
-                       int suspender_count) {
+                       const wasm::FunctionSig* sig, V<Context> context) {
     // Convert wasm numbers to JS values.
     for (size_t i = 0; i < wasm_params.size(); ++i) {
-      args[pos++] =
-          ToJS(wasm_params[i], sig->GetParam(i + suspender_count), context);
+      args[pos++] = ToJS(wasm_params[i], sig->GetParam(i), context);
     }
     return pos;
   }
@@ -1208,11 +1193,10 @@ class WasmWrapperTSGraphBuilder : public WasmGraphBuilderBase {
   }
 
   OpIndex BuildSuspend(OpIndex value, V<Object> suspender,
-                       V<Object> api_function_ref, OpIndex* old_sp) {
-    V<Context> native_context =
-        __ Load(api_function_ref, LoadOp::Kind::TaggedBase(),
-                MemoryRepresentation::TaggedPointer(),
-                WasmApiFunctionRef::kNativeContextOffset);
+                       V<Object> import_data, OpIndex* old_sp) {
+    V<Context> native_context = __ Load(import_data, LoadOp::Kind::TaggedBase(),
+                                        MemoryRepresentation::TaggedPointer(),
+                                        WasmImportData::kNativeContextOffset);
     OpIndex active_suspender = LOAD_ROOT(ActiveSuspender);
 
     // If value is a promise, suspend to the js-to-wasm prompt, and resume later

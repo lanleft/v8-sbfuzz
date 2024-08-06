@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <numeric>
+#include <optional>
 
 #include "src/base/atomicops.h"
 #include "src/base/build_config.h"
@@ -1315,9 +1316,6 @@ WasmCode* NativeModule::PublishCodeLocked(
 
   code->RegisterTrapHandlerData();
 
-  // Put the code in the debugging cache, if needed.
-  if (V8_UNLIKELY(cached_code_)) InsertToCodeCache(code);
-
   // Assume an order of execution tiers that represents the quality of their
   // generated code.
   static_assert(ExecutionTier::kNone < ExecutionTier::kLiftoff &&
@@ -1736,8 +1734,8 @@ class NativeModuleWireBytesStorage final : public WireBytesStorage {
         .SubVector(ref.offset(), ref.end_offset());
   }
 
-  base::Optional<ModuleWireBytes> GetModuleBytes() const final {
-    return base::Optional<ModuleWireBytes>(
+  std::optional<ModuleWireBytes> GetModuleBytes() const final {
+    return std::optional<ModuleWireBytes>(
         std::atomic_load(&wire_bytes_)->as_vector());
   }
 
@@ -1793,22 +1791,6 @@ void NativeModule::TransferNewOwnedCodeLocked() const {
         insertion_hint, code->instruction_start(), std::move(code));
   }
   new_owned_code_.clear();
-}
-
-void NativeModule::InsertToCodeCache(WasmCode* code) {
-  allocation_mutex_.AssertHeld();
-  DCHECK_NOT_NULL(cached_code_);
-  if (code->IsAnonymous()) return;
-  // Only cache Liftoff debugging code or TurboFan code (no breakpoints or
-  // stepping).
-  if (code->tier() == ExecutionTier::kLiftoff &&
-      code->for_debugging() != kForDebugging) {
-    return;
-  }
-  auto key = std::make_pair(code->tier(), code->index());
-  if (cached_code_->insert(std::make_pair(key, code)).second) {
-    code->IncRef();
-  }
 }
 
 WasmCode* NativeModule::Lookup(Address pc) const {
@@ -2350,10 +2332,28 @@ void NativeModule::SampleCodeSize(Counters* counters) const {
   counters->wasm_module_code_size_mb()->AddSample(code_size_mb);
   int code_size_kb = static_cast<int>(code_size / KB);
   counters->wasm_module_code_size_kb()->AddSample(code_size_kb);
-  // Record the size of meta data.
-  int metadata_size_kb =
-      static_cast<int>(EstimateCurrentMemoryConsumption() / KB);
-  counters->wasm_module_metadata_size_kb()->AddSample(metadata_size_kb);
+  // Record the size of metadata.
+  Histogram* metadata_histogram = counters->wasm_module_metadata_size_kb();
+  if (metadata_histogram->Enabled()) {
+    // TODO(349610478): EstimateCurrentMemoryConsumption() acquires a large
+    // amount of locks per NativeModule. This estimation is run on every
+    // mark-compact GC. Reconsider whether this should be run less frequently.
+    // (Probably incomplete) list of locks acquired:
+    // - TypeFeedbackStorage::mutex
+    // - LazilyGeneratedNames::mutex_
+    // - CompilationStateImpl::mutex_
+    // - CompilationUnitQueues::queues_mutex_
+    //   - per queue: QueueImpl::mutex
+    // - BigUnitsQueue::mutex
+    // - WasmImportWrapperCache::mutex_
+    // - NativeModule::allocation_mutex_
+    // - LazilyGeneratedNames::mutex_
+    // - DebugInfoImpl::debug_side_tables_mutex_
+    // - DebugInfoImpl::mutex_
+    int metadata_size_kb =
+        static_cast<int>(EstimateCurrentMemoryConsumption() / KB);
+    metadata_histogram->AddSample(metadata_size_kb);
+  }
   // If this is a wasm module of >= 2MB, also sample the freed code size,
   // absolute and relative. Code GC does not happen on asm.js
   // modules, and small modules will never trigger GC anyway.
@@ -2575,7 +2575,7 @@ NamesProvider* NativeModule::GetNamesProvider() {
 }
 
 size_t NativeModule::EstimateCurrentMemoryConsumption() const {
-  UPDATE_WHEN_CLASS_CHANGES(NativeModule, 568);
+  UPDATE_WHEN_CLASS_CHANGES(NativeModule, 552);
   size_t result = sizeof(NativeModule);
   result += module_->EstimateCurrentMemoryConsumption();
 
@@ -2623,9 +2623,6 @@ size_t NativeModule::EstimateCurrentMemoryConsumption() const {
     debug_info = debug_info_.get();
     if (names_provider_) {
       result += names_provider_->EstimateCurrentMemoryConsumption();
-    }
-    if (cached_code_) {
-      result += ContentSize(*cached_code_);
     }
   }
   if (debug_info) {

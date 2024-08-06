@@ -4,8 +4,9 @@
 
 #include "src/wasm/baseline/liftoff-compiler.h"
 
+#include <optional>
+
 #include "src/base/enum-set.h"
-#include "src/base/optional.h"
 #include "src/codegen/assembler-inl.h"
 // TODO(clemensb): Remove dependences on compiler stuff.
 #include "src/codegen/external-reference.h"
@@ -1786,7 +1787,7 @@ class LiftoffCompiler {
   // Before emitting the conditional branch, {will_freeze} will be initialized
   // to prevent cache state changes in conditionally executed code.
   void JumpIfFalse(FullDecoder* decoder, Label* false_dst,
-                   base::Optional<FreezeCacheState>& will_freeze) {
+                   std::optional<FreezeCacheState>& will_freeze) {
     DCHECK(!will_freeze.has_value());
     Condition cond =
         test_and_reset_outstanding_op(kExprI32Eqz) ? kNotZero : kZero;
@@ -1839,7 +1840,7 @@ class LiftoffCompiler {
     if_block->else_state = zone_->New<ElseState>(zone_);
 
     // Test the condition on the value stack, jump to else if zero.
-    base::Optional<FreezeCacheState> frozen;
+    std::optional<FreezeCacheState> frozen;
     JumpIfFalse(decoder, if_block->else_state->label.get(), frozen);
     frozen.reset();
 
@@ -1946,9 +1947,10 @@ class LiftoffCompiler {
   LiftoffRegister GenerateCCall(ValueKind return_kind,
                                 const std::initializer_list<VarState> args,
                                 ExternalReference ext_ref) {
-    SCOPED_CODE_COMMENT(std::string{"Call extref: "} +
-                        ExternalReferenceTable::NameOfIsolateIndependentAddress(
-                            ext_ref.address()));
+    SCOPED_CODE_COMMENT(
+        std::string{"Call extref: "} +
+        ExternalReferenceTable::NameOfIsolateIndependentAddress(
+            ext_ref.address(), IsolateGroup::current()->external_ref_table()));
     __ SpillAllRegisters();
     __ CallC(args, ext_ref);
     if (needs_gp_reg_pair(return_kind)) {
@@ -1962,9 +1964,10 @@ class LiftoffCompiler {
                                     ValueKind out_argument_kind,
                                     const std::initializer_list<VarState> args,
                                     ExternalReference ext_ref) {
-    SCOPED_CODE_COMMENT(std::string{"Call extref: "} +
-                        ExternalReferenceTable::NameOfIsolateIndependentAddress(
-                            ext_ref.address()));
+    SCOPED_CODE_COMMENT(
+        std::string{"Call extref: "} +
+        ExternalReferenceTable::NameOfIsolateIndependentAddress(
+            ext_ref.address(), IsolateGroup::current()->external_ref_table()));
 
     // Before making a call, spill all cache registers.
     __ SpillAllRegisters();
@@ -3190,7 +3193,7 @@ class LiftoffCompiler {
     Label cont_false;
 
     // Test the condition on the value stack, jump to {cont_false} if zero.
-    base::Optional<FreezeCacheState> frozen;
+    std::optional<FreezeCacheState> frozen;
     JumpIfFalse(decoder, &cont_false, frozen);
 
     BrOrRet(decoder, depth);
@@ -3618,7 +3621,8 @@ class LiftoffCompiler {
                Value* result) {
     DCHECK_EQ(type.value_type().kind(), result->type.kind());
     bool needs_f16_to_f32_conv = false;
-    if (type.value() == LoadType::kF32LoadF16) {
+    if (type.value() == LoadType::kF32LoadF16 &&
+        !asm_.supports_f16_mem_access()) {
       needs_f16_to_f32_conv = true;
       type = LoadType::kI32Load16U;
     }
@@ -3793,7 +3797,8 @@ class LiftoffCompiler {
     LiftoffRegList pinned;
     LiftoffRegister value = pinned.set(__ PopToRegister());
 
-    if (type.value() == StoreType::kF32StoreF16) {
+    if (type.value() == StoreType::kF32StoreF16 &&
+        !asm_.supports_f16_mem_access()) {
       type = StoreType::kI32Store16;
       // {value} is always a float, so can't alias with {i16}.
       DCHECK_EQ(kF32, kind);
@@ -4336,6 +4341,30 @@ class LiftoffCompiler {
     __ PushRegister(kS128, dst);
   }
 
+  template <ValueKind result_lane_kind, typename EmitFn>
+  void EmitSimdFmaOpWithCFallback(EmitFn emit_fn,
+                                  ExternalReference (*ext_ref)()) {
+    LiftoffRegList pinned;
+    LiftoffRegister src3 = pinned.set(__ PopToRegister(pinned));
+    LiftoffRegister src2 = pinned.set(__ PopToRegister(pinned));
+    LiftoffRegister src1 = pinned.set(__ PopToRegister(pinned));
+    static constexpr RegClass dst_rc = reg_class_for(kS128);
+    LiftoffRegister dst = __ GetUnusedRegister(dst_rc, {});
+    if (!(asm_.*emit_fn)(dst, src1, src2, src3)) {
+      // Return v128 via stack for ARM.
+      GenerateCCallWithStackBuffer(
+          &dst, kVoid, kS128,
+          {VarState{kS128, src1, 0}, VarState{kS128, src2, 0},
+           VarState{kS128, src3, 0}},
+          ext_ref());
+    }
+    if (V8_UNLIKELY(nondeterminism_)) {
+      LiftoffRegList pinned{dst};
+      CheckS128Nan(dst, pinned, result_lane_kind);
+    }
+    __ PushRegister(kS128, dst);
+  }
+
   void SimdOp(FullDecoder* decoder, WasmOpcode opcode, const Value* /* args */,
               Value* /* result */) {
     CHECK(CpuFeatures::SupportsWasmSimd128());
@@ -4863,6 +4892,34 @@ class LiftoffCompiler {
       case wasm::kExprF32x4UConvertI32x4:
         return EmitUnOp<kS128, kS128, kF32>(
             &LiftoffAssembler::emit_f32x4_uconvert_i32x4);
+      case wasm::kExprF32x4PromoteLowF16x8:
+        return EmitSimdFloatRoundingOpWithCFallback<kF32>(
+            &LiftoffAssembler::emit_f32x4_promote_low_f16x8,
+            &ExternalReference::wasm_f32x4_promote_low_f16x8);
+      case wasm::kExprF16x8DemoteF32x4Zero:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_demote_f32x4_zero,
+            &ExternalReference::wasm_f16x8_demote_f32x4_zero);
+      case wasm::kExprF16x8DemoteF64x2Zero:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_demote_f64x2_zero,
+            &ExternalReference::wasm_f16x8_demote_f64x2_zero);
+      case wasm::kExprI16x8SConvertF16x8:
+        return EmitSimdFloatRoundingOpWithCFallback<kI16>(
+            &LiftoffAssembler::emit_i16x8_sconvert_f16x8,
+            &ExternalReference::wasm_i16x8_sconvert_f16x8);
+      case wasm::kExprI16x8UConvertF16x8:
+        return EmitSimdFloatRoundingOpWithCFallback<kI16>(
+            &LiftoffAssembler::emit_i16x8_uconvert_f16x8,
+            &ExternalReference::wasm_i16x8_uconvert_f16x8);
+      case wasm::kExprF16x8SConvertI16x8:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_sconvert_i16x8,
+            &ExternalReference::wasm_f16x8_sconvert_i16x8);
+      case wasm::kExprF16x8UConvertI16x8:
+        return EmitSimdFloatRoundingOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_uconvert_i16x8,
+            &ExternalReference::wasm_f16x8_uconvert_i16x8);
       case wasm::kExprI8x16SConvertI16x8:
         return EmitBinOp<kS128, kS128>(
             &LiftoffAssembler::emit_i8x16_sconvert_i16x8);
@@ -4933,6 +4990,14 @@ class LiftoffCompiler {
       case wasm::kExprI32x4TruncSatF64x2UZero:
         return EmitUnOp<kS128, kS128>(
             &LiftoffAssembler::emit_i32x4_trunc_sat_f64x2_u_zero);
+      case wasm::kExprF16x8Qfma:
+        return EmitSimdFmaOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_qfma,
+            &ExternalReference::wasm_f16x8_qfma);
+      case wasm::kExprF16x8Qfms:
+        return EmitSimdFmaOpWithCFallback<kF16>(
+            &LiftoffAssembler::emit_f16x8_qfms,
+            &ExternalReference::wasm_f16x8_qfms);
       case wasm::kExprF32x4Qfma:
         return EmitSimdFmaOp<kF32>(&LiftoffAssembler::emit_f32x4_qfma);
       case wasm::kExprF32x4Qfms:
@@ -8268,7 +8333,7 @@ class LiftoffCompiler {
       // A direct call to an imported function.
       FUZZER_HEAVY_INSTRUCTION;
       LiftoffRegList pinned;
-      Register imported_function_ref =
+      Register implicit_arg =
           pinned.set(__ GetUnusedRegister(kGpReg, pinned)).gp();
       Register target = pinned.set(__ GetUnusedRegister(kGpReg, pinned)).gp();
 
@@ -8278,9 +8343,9 @@ class LiftoffCompiler {
         LOAD_PROTECTED_PTR_INSTANCE_FIELD(dispatch_table,
                                           DispatchTableForImports, pinned);
         __ LoadProtectedPointer(
-            imported_function_ref, dispatch_table,
+            implicit_arg, dispatch_table,
             ObjectAccess::ToTagged(WasmDispatchTable::OffsetOf(imm.index) +
-                                   WasmDispatchTable::kRefBias));
+                                   WasmDispatchTable::kImplicitArgBias));
 
         __ LoadFullPointer(
             target, dispatch_table,
@@ -8288,7 +8353,7 @@ class LiftoffCompiler {
                                    WasmDispatchTable::kTargetBias));
       }
 
-      __ PrepareCall(&sig, call_descriptor, &target, imported_function_ref);
+      __ PrepareCall(&sig, call_descriptor, &target, implicit_arg);
       if (tail_call) {
         __ PrepareTailCall(
             static_cast<int>(call_descriptor->ParameterSlotCount()),
@@ -8328,13 +8393,6 @@ class LiftoffCompiler {
         source_position_table_builder_.AddPosition(
             __ pc_offset(), SourcePosition(decoder->position()), true);
         __ CallNativeWasmCode(addr);
-        if (v8_flags.wasm_deopt &&
-            env_->deopt_info_bytecode_offset == decoder->pc_offset()) {
-          DCHECK_EQ(env_->deopt_location_kind,
-                    LocationKindForDeopt::kInlinedCall);
-          // TODO(mliedtke): Should we do this in `FinishCall` instead?
-          StoreFrameDescriptionForDeopt(decoder);
-        }
         FinishCall(decoder, &sig, call_descriptor);
       }
     }
@@ -8596,15 +8654,15 @@ class LiftoffCompiler {
       SCOPED_CODE_COMMENT("Execute indirect call");
 
       // The first parameter will be either a WasmTrustedInstanceData or a
-      // WasmApiFunctionRef.
-      Register first_param = temps.Acquire(kGpReg).gp();
+      // WasmImportData.
+      Register implicit_arg = temps.Acquire(kGpReg).gp();
       Register target = temps.Acquire(kGpReg).gp();
 
       {
-        SCOPED_CODE_COMMENT("Load ref and target from dispatch table");
+        SCOPED_CODE_COMMENT("Load implicit arg and target from dispatch table");
         __ LoadProtectedPointer(
-            first_param, dispatch_table_base.gp_reg(),
-            dispatch_table_offset + WasmDispatchTable::kRefBias);
+            implicit_arg, dispatch_table_base.gp_reg(),
+            dispatch_table_offset + WasmDispatchTable::kImplicitArgBias);
         __ Load(LiftoffRegister(target), dispatch_table_base.gp_reg(), no_reg,
                 dispatch_table_offset + WasmDispatchTable::kTargetBias,
                 LoadType::ForValueKind(kIntPtrKind));
@@ -8645,25 +8703,25 @@ class LiftoffCompiler {
         // All in all, let's keep it simple at first, i.e., share the maximum
         // amount of code when inlining is enabled vs. not.
         VarState target_var(kIntPtrKind, LiftoffRegister(target), 0);
-        VarState first_param_var(kRef, LiftoffRegister(first_param), 0);
+        VarState implicit_arg_var(kRef, LiftoffRegister(implicit_arg), 0);
 
         // CallIndirectIC(vector: FixedArray, vectorIndex: int32,
         //                target: RawPtr,
-        //                ref: WasmTrustedInstanceData|WasmApiFunctionRef)
-        //               -> <target, ref>
+        //                ref: WasmTrustedInstanceData|WasmImportData)
+        //               -> <target, implicit_arg>
         CallBuiltin(Builtin::kCallIndirectIC,
                     MakeSig::Returns(kIntPtrKind, kIntPtrKind)
                         .Params(kRef, kI32, kIntPtrKind, kRef),
-                    {vector_var, index_var, target_var, first_param_var},
+                    {vector_var, index_var, target_var, implicit_arg_var},
                     decoder->position());
         target = kReturnRegister0;
-        first_param = kReturnRegister1;
+        implicit_arg = kReturnRegister1;
       }
 
       auto call_descriptor = compiler::GetWasmCallDescriptor(zone_, imm.sig);
       call_descriptor = GetLoweredCallDescriptor(zone_, call_descriptor);
 
-      __ PrepareCall(&sig, call_descriptor, &target, first_param);
+      __ PrepareCall(&sig, call_descriptor, &target, implicit_arg);
       if (tail_call) {
         __ PrepareTailCall(
             static_cast<int>(call_descriptor->ParameterSlotCount()),
@@ -8674,13 +8732,6 @@ class LiftoffCompiler {
         source_position_table_builder_.AddPosition(
             __ pc_offset(), SourcePosition(decoder->position()), true);
         __ CallIndirect(&sig, call_descriptor, target);
-
-        if (v8_flags.wasm_deopt &&
-            env_->deopt_info_bytecode_offset == decoder->pc_offset() &&
-            env_->deopt_location_kind == LocationKindForDeopt::kInlinedCall) {
-          StoreFrameDescriptionForDeopt(decoder);
-        }
-
         FinishCall(decoder, &sig, call_descriptor);
       }
     }
@@ -8741,7 +8792,7 @@ class LiftoffCompiler {
     call_descriptor = GetLoweredCallDescriptor(zone_, call_descriptor);
 
     Register target_reg = no_reg;
-    Register first_param_reg = no_reg;
+    Register implicit_arg_reg = no_reg;
 
     if (inlining_enabled(decoder)) {
       if (v8_flags.wasm_deopt &&
@@ -8779,14 +8830,14 @@ class LiftoffCompiler {
 
       // CallRefIC(vector: FixedArray, vectorIndex: int32,
       //           signatureHash: uintptr,
-      //           funcref: WasmFuncRef) -> <target, ref>
+      //           funcref: WasmFuncRef) -> <target, implicit_arg>
       CallBuiltin(Builtin::kCallRefIC,
                   MakeSig::Returns(kIntPtrKind, kIntPtrKind)
                       .Params(kRef, kI32, kIntPtrKind, kRef),
                   {vector_var, index_var, sig_hash_var, func_ref_var},
                   decoder->position());
       target_reg = LiftoffRegister(kReturnRegister0).gp();
-      first_param_reg = kReturnRegister1;
+      implicit_arg_reg = kReturnRegister1;
     } else {  // inlining_enabled(decoder)
       // Non-feedback-collecting version.
       // Executing a write barrier needs temp registers; doing this on a
@@ -8797,7 +8848,7 @@ class LiftoffCompiler {
       LiftoffRegList pinned;
       Register func_ref = pinned.set(__ PopToModifiableRegister(pinned)).gp();
       MaybeEmitNullCheck(decoder, func_ref, pinned, func_ref_type);
-      first_param_reg = pinned.set(__ GetUnusedRegister(kGpReg, pinned)).gp();
+      implicit_arg_reg = pinned.set(__ GetUnusedRegister(kGpReg, pinned)).gp();
       target_reg = pinned.set(__ GetUnusedRegister(kGpReg, pinned)).gp();
 
       // Load the WasmInternalFunction from the WasmFuncRef.
@@ -8807,22 +8858,23 @@ class LiftoffCompiler {
           ObjectAccess::ToTagged(WasmFuncRef::kTrustedInternalOffset),
           kWasmInternalFunctionIndirectPointerTag);
 
-      // Load "ref" (WasmTrustedInstanceData or WasmApiFunctionRef) and target.
-      Register ref = first_param_reg;
-      __ LoadProtectedPointer(ref, internal_function,
-                              wasm::ObjectAccess::ToTagged(
-                                  WasmInternalFunction::kProtectedRefOffset));
+      // Load the implicit argument (WasmTrustedInstanceData or WasmImportData)
+      // and target.
+      __ LoadProtectedPointer(
+          implicit_arg_reg, internal_function,
+          wasm::ObjectAccess::ToTagged(
+              WasmInternalFunction::kProtectedImplicitArgOffset));
 
       __ LoadFullPointer(target_reg, internal_function,
                          wasm::ObjectAccess::ToTagged(
                              WasmInternalFunction::kCallTargetOffset));
 
       // Now the call target is in {target_reg} and the first parameter
-      // (WasmTrustedInstanceData or WasmApiFunctionRef) is in
-      // {first_param_reg}.
+      // (WasmTrustedInstanceData or WasmImportData) is in
+      // {implicit_arg_reg}.
     }  // inlining_enabled(decoder)
 
-    __ PrepareCall(&sig, call_descriptor, &target_reg, first_param_reg);
+    __ PrepareCall(&sig, call_descriptor, &target_reg, implicit_arg_reg);
     if (tail_call) {
       __ PrepareTailCall(
           static_cast<int>(call_descriptor->ParameterSlotCount()),
@@ -8833,13 +8885,6 @@ class LiftoffCompiler {
       source_position_table_builder_.AddPosition(
           __ pc_offset(), SourcePosition(decoder->position()), true);
       __ CallIndirect(&sig, call_descriptor, target_reg);
-
-      if (v8_flags.wasm_deopt &&
-          env_->deopt_info_bytecode_offset == decoder->pc_offset() &&
-          env_->deopt_location_kind == LocationKindForDeopt::kInlinedCall) {
-        StoreFrameDescriptionForDeopt(decoder);
-      }
-
       FinishCall(decoder, &sig, call_descriptor);
     }
   }
@@ -9000,6 +9045,12 @@ class LiftoffCompiler {
 
   void FinishCall(FullDecoder* decoder, ValueKindSig* sig,
                   compiler::CallDescriptor* call_descriptor) {
+    if (v8_flags.wasm_deopt &&
+        env_->deopt_info_bytecode_offset == decoder->pc_offset() &&
+        env_->deopt_location_kind == LocationKindForDeopt::kInlinedCall) {
+      StoreFrameDescriptionForDeopt(decoder);
+    }
+
     DefineSafepoint();
     RegisterDebugSideTableEntry(decoder, DebugSideTableBuilder::kDidSpill);
     int pc_offset = __ pc_offset();

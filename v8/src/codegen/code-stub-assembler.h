@@ -6,6 +6,7 @@
 #define V8_CODEGEN_CODE_STUB_ASSEMBLER_H_
 
 #include <functional>
+#include <optional>
 
 #include "src/base/macros.h"
 #include "src/codegen/bailout-reason.h"
@@ -875,6 +876,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   TNode<BoolT> IsInRange(TNode<Word32T> value, U lower_limit, U higher_limit) {
     DCHECK_LE(lower_limit, higher_limit);
     static_assert(sizeof(U) <= kInt32Size);
+    if (lower_limit == 0) {
+      return Uint32LessThanOrEqual(value, Int32Constant(higher_limit));
+    }
     return Uint32LessThanOrEqual(Int32Sub(value, Int32Constant(lower_limit)),
                                  Int32Constant(higher_limit - lower_limit));
   }
@@ -889,6 +893,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   TNode<BoolT> IsInRange(TNode<WordT> value, intptr_t lower_limit,
                          intptr_t higher_limit) {
     DCHECK_LE(lower_limit, higher_limit);
+    if (lower_limit == 0) {
+      return UintPtrLessThanOrEqual(value, IntPtrConstant(higher_limit));
+    }
     return UintPtrLessThanOrEqual(IntPtrSub(value, IntPtrConstant(lower_limit)),
                                   IntPtrConstant(higher_limit - lower_limit));
   }
@@ -1072,6 +1079,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   TNode<RawPtrT> LoadCodeEntrypointViaCodePointerField(TNode<HeapObject> object,
                                                        TNode<IntPtrT> offset,
                                                        CodeEntrypointTag tag);
+  TNode<RawPtrT> LoadCodeEntryFromIndirectPointerHandle(
+      TNode<IndirectPointerHandleT> handle, CodeEntrypointTag tag);
 #endif
 
   TNode<Object> LoadProtectedPointerField(TNode<TrustedObject> object,
@@ -1124,23 +1133,23 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
 
 #if V8_ENABLE_WEBASSEMBLY
   // Returns WasmTrustedInstanceData|Smi.
-  TNode<Object> LoadInstanceDataFromWasmApiFunctionRef(
-      TNode<WasmApiFunctionRef> ref) {
+  TNode<Object> LoadInstanceDataFromWasmImportData(TNode<WasmImportData> ref) {
     return LoadProtectedPointerField(
-        ref, WasmApiFunctionRef::kProtectedInstanceDataOffset);
+        ref, WasmImportData::kProtectedInstanceDataOffset);
   }
 
-  // Returns WasmApiFunctionRef or WasmTrustedInstanceData.
-  TNode<TrustedObject> LoadRefFromWasmInternalFunction(
+  // Returns WasmImportData or WasmTrustedInstanceData.
+  TNode<TrustedObject> LoadImplicitArgFromWasmInternalFunction(
       TNode<WasmInternalFunction> object) {
     TNode<Object> obj = LoadProtectedPointerField(
-        object, WasmInternalFunction::kProtectedRefOffset);
+        object, WasmInternalFunction::kProtectedImplicitArgOffset);
     CSA_DCHECK(this, TaggedIsNotSmi(obj));
-    TNode<HeapObject> ref = CAST(obj);
-    CSA_DCHECK(this,
-               Word32Or(HasInstanceType(ref, WASM_TRUSTED_INSTANCE_DATA_TYPE),
-                        HasInstanceType(ref, WASM_API_FUNCTION_REF_TYPE)));
-    return CAST(ref);
+    TNode<HeapObject> implicit_arg = CAST(obj);
+    CSA_DCHECK(
+        this,
+        Word32Or(HasInstanceType(implicit_arg, WASM_TRUSTED_INSTANCE_DATA_TYPE),
+                 HasInstanceType(implicit_arg, WASM_IMPORT_DATA_TYPE)));
+    return CAST(implicit_arg);
   }
 
   TNode<RawPtrT> LoadWasmTypeInfoNativeTypePtr(TNode<WasmTypeInfo> object) {
@@ -1723,11 +1732,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   // Load the "code" property of a JSFunction.
   TNode<Code> LoadJSFunctionCode(TNode<JSFunction> function);
 
-  // Load the data object associated with a SFI.
-  // If the (expected) data type is known, prefer to use one of the specialized
-  // accessors (e.g. LoadSharedFunctionInfoBuiltinId). Otherwise, the returned
-  // object can generally not be trusted to be of the expected type.
-  TNode<Object> LoadSharedFunctionInfoData(TNode<SharedFunctionInfo> sfi);
+  TNode<Object> LoadSharedFunctionInfoTrustedData(
+      TNode<SharedFunctionInfo> sfi);
+  TNode<Object> LoadSharedFunctionInfoUntrustedData(
+      TNode<SharedFunctionInfo> sfi);
 
   TNode<BoolT> SharedFunctionInfoHasBaselineCode(TNode<SharedFunctionInfo> sfi);
 
@@ -1786,6 +1794,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   void StoreTrustedPointerFieldNoWriteBarrier(
       TNode<HeapObject> object, int offset, IndirectPointerTag tag,
       TNode<ExposedTrustedObject> value);
+
+  void ClearTrustedPointerField(TNode<HeapObject> object, int offset);
 
   // Store a code pointer field.
   // These are special versions of trusted pointers that, when the sandbox is
@@ -2103,15 +2113,15 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
 
   TNode<JSObject> AllocateJSObjectFromMap(
       TNode<Map> map,
-      base::Optional<TNode<HeapObject>> properties = base::nullopt,
-      base::Optional<TNode<FixedArray>> elements = base::nullopt,
+      std::optional<TNode<HeapObject>> properties = std::nullopt,
+      std::optional<TNode<FixedArray>> elements = std::nullopt,
       AllocationFlags flags = AllocationFlag::kNone,
       SlackTrackingMode slack_tracking_mode = kNoSlackTracking);
 
   void InitializeJSObjectFromMap(
       TNode<HeapObject> object, TNode<Map> map, TNode<IntPtrT> instance_size,
-      base::Optional<TNode<HeapObject>> properties = base::nullopt,
-      base::Optional<TNode<FixedArray>> elements = base::nullopt,
+      std::optional<TNode<HeapObject>> properties = std::nullopt,
+      std::optional<TNode<FixedArray>> elements = std::nullopt,
       SlackTrackingMode slack_tracking_mode = kNoSlackTracking);
 
   void InitializeJSObjectBodyWithSlackTracking(TNode<HeapObject> object,
@@ -2129,7 +2139,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   std::pair<TNode<JSArray>, TNode<FixedArrayBase>>
   AllocateUninitializedJSArrayWithElements(
       ElementsKind kind, TNode<Map> array_map, TNode<Smi> length,
-      base::Optional<TNode<AllocationSite>> allocation_site,
+      std::optional<TNode<AllocationSite>> allocation_site,
       TNode<IntPtrT> capacity,
       AllocationFlags allocation_flags = AllocationFlag::kNone,
       int array_header_size = JSArray::kHeaderSize);
@@ -2137,11 +2147,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   // Allocate a JSArray and fill elements with the hole.
   TNode<JSArray> AllocateJSArray(
       ElementsKind kind, TNode<Map> array_map, TNode<IntPtrT> capacity,
-      TNode<Smi> length, base::Optional<TNode<AllocationSite>> allocation_site,
+      TNode<Smi> length, std::optional<TNode<AllocationSite>> allocation_site,
       AllocationFlags allocation_flags = AllocationFlag::kNone);
   TNode<JSArray> AllocateJSArray(
       ElementsKind kind, TNode<Map> array_map, TNode<Smi> capacity,
-      TNode<Smi> length, base::Optional<TNode<AllocationSite>> allocation_site,
+      TNode<Smi> length, std::optional<TNode<AllocationSite>> allocation_site,
       AllocationFlags allocation_flags = AllocationFlag::kNone) {
     return AllocateJSArray(kind, array_map, PositiveSmiUntag(capacity), length,
                            allocation_site, allocation_flags);
@@ -2151,20 +2161,20 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
       TNode<Smi> length,
       AllocationFlags allocation_flags = AllocationFlag::kNone) {
     return AllocateJSArray(kind, array_map, PositiveSmiUntag(capacity), length,
-                           base::nullopt, allocation_flags);
+                           std::nullopt, allocation_flags);
   }
   TNode<JSArray> AllocateJSArray(
       ElementsKind kind, TNode<Map> array_map, TNode<IntPtrT> capacity,
       TNode<Smi> length,
       AllocationFlags allocation_flags = AllocationFlag::kNone) {
-    return AllocateJSArray(kind, array_map, capacity, length, base::nullopt,
+    return AllocateJSArray(kind, array_map, capacity, length, std::nullopt,
                            allocation_flags);
   }
 
   // Allocate a JSArray and initialize the header fields.
   TNode<JSArray> AllocateJSArray(
       TNode<Map> array_map, TNode<FixedArrayBase> elements, TNode<Smi> length,
-      base::Optional<TNode<AllocationSite>> allocation_site = base::nullopt,
+      std::optional<TNode<AllocationSite>> allocation_site = std::nullopt,
       int array_header_size = JSArray::kHeaderSize);
 
   enum class HoleConversionMode { kDontConvert, kConvertToUndefined };
@@ -2180,7 +2190,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   // function generates significantly less code in this case.
   TNode<JSArray> CloneFastJSArray(
       TNode<Context> context, TNode<JSArray> array,
-      base::Optional<TNode<AllocationSite>> allocation_site = base::nullopt,
+      std::optional<TNode<AllocationSite>> allocation_site = std::nullopt,
       HoleConversionMode convert_holes = HoleConversionMode::kDontConvert);
 
   TNode<JSArray> ExtractFastJSArray(TNode<Context> context,
@@ -2191,7 +2201,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   TNode<FixedArrayBase> AllocateFixedArray(
       ElementsKind kind, TNode<TIndex> capacity,
       AllocationFlags flags = AllocationFlag::kNone,
-      base::Optional<TNode<Map>> fixed_array_map = base::nullopt);
+      std::optional<TNode<Map>> fixed_array_map = std::nullopt);
 
   template <typename Function>
   TNode<Object> FastCloneJSObject(TNode<HeapObject> source,
@@ -2476,13 +2486,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   // can skip write barriers.
   template <typename TIndex>
   TNode<FixedArrayBase> ExtractFixedArray(
-      TNode<FixedArrayBase> source, base::Optional<TNode<TIndex>> first,
-      base::Optional<TNode<TIndex>> count = base::nullopt,
-      base::Optional<TNode<TIndex>> capacity = base::nullopt,
+      TNode<FixedArrayBase> source, std::optional<TNode<TIndex>> first,
+      std::optional<TNode<TIndex>> count = std::nullopt,
+      std::optional<TNode<TIndex>> capacity = std::nullopt,
       ExtractFixedArrayFlags extract_flags =
           ExtractFixedArrayFlag::kAllFixedArrays,
       TVariable<BoolT>* var_holes_converted = nullptr,
-      base::Optional<TNode<Int32T>> source_elements_kind = base::nullopt);
+      std::optional<TNode<Int32T>> source_elements_kind = std::nullopt);
 
   // Copy a portion of an existing FixedArray or FixedDoubleArray into a new
   // FixedArray, including special appropriate handling for COW arrays.
@@ -2516,7 +2526,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
       AllocationFlags allocation_flags, ExtractFixedArrayFlags extract_flags,
       HoleConversionMode convert_holes,
       TVariable<BoolT>* var_holes_converted = nullptr,
-      base::Optional<TNode<Int32T>> source_runtime_kind = base::nullopt);
+      std::optional<TNode<Int32T>> source_runtime_kind = std::nullopt);
 
   // Attempt to copy a FixedDoubleArray to another FixedDoubleArray. In the case
   // where the source array has a hole, produce a FixedArray instead where holes
@@ -2733,15 +2743,15 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
                           const char* method_name);
 
   void ThrowRangeError(TNode<Context> context, MessageTemplate message,
-                       base::Optional<TNode<Object>> arg0 = base::nullopt,
-                       base::Optional<TNode<Object>> arg1 = base::nullopt,
-                       base::Optional<TNode<Object>> arg2 = base::nullopt);
+                       std::optional<TNode<Object>> arg0 = std::nullopt,
+                       std::optional<TNode<Object>> arg1 = std::nullopt,
+                       std::optional<TNode<Object>> arg2 = std::nullopt);
   void ThrowTypeError(TNode<Context> context, MessageTemplate message,
                       char const* arg0 = nullptr, char const* arg1 = nullptr);
   void ThrowTypeError(TNode<Context> context, MessageTemplate message,
-                      base::Optional<TNode<Object>> arg0,
-                      base::Optional<TNode<Object>> arg1 = base::nullopt,
-                      base::Optional<TNode<Object>> arg2 = base::nullopt);
+                      std::optional<TNode<Object>> arg0,
+                      std::optional<TNode<Object>> arg1 = std::nullopt,
+                      std::optional<TNode<Object>> arg2 = std::nullopt);
 
   void TerminateExecution(TNode<Context> context);
 
@@ -2887,6 +2897,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   TNode<BoolT> IsString(TNode<HeapObject> object);
   TNode<Word32T> IsStringWrapper(TNode<HeapObject> object);
   TNode<BoolT> IsSeqOneByteString(TNode<HeapObject> object);
+
+  TNode<BoolT> IsSequentialStringMap(TNode<Map> map);
+  TNode<BoolT> IsExternalStringMap(TNode<Map> map);
+  TNode<BoolT> IsUncachedExternalStringMap(TNode<Map> map);
+  TNode<BoolT> IsOneByteStringMap(TNode<Map> map);
 
   TNode<BoolT> IsSymbolInstanceType(TNode<Int32T> instance_type);
   TNode<BoolT> IsInternalizedStringInstanceType(TNode<Int32T> instance_type);
@@ -3486,7 +3501,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   void AddToDictionary(
       TNode<Dictionary> dictionary, TNode<Name> key, TNode<Object> value,
       Label* bailout,
-      base::Optional<TNode<IntPtrT>> insertion_index = base::nullopt);
+      std::optional<TNode<IntPtrT>> insertion_index = std::nullopt);
 
   // Tries to check if {object} has own {unique_name} property.
   void TryHasOwnProperty(TNode<HeapObject> object, TNode<Map> map,
@@ -4618,7 +4633,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler
   // fields initialized.
   TNode<JSArray> AllocateUninitializedJSArray(
       TNode<Map> array_map, TNode<Smi> length,
-      base::Optional<TNode<AllocationSite>> allocation_site,
+      std::optional<TNode<AllocationSite>> allocation_site,
       TNode<IntPtrT> size_in_bytes);
 
   // Increases the provided capacity to the next valid value, if necessary.
@@ -4854,8 +4869,9 @@ class ToDirectStringAssembler : public CodeStubAssembler {
     return TryToSequential(PTR_TO_STRING, if_bailout);
   }
 
+  TNode<BoolT> IsOneByte();
+
   TNode<String> string() { return var_string_.value(); }
-  TNode<Int32T> instance_type() { return var_instance_type_.value(); }
   TNode<IntPtrT> offset() { return var_offset_.value(); }
   TNode<Word32T> is_external() { return var_is_external_.value(); }
 
@@ -4863,7 +4879,11 @@ class ToDirectStringAssembler : public CodeStubAssembler {
   TNode<RawPtrT> TryToSequential(StringPointerKind ptr_kind, Label* if_bailout);
 
   TVariable<String> var_string_;
+#if V8_STATIC_ROOTS_BOOL
+  TVariable<Map> var_map_;
+#else
   TVariable<Int32T> var_instance_type_;
+#endif
   // TODO(v8:9880): Use UintPtrT here.
   TVariable<IntPtrT> var_offset_;
   TVariable<Word32T> var_is_external_;

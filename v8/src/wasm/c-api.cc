@@ -1519,8 +1519,8 @@ auto make_func(Store* store_abs, std::shared_ptr<FuncData> data) -> own<Func> {
       isolate, reinterpret_cast<i::Address>(&FuncData::v8_callback),
       embedder_data, SignatureHelper::Serialize(isolate, data->type.get()),
       signature_hash);
-  i::Cast<i::WasmApiFunctionRef>(
-      function->shared()->wasm_capi_function_data()->internal()->ref())
+  i::Cast<i::WasmImportData>(
+      function->shared()->wasm_capi_function_data()->internal()->implicit_arg())
       ->set_callable(*function);
   auto func = implement<Func>::type::make(store, function);
   return func;
@@ -1741,7 +1741,7 @@ auto Func::call(const Val args[], Val results[]) const -> own<Trap> {
   v8::Isolate::Scope isolate_scope(store->isolate());
   i::HandleScope handle_scope(isolate);
   i::Tagged<i::Object> raw_function_data =
-      func->v8_object()->shared()->GetData(isolate);
+      func->v8_object()->shared()->GetTrustedData(isolate);
 
   // WasmCapiFunctions can be called directly.
   if (IsWasmCapiFunctionData(raw_function_data)) {
@@ -1749,7 +1749,7 @@ auto Func::call(const Val args[], Val results[]) const -> own<Trap> {
         i::Cast<i::WasmCapiFunctionData>(raw_function_data), args, results);
   }
 
-  DCHECK(IsWasmExportedFunctionData(raw_function_data));
+  SBXCHECK(IsWasmExportedFunctionData(raw_function_data));
   i::DirectHandle<i::WasmExportedFunctionData> function_data{
       i::Cast<i::WasmExportedFunctionData>(raw_function_data), isolate};
   i::DirectHandle<i::WasmTrustedInstanceData> instance_data{
@@ -1768,13 +1768,14 @@ auto Func::call(const Val args[], Val results[]) const -> own<Trap> {
 
   i::Handle<i::Object> object_ref;
   if (function_index < static_cast<int>(module->num_imported_functions)) {
-    object_ref = i::handle(
-        instance_data->dispatch_table_for_imports()->ref(function_index),
-        isolate);
-    if (IsWasmApiFunctionRef(*object_ref)) {
+    object_ref =
+        i::handle(instance_data->dispatch_table_for_imports()->implicit_arg(
+                      function_index),
+                  isolate);
+    if (IsWasmImportData(*object_ref)) {
       i::Tagged<i::JSFunction> jsfunc = i::Cast<i::JSFunction>(
-          i::Cast<i::WasmApiFunctionRef>(*object_ref)->callable());
-      i::Tagged<i::Object> data = jsfunc->shared()->GetData(isolate);
+          i::Cast<i::WasmImportData>(*object_ref)->callable());
+      i::Tagged<i::Object> data = jsfunc->shared()->GetTrustedData(isolate);
       if (IsWasmCapiFunctionData(data)) {
         return CallWasmCapiFunction(i::Cast<i::WasmCapiFunctionData>(data),
                                     args, results);

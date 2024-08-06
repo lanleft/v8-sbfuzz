@@ -751,12 +751,11 @@ class V8_EXPORT_PRIVATE Factory : public FactoryBase<Factory> {
       DirectHandle<WasmInternalFunction> internal_function,
       const wasm::FunctionSig* sig, uint32_t canonical_type_index,
       int wrapper_budget, wasm::Promise promise);
-  Handle<WasmApiFunctionRef> NewWasmApiFunctionRef(
+  Handle<WasmImportData> NewWasmImportData(
       DirectHandle<HeapObject> callable, wasm::Suspend suspend,
       MaybeDirectHandle<WasmTrustedInstanceData> instance_data,
       DirectHandle<PodArray<wasm::ValueType>> serialized_sig);
-  Handle<WasmApiFunctionRef> NewWasmApiFunctionRef(
-      DirectHandle<WasmApiFunctionRef> ref);
+  Handle<WasmImportData> NewWasmImportData(DirectHandle<WasmImportData> ref);
 
   Handle<WasmFastApiCallData> NewWasmFastApiCallData(
       DirectHandle<HeapObject> signature, DirectHandle<Object> callback_data);
@@ -770,6 +769,7 @@ class V8_EXPORT_PRIVATE Factory : public FactoryBase<Factory> {
       wasm::Suspend suspend, wasm::Promise promise, uintptr_t signature_hash);
   Handle<WasmResumeData> NewWasmResumeData(
       DirectHandle<WasmSuspenderObject> suspender, wasm::OnResume on_resume);
+  Handle<WasmSuspenderObject> NewWasmSuspenderObject();
   Handle<WasmStruct> NewWasmStruct(const wasm::StructType* type,
                                    wasm::WasmValue* args,
                                    DirectHandle<Map> map);
@@ -1004,7 +1004,7 @@ class V8_EXPORT_PRIVATE Factory : public FactoryBase<Factory> {
   // atom regexp and stores it in the regexp.
   void SetRegExpAtomData(DirectHandle<JSRegExp> regexp,
                          DirectHandle<String> source, JSRegExp::Flags flags,
-                         DirectHandle<Object> match_pattern);
+                         DirectHandle<String> match_pattern);
 
   // Creates a new FixedArray that holds the data associated with the
   // irregexp regexp and stores it in the regexp.
@@ -1017,6 +1017,16 @@ class V8_EXPORT_PRIVATE Factory : public FactoryBase<Factory> {
   void SetRegExpExperimentalData(DirectHandle<JSRegExp> regexp,
                                  DirectHandle<String> source,
                                  JSRegExp::Flags flags, int capture_count);
+
+  Handle<RegExpData> NewAtomRegExpData(DirectHandle<String> source,
+                                       JSRegExp::Flags flags,
+                                       DirectHandle<String> pattern);
+  Handle<RegExpData> NewIrRegExpData(DirectHandle<String> source,
+                                     JSRegExp::Flags flags, int capture_count,
+                                     uint32_t backtrack_limit);
+  Handle<RegExpData> NewExperimentalRegExpData(DirectHandle<String> source,
+                                               JSRegExp::Flags flags,
+                                               int capture_count);
 
   // Returns the value for a known global constant (a property of the global
   // object which is neither configurable nor writable) like 'undefined'.

@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 #include <limits>
+#include <optional>
 
 #include "src/base/logging.h"
-#include "src/base/optional.h"
 #include "src/base/overflowing-math.h"
 #include "src/builtins/builtins.h"
 #include "src/codegen/assembler.h"
@@ -32,9 +32,7 @@
 #include "src/wasm/wasm-objects.h"
 #endif  // V8_ENABLE_WEBASSEMBLY
 
-namespace v8 {
-namespace internal {
-namespace compiler {
+namespace v8::internal::compiler {
 
 #define __ masm()->
 
@@ -3251,6 +3249,15 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       VectorLength vec_len = VectorLengthField::decode(opcode);
       if (vec_len == kV128) {
         switch (lane_size) {
+          case kL16: {
+            CpuFeatureScope f16c_scope(masm(), F16C);
+            CpuFeatureScope avx2_scope(masm(), AVX2);
+            __ vcvtps2ph(i.OutputDoubleRegister(0), i.InputDoubleRegister(0),
+                         0);
+            __ vpbroadcastw(i.OutputSimd128Register(),
+                            i.OutputDoubleRegister(0));
+            break;
+          }
           case kL32: {
             // F32x4Splat
             __ F32x4Splat(i.OutputSimd128Register(), i.InputDoubleRegister(0));
@@ -3295,6 +3302,16 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       VectorLength vec_len = VectorLengthField::decode(opcode);
       if (vec_len == kV128) {
         switch (lane_size) {
+          case kL16: {
+            // F16x8ExtractLane
+            CpuFeatureScope f16c_scope(masm(), F16C);
+            CpuFeatureScope avx_scope(masm(), AVX);
+            __ Pextrw(kScratchRegister, i.InputSimd128Register(0),
+                      i.InputUint8(1));
+            __ vmovd(i.OutputFloatRegister(), kScratchRegister);
+            __ vcvtph2ps(i.OutputFloatRegister(), i.OutputFloatRegister());
+            break;
+          }
           case kL32: {
             // F32x4ExtractLane
             __ F32x4ExtractLane(i.OutputFloatRegister(),
@@ -3321,6 +3338,16 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       VectorLength vec_len = VectorLengthField::decode(opcode);
       if (vec_len == kV128) {
         switch (lane_size) {
+          case kL16: {
+            // F16x8ReplaceLane
+            CpuFeatureScope f16c_scope(masm(), F16C);
+            CpuFeatureScope avx_scope(masm(), AVX);
+            __ vcvtps2ph(kScratchDoubleReg, i.InputDoubleRegister(2), 0);
+            __ vmovd(kScratchRegister, kScratchDoubleReg);
+            __ vpinsrw(i.OutputSimd128Register(), i.InputSimd128Register(0),
+                       kScratchRegister, i.InputInt8(1));
+            break;
+          }
           case kL32: {
             // F32x4ReplaceLane
             // The insertps instruction uses imm8[5:4] to indicate the lane
@@ -7008,28 +7035,61 @@ void CodeGenerator::AssembleArchDeoptBranch(Instruction* instr,
     __ j(FlagsConditionToCondition(branch->condition), tlabel);
   }
 
-  // TODO(42204618): Support this test mode in wasm in an isolate-independent
-  // way.
-  if (v8_flags.deopt_every_n_times > 0 && isolate() != nullptr) {
-    ExternalReference counter =
-        ExternalReference::stress_deopt_count(isolate());
+  if (v8_flags.deopt_every_n_times > 0) {
+    if (isolate() != nullptr) {
+      ExternalReference counter =
+          ExternalReference::stress_deopt_count(isolate());
 
-    __ pushfq();
-    __ pushq(rax);
-    __ load_rax(counter);
-    __ decl(rax);
-    __ j(not_zero, &nodeopt, Label::kNear);
+      __ pushfq();
+      __ pushq(rax);
+      __ load_rax(counter);
+      __ decl(rax);
+      __ j(not_zero, &nodeopt, Label::kNear);
 
-    __ Move(rax, v8_flags.deopt_every_n_times);
-    __ store_rax(counter);
-    __ popq(rax);
-    __ popfq();
-    __ jmp(tlabel);
+      __ Move(rax, v8_flags.deopt_every_n_times);
+      __ store_rax(counter);
+      __ popq(rax);
+      __ popfq();
+      __ jmp(tlabel);
 
-    __ bind(&nodeopt);
-    __ store_rax(counter);
-    __ popq(rax);
-    __ popfq();
+      __ bind(&nodeopt);
+      __ store_rax(counter);
+      __ popq(rax);
+      __ popfq();
+    } else {
+#if V8_ENABLE_WEBASSEMBLY
+      CHECK(v8_flags.wasm_deopt);
+      CHECK(IsWasm());
+      __ pushfq();
+      __ pushq(rax);
+      __ pushq(rbx);
+      // Load the address of the counter into rbx.
+      __ movq(rbx, Operand(rbp, WasmFrameConstants::kWasmInstanceOffset));
+      __ movq(
+          rbx,
+          Operand(rbx, WasmTrustedInstanceData::kStressDeoptCounterOffset - 1));
+      // Load the counter into rax and decrement it.
+      __ movq(rax, Operand(rbx, 0));
+      __ decl(rax);
+      __ j(not_zero, &nodeopt, Label::kNear);
+      // The counter is zero, reset counter.
+      __ Move(rax, v8_flags.deopt_every_n_times);
+      __ movq(Operand(rbx, 0), rax);
+      // Restore registers and jump to deopt label.
+      __ popq(rbx);
+      __ popq(rax);
+      __ popfq();
+      __ jmp(tlabel);
+      // Write back counter and restore registers.
+      __ bind(&nodeopt);
+      __ movq(Operand(rbx, 0), rax);
+      __ popq(rbx);
+      __ popq(rax);
+      __ popfq();
+#else
+      UNREACHABLE();
+#endif
+    }
   }
 
   if (!branch->fallthru) {
@@ -7101,7 +7161,7 @@ void CodeGenerator::AssembleArchConditionalBranch(Instruction* instr,
 
 void CodeGenerator::AssembleArchBinarySearchSwitchRange(
     Register input, RpoNumber def_block, std::pair<int32_t, Label*>* begin,
-    std::pair<int32_t, Label*>* end, base::Optional<int32_t>& last_cmp_value) {
+    std::pair<int32_t, Label*>* end, std::optional<int32_t>& last_cmp_value) {
   if (end - begin < kBinarySearchSwitchMinimalCases) {
     if (last_cmp_value && *last_cmp_value == begin->first) {
       // No need to do another repeat cmp.
@@ -7134,7 +7194,7 @@ void CodeGenerator::AssembleArchBinarySearchSwitch(Instruction* instr) {
   for (size_t index = 2; index < instr->InputCount(); index += 2) {
     cases.push_back({i.InputInt32(index + 0), GetLabel(i.InputRpo(index + 1))});
   }
-  base::Optional<int32_t> last_cmp_value;
+  std::optional<int32_t> last_cmp_value;
   AssembleArchBinarySearchSwitchRange(input, i.InputRpo(1), cases.data(),
                                       cases.data() + cases.size(),
                                       last_cmp_value);
@@ -7266,7 +7326,7 @@ void CodeGenerator::AssembleConstructFrame() {
           call_descriptor->IsWasmImportWrapper() ||
           call_descriptor->IsWasmCapiFunction()) {
         // For import wrappers and C-API functions, this stack slot is only used
-        // for printing stack traces in V8. Also, it holds a WasmApiFunctionRef
+        // for printing stack traces in V8. Also, it holds a WasmImportData
         // instead of the instance itself, which is taken care of in the frames
         // accessors.
         __ pushq(kWasmInstanceRegister);
@@ -8060,6 +8120,4 @@ void CodeGenerator::AssembleJumpTable(Label** targets, size_t target_count) {
 
 #undef __
 
-}  // namespace compiler
-}  // namespace internal
-}  // namespace v8
+}  // namespace v8::internal::compiler

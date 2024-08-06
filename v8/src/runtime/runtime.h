@@ -578,7 +578,7 @@ namespace internal {
   F(IsSharedString, 1, 1)                     \
   F(IsSparkplugEnabled, 0, 1)                 \
   F(IsTurbofanEnabled, 0, 1)                  \
-  F(IsolateCountForTesting, 0, 1)             \
+  F(IsWasmTieringPredictable, 0, 1)           \
   F(MapIteratorProtector, 0, 1)               \
   F(NeverOptimizeFunction, 1, 1)              \
   F(NewRegExpWithBacktrackLimit, 3, 1)        \
@@ -736,7 +736,9 @@ namespace internal {
   F(WasmTraceEnter, 0, 1)                                  \
   F(WasmTraceExit, 1, 1)                                   \
   F(WasmTraceMemory, 1, 1)                                 \
-  F(WasmNull, 0, 1)
+  F(WasmNull, 0, 1)                                        \
+  F(WasmArray, 0, 1)                                       \
+  F(WasmStruct, 0, 1)
 
 #define FOR_EACH_INTRINSIC_WASM_DRUMBRAKE_TEST(F, I) \
   F(WasmTraceBeginExecution, 0, 1)                   \

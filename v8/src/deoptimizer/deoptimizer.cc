@@ -4,6 +4,8 @@
 
 #include "src/deoptimizer/deoptimizer.h"
 
+#include <optional>
+
 #include "src/base/memory.h"
 #include "src/codegen/interface-descriptors.h"
 #include "src/codegen/register-configuration.h"
@@ -28,9 +30,6 @@
 #include "src/utils/utils.h"
 
 #if V8_ENABLE_WEBASSEMBLY
-// TODO(mliedtke): Factor out GetI32WasmCallDescriptor() into non-sea-of-nodes
-// header.
-#include "src/compiler/wasm-compiler.h"
 #include "src/wasm/baseline/liftoff-varstate.h"
 #include "src/wasm/compilation-environment-inl.h"
 #include "src/wasm/function-compiler.h"
@@ -109,31 +108,6 @@ Tagged<Code> DeoptimizableCodeIterator::Next() {
     return code;
   }
 }
-
-#if V8_ENABLE_WEBASSEMBLY
-class DummyResultCollector {
- public:
-  void AddParamAt(size_t index, LinkageLocation location) {}
-  void AddReturnAt(size_t index, LinkageLocation location) {}
-};
-
-void GetWasmStackSlotsCounts(const wasm::FunctionSig* sig,
-                             int* parameter_stack_slots,
-                             int* return_stack_slots) {
-  int untagged_slots, untagged_return_slots;
-  DummyResultCollector result_collector;
-  base::Optional<AccountingAllocator> alloc;
-  base::Optional<Zone> zone;
-  if constexpr (!Is64()) {
-    alloc.emplace();
-    zone.emplace(&*alloc, "deoptimizer i32sig lowering");
-    sig = compiler::GetI32Sig(&*zone, sig);
-  }
-  wasm::IterateSignatureImpl(sig, false, result_collector, &untagged_slots,
-                             parameter_stack_slots, &untagged_return_slots,
-                             return_stack_slots);
-}
-#endif
 
 }  // namespace
 
@@ -961,36 +935,35 @@ FrameDescription* Deoptimizer::DoComputeWasmLiftoffFrame(
                                     total_output_frame_size;
   output_frame->SetTop(top);
   Address pc = wasm_code->instruction_start() + liftoff_description->pc_offset;
-  // Note: Differently to JS, all PCs, including intermediate ones need to be
-  // signed.
-  if (is_topmost) {
-    Address signed_pc = PointerAuthentication::SignAndCheckPC(
-        isolate(), pc, output_frame->GetTop());
-    output_frame->SetPc(signed_pc);
-  } else {
-    // For signing the PC we need to know the stack pointer ("top" address)
-    // which needs to take into account the arguments of the callee (the frame
-    // "above" the current frame).
-    // Therefore, we delay signing the PC to the next frame which knows how many
-    // parameter stack slots there are.
-    output_frame->SetPc(pc, true);
-  }
+  // Sign the PC. Note that for the non-topmost frames the stack pointer at
+  // which the PC is stored as the "caller pc" / return address depends on the
+  // amount of parameter stack slots of the callee. To simplify the code, we
+  // just sign it as if there weren't any parameter stack slots.
+  // When building up the next frame we can check and "move" the caller PC by
+  // signing it again with the correct stack pointer.
+  Address signed_pc = PointerAuthentication::SignAndCheckPC(
+      isolate(), pc, output_frame->GetTop());
+  output_frame->SetPc(signed_pc);
+
   // Sign the previous frame's PC.
-  if (!is_bottommost) {
-    FrameDescription* previous_frame = output_[frame_index - 1];
-    Address pc = previous_frame->GetPc();
-    Address context =
-        previous_frame->GetTop() - parameter_stack_slots * kSystemPointerSize;
-    Address signed_pc =
-        PointerAuthentication::SignAndCheckPC(isolate(), pc, context);
-    previous_frame->SetPc(signed_pc);
-  } else {
+  if (is_bottommost) {
     Address old_context =
         caller_frame_top_ - input_->parameter_count() * kSystemPointerSize;
     Address new_context =
         caller_frame_top_ - parameter_stack_slots * kSystemPointerSize;
     caller_pc_ = PointerAuthentication::MoveSignedPC(isolate(), caller_pc_,
                                                      new_context, old_context);
+  } else if (parameter_stack_slots != 0) {
+    // The previous frame's PC is stored at a different stack slot, so we need
+    // to re-sign the PC for the new context (stack pointer).
+    FrameDescription* previous_frame = output_[frame_index - 1];
+    Address pc = previous_frame->GetPc();
+    Address old_context = previous_frame->GetTop();
+    Address new_context =
+        old_context - parameter_stack_slots * kSystemPointerSize;
+    Address signed_pc = PointerAuthentication::MoveSignedPC(
+        isolate(), pc, new_context, old_context);
+    previous_frame->SetPc(signed_pc);
   }
 
   // Store the caller PC.
@@ -1349,6 +1322,30 @@ void Deoptimizer::DoComputeOutputFramesWasmImpl() {
     TraceDeoptEnd(timer.Elapsed().InMillisecondsF());
   }
 }
+
+void Deoptimizer::GetWasmStackSlotsCounts(const wasm::FunctionSig* sig,
+                                          int* parameter_stack_slots,
+                                          int* return_stack_slots) {
+  class DummyResultCollector {
+   public:
+    void AddParamAt(size_t index, LinkageLocation location) {}
+    void AddReturnAt(size_t index, LinkageLocation location) {}
+  } result_collector;
+
+  // On 32 bits we need to perform the int64 lowering for the signature.
+#if V8_TARGET_ARCH_32_BIT
+  if (!alloc_) {
+    DCHECK(!zone_);
+    alloc_.emplace();
+    zone_.emplace(&*alloc_, "deoptimizer i32sig lowering");
+  }
+  sig = GetI32Sig(&*zone_, sig);
+#endif
+  int untagged_slots, untagged_return_slots;  // Unused.
+  wasm::IterateSignatureImpl(sig, false, result_collector, &untagged_slots,
+                             parameter_stack_slots, &untagged_return_slots,
+                             return_stack_slots);
+}
 #endif  // V8_ENABLE_WEBASSEMBLY
 
 // We rely on this function not causing a GC.  It is called from generated code
@@ -1636,7 +1633,7 @@ void Deoptimizer::DoComputeUnoptimizedFrame(TranslatedFrame* translated_frame,
   TranslatedFrame::iterator function_iterator = value_iterator++;
 
   Tagged<BytecodeArray> bytecode_array;
-  base::Optional<Tagged<DebugInfo>> debug_info =
+  std::optional<Tagged<DebugInfo>> debug_info =
       shared->TryGetDebugInfo(isolate());
   if (debug_info.has_value() && debug_info.value()->HasBreakInfo()) {
     bytecode_array = debug_info.value()->DebugBytecodeArray(isolate());
@@ -2315,7 +2312,7 @@ Builtin Deoptimizer::TrampolineForBuiltinContinuation(
 
 #if V8_ENABLE_WEBASSEMBLY
 TranslatedValue Deoptimizer::TranslatedValueForWasmReturnKind(
-    base::Optional<wasm::ValueKind> wasm_call_return_kind) {
+    std::optional<wasm::ValueKind> wasm_call_return_kind) {
   if (wasm_call_return_kind) {
     switch (wasm_call_return_kind.value()) {
       case wasm::kI32:

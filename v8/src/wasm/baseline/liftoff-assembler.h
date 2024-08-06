@@ -1393,6 +1393,20 @@ class LiftoffAssembler : public MacroAssembler {
                                         LiftoffRegister src);
   inline void emit_f32x4_uconvert_i32x4(LiftoffRegister dst,
                                         LiftoffRegister src);
+  inline bool emit_f16x8_demote_f32x4_zero(LiftoffRegister dst,
+                                           LiftoffRegister src);
+  inline bool emit_f16x8_demote_f64x2_zero(LiftoffRegister dst,
+                                           LiftoffRegister src);
+  inline bool emit_f32x4_promote_low_f16x8(LiftoffRegister dst,
+                                           LiftoffRegister src);
+  inline bool emit_i16x8_sconvert_f16x8(LiftoffRegister dst,
+                                        LiftoffRegister src);
+  inline bool emit_i16x8_uconvert_f16x8(LiftoffRegister dst,
+                                        LiftoffRegister src);
+  inline bool emit_f16x8_sconvert_i16x8(LiftoffRegister dst,
+                                        LiftoffRegister src);
+  inline bool emit_f16x8_uconvert_i16x8(LiftoffRegister dst,
+                                        LiftoffRegister src);
   inline void emit_i8x16_sconvert_i16x8(LiftoffRegister dst,
                                         LiftoffRegister lhs,
                                         LiftoffRegister rhs);
@@ -1476,6 +1490,10 @@ class LiftoffAssembler : public MacroAssembler {
   inline void emit_f64x2_replace_lane(LiftoffRegister dst, LiftoffRegister src1,
                                       LiftoffRegister src2,
                                       uint8_t imm_lane_idx);
+  inline bool emit_f16x8_qfma(LiftoffRegister dst, LiftoffRegister src1,
+                              LiftoffRegister src2, LiftoffRegister src3);
+  inline bool emit_f16x8_qfms(LiftoffRegister dst, LiftoffRegister src1,
+                              LiftoffRegister src2, LiftoffRegister src3);
   inline void emit_f32x4_qfma(LiftoffRegister dst, LiftoffRegister src1,
                               LiftoffRegister src2, LiftoffRegister src3);
   inline void emit_f32x4_qfms(LiftoffRegister dst, LiftoffRegister src1,
@@ -1540,6 +1558,8 @@ class LiftoffAssembler : public MacroAssembler {
   inline void emit_s128_set_if_nan(Register dst, LiftoffRegister src,
                                    Register tmp_gp, LiftoffRegister tmp_s128,
                                    ValueKind lane_kind);
+
+  inline bool supports_f16_mem_access();
 
   ////////////////////////////////////
   // End of platform-specific part. //

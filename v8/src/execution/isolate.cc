@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -502,8 +503,6 @@ size_t Isolate::HashIsolateForEmbeddedBlob() {
 
   return hash;
 }
-
-Isolate* Isolate::process_wide_shared_space_isolate_{nullptr};
 
 thread_local Isolate::PerIsolateThreadData* g_current_per_isolate_thread_data_
     V8_CONSTINIT = nullptr;
@@ -1553,6 +1552,24 @@ class CurrentScriptNameStackVisitor {
   Handle<String> name_or_url_;
 };
 
+class CurrentScriptStackVisitor {
+ public:
+  bool Visit(FrameSummary& summary) {
+    // Skip frames that aren't subject to debugging. Keep this in sync with
+    // StackFrameBuilder::Visit so both visitors visit the same frames.
+    if (!summary.is_subject_to_debugging()) return true;
+
+    // Frames that are subject to debugging always have a valid script object.
+    current_script_ = Cast<Script>(summary.script());
+    return false;
+  }
+
+  MaybeHandle<Script> CurrentScript() const { return current_script_; }
+
+ private:
+  MaybeHandle<Script> current_script_;
+};
+
 }  // namespace
 
 Handle<String> Isolate::CurrentScriptNameOrSourceURL() {
@@ -1560,6 +1577,17 @@ Handle<String> Isolate::CurrentScriptNameOrSourceURL() {
   CurrentScriptNameStackVisitor visitor(this);
   VisitStack(this, &visitor);
   return visitor.CurrentScriptNameOrSourceURL();
+}
+
+MaybeHandle<Script> Isolate::CurrentReferrerScript() {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.stack_trace"), __func__);
+  CurrentScriptStackVisitor visitor{};
+  VisitStack(this, &visitor);
+  Handle<Script> script;
+  if (!visitor.CurrentScript().ToHandle(&script)) {
+    return MaybeHandle<Script>();
+  }
+  return handle(script->GetEvalOrigin(), this);
 }
 
 bool Isolate::GetStackTraceLimit(Isolate* isolate, int* result) {
@@ -1684,7 +1712,7 @@ bool Isolate::MayAccess(Handle<NativeContext> accessing_context,
     DisallowGarbageCollection no_gc;
 
     if (IsJSGlobalProxy(*receiver)) {
-      base::Optional<Tagged<Object>> receiver_context =
+      std::optional<Tagged<Object>> receiver_context =
           Cast<JSGlobalProxy>(*receiver)->GetCreationContext();
       if (!receiver_context) return false;
 
@@ -1706,7 +1734,7 @@ bool Isolate::MayAccess(Handle<NativeContext> accessing_context,
     if (access_check_info.is_null()) return false;
     Tagged<Object> fun_obj = access_check_info->callback();
     callback = v8::ToCData<v8::AccessCheckCallback, kApiAccessCheckCallbackTag>(
-        fun_obj);
+        this, fun_obj);
     data = handle(access_check_info->data(), this);
   }
 
@@ -1730,6 +1758,11 @@ Tagged<Object> Isolate::StackOverflow() {
   // Allow for a bit more overflow in sanitizer builds, because C++ frames take
   // significantly more space there.
   DCHECK_GE(GetCurrentStackPosition(), stack_guard()->real_climit() - 64 * KB);
+#elif (defined(V8_TARGET_ARCH_RISCV64) || defined(V8_TARGET_ARCH_RISCV32)) && \
+    defined(USE_SIMULATOR)
+  // Allow for more overflow on riscv simulator, because C++ frames take more
+  // there.
+  DCHECK_GE(GetCurrentStackPosition(), stack_guard()->real_climit() - 12 * KB);
 #else
   DCHECK_GE(GetCurrentStackPosition(), stack_guard()->real_climit() - 8 * KB);
 #endif
@@ -1993,8 +2026,7 @@ Tagged<Object> Isolate::Throw(Tagged<Object> raw_exception,
 
   // Notify debugger of exception.
   if (is_catchable_by_javascript(raw_exception)) {
-    base::Optional<Tagged<Object>> maybe_exception =
-        debug()->OnThrow(exception);
+    std::optional<Tagged<Object>> maybe_exception = debug()->OnThrow(exception);
     if (maybe_exception.has_value()) {
       return *maybe_exception;
     }
@@ -2499,7 +2531,7 @@ Tagged<Object> Isolate::UnwindAndFindHandler() {
         break;
     }
 
-    if (frame->is_turbofan()) {
+    if (frame->is_optimized()) {
       // Remove per-frame stored materialized objects.
       bool removed = materialized_object_store_->Remove(frame->fp());
       USE(removed);
@@ -3938,11 +3970,10 @@ void Isolate::Delete(Isolate* isolate) {
   SetIsolateThreadLocals(saved_isolate, saved_data);
 }
 
-void Isolate::SetUpFromReadOnlyArtifacts(
-    std::shared_ptr<ReadOnlyArtifacts> artifacts, ReadOnlyHeap* ro_heap) {
+void Isolate::SetUpFromReadOnlyArtifacts(ReadOnlyArtifacts* artifacts,
+                                         ReadOnlyHeap* ro_heap) {
   if (ReadOnlyHeap::IsReadOnlySpaceShared()) {
     DCHECK_NOT_NULL(artifacts);
-    artifacts_ = artifacts;
     InitializeNextUniqueSfiId(artifacts->initial_next_unique_sfi_id());
   } else {
     DCHECK_NULL(artifacts);
@@ -3978,6 +4009,8 @@ Isolate::Isolate(IsolateGroup* isolate_group)
       cancelable_task_manager_(new CancelableTaskManager()) {
   TRACE_ISOLATE(constructor);
   CheckIsolateLayout();
+
+  isolate_group->IncrementIsolateCount();
 
   // ThreadManager is initialized early to support locking an isolate
   // before it is entered.
@@ -4093,10 +4126,6 @@ void Isolate::CheckIsolateLayout() {
   CHECK_EQ(static_cast<int>(
                OFFSET_OF(Isolate, isolate_data_.trusted_pointer_table_)),
            Internals::kIsolateTrustedPointerTableOffset);
-
-  CHECK_EQ(static_cast<int>(
-               OFFSET_OF(Isolate, isolate_data_.external_buffer_table_)),
-           Internals::kIsolateExternalBufferTableOffset);
 #endif
   CHECK_EQ(static_cast<int>(
                OFFSET_OF(Isolate, isolate_data_.api_callback_thunk_argument_)),
@@ -4313,6 +4342,7 @@ void Isolate::Deinit() {
   DumpAndResetStats();
 
   heap_.TearDown();
+  ReadOnlyHeap::TearDown(this);
 
   delete inner_pointer_to_code_cache_;
   inner_pointer_to_code_cache_ = nullptr;
@@ -4397,18 +4427,6 @@ void Isolate::Deinit() {
   GetProcessWideCodePointerTable()->TearDownSpace(heap()->code_pointer_space());
   GetProcessWideJSDispatchTable()->TearDownSpace(
       heap()->js_dispatch_table_space());
-
-  external_buffer_table().TearDownSpace(heap()->external_buffer_space());
-  external_buffer_table().TearDown();
-  if (owns_shareable_data()) {
-    shared_external_buffer_table().TearDownSpace(
-        shared_external_buffer_space());
-    shared_external_buffer_table().TearDown();
-    delete isolate_data_.shared_external_buffer_table_;
-    isolate_data_.shared_external_buffer_table_ = nullptr;
-    delete shared_external_buffer_space_;
-    shared_external_buffer_space_ = nullptr;
-  }
 #endif
 
   {
@@ -4423,17 +4441,13 @@ void Isolate::SetIsolateThreadLocals(Isolate* isolate,
   g_current_per_isolate_thread_data_ = data;
 
 #ifdef V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
-  if (isolate) {
-    V8HeapCompressionScheme::InitBase(isolate->cage_base());
+  V8HeapCompressionScheme::InitBase(isolate ? isolate->cage_base()
+                                            : kNullAddress);
+  IsolateGroup::set_current(isolate ? isolate->isolate_group() : nullptr);
 #ifdef V8_EXTERNAL_CODE_SPACE
-    ExternalCodeCompressionScheme::InitBase(isolate->code_cage_base());
-#endif  // V8_EXTERNAL_CODE_SPACE
-  } else {
-    V8HeapCompressionScheme::InitBase(kNullAddress);
-#ifdef V8_EXTERNAL_CODE_SPACE
-    ExternalCodeCompressionScheme::InitBase(kNullAddress);
-#endif  // V8_EXTERNAL_CODE_SPACE
-  }
+  ExternalCodeCompressionScheme::InitBase(isolate ? isolate->code_cage_base()
+                                                  : kNullAddress);
+#endif
 #endif  // V8_COMPRESS_POINTERS_IN_MULTIPLE_CAGES
 
   if (isolate && isolate->main_thread_local_isolate()) {
@@ -4525,13 +4539,6 @@ Isolate::~Isolate() {
                  default_microtask_queue_ == default_microtask_queue_->next());
   delete default_microtask_queue_;
   default_microtask_queue_ = nullptr;
-
-  // The ReadOnlyHeap should not be destroyed when sharing without pointer
-  // compression as the object itself is shared.
-  if (read_only_heap_->IsOwnedByIsolate()) {
-    delete read_only_heap_;
-    read_only_heap_ = nullptr;
-  }
 
   // isolate_group_ released in caller, to ensure that all member destructors
   // run before potentially unmapping the isolate's VirtualMemoryArea.
@@ -4760,7 +4767,13 @@ void Isolate::ReportExceptionFunctionCallback(
           ? factory()->empty_string()
           : Handle<String>(Cast<String>(function->class_name()), this);
   Handle<String> interface_name =
-      JSReceiver::GetConstructorName(this, receiver);
+      IsUndefined(function->interface_name(), this)
+          ? factory()->empty_string()
+          : Handle<String>(Cast<String>(function->interface_name()), this);
+  if (exception_context != ExceptionContext::kConstructor) {
+    exception_context =
+        static_cast<ExceptionContext>(function->exception_context());
+  }
 
   {
     v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(this);
@@ -5175,12 +5188,25 @@ void Isolate::VerifyStaticRoots() {
     if (InstanceTypeChecker::IsString(map->instance_type())) {
       CHECK_EQ(InstanceTypeChecker::IsString(map),
                InstanceTypeChecker::IsString(map->instance_type()));
+      CHECK_EQ(InstanceTypeChecker::IsSeqString(map),
+               InstanceTypeChecker::IsSeqString(map->instance_type()));
       CHECK_EQ(InstanceTypeChecker::IsExternalString(map),
                InstanceTypeChecker::IsExternalString(map->instance_type()));
+      CHECK_EQ(
+          InstanceTypeChecker::IsUncachedExternalString(map),
+          InstanceTypeChecker::IsUncachedExternalString(map->instance_type()));
       CHECK_EQ(InstanceTypeChecker::IsInternalizedString(map),
                InstanceTypeChecker::IsInternalizedString(map->instance_type()));
+      CHECK_EQ(InstanceTypeChecker::IsConsString(map),
+               InstanceTypeChecker::IsConsString(map->instance_type()));
+      CHECK_EQ(InstanceTypeChecker::IsSlicedString(map),
+               InstanceTypeChecker::IsSlicedString(map->instance_type()));
       CHECK_EQ(InstanceTypeChecker::IsThinString(map),
                InstanceTypeChecker::IsThinString(map->instance_type()));
+      CHECK_EQ(InstanceTypeChecker::IsOneByteString(map),
+               InstanceTypeChecker::IsOneByteString(map->instance_type()));
+      CHECK_EQ(InstanceTypeChecker::IsTwoByteString(map),
+               InstanceTypeChecker::IsTwoByteString(map->instance_type()));
     }
   }
 
@@ -5217,12 +5243,12 @@ bool Isolate::Init(SnapshotData* startup_snapshot_data,
   Isolate* use_shared_space_isolate = nullptr;
 
   if (HasFlagThatRequiresSharedHeap()) {
-    if (process_wide_shared_space_isolate_) {
+    if (isolate_group_->has_shared_space_isolate()) {
       owns_shareable_data_ = false;
-      use_shared_space_isolate = process_wide_shared_space_isolate_;
+      use_shared_space_isolate = isolate_group_->shared_space_isolate();
     } else {
-      process_wide_shared_space_isolate_ = this;
-      use_shared_space_isolate = this;
+      isolate_group_->init_shared_space_isolate(this);
+      use_shared_space_isolate = isolate_group_->shared_space_isolate();
       is_shared_space_isolate_ = true;
       DCHECK(owns_shareable_data_);
     }
@@ -5313,7 +5339,7 @@ bool Isolate::Init(SnapshotData* startup_snapshot_data,
 
   // Lock clients_mutex_ in order to prevent shared GCs from other clients
   // during deserialization.
-  base::Optional<base::RecursiveMutexGuard> clients_guard;
+  std::optional<base::RecursiveMutexGuard> clients_guard;
 
   if (use_shared_space_isolate && !is_shared_space_isolate()) {
     clients_guard.emplace(
@@ -5346,7 +5372,8 @@ bool Isolate::Init(SnapshotData* startup_snapshot_data,
   {
     // Must be done before deserializing RO space since the deserialization
     // process refers to these data structures.
-    isolate_data_.external_reference_table()->InitIsolateIndependent();
+    isolate_data_.external_reference_table()->InitIsolateIndependent(
+        isolate_group()->external_ref_table());
 #ifdef V8_COMPRESS_POINTERS
     external_pointer_table().Initialize();
     external_pointer_table().InitializeSpace(
@@ -5364,8 +5391,6 @@ bool Isolate::Init(SnapshotData* startup_snapshot_data,
 #ifdef V8_ENABLE_SANDBOX
     trusted_pointer_table().Initialize();
     trusted_pointer_table().InitializeSpace(heap()->trusted_pointer_space());
-    external_buffer_table().Initialize();
-    external_buffer_table().InitializeSpace(heap()->external_buffer_space());
 #endif  // V8_ENABLE_SANDBOX
   }
   ReadOnlyHeap::SetUp(this, read_only_snapshot_data, can_rehash);
@@ -5443,19 +5468,6 @@ bool Isolate::Init(SnapshotData* startup_snapshot_data,
       heap()->code_pointer_space());
   GetProcessWideJSDispatchTable()->InitializeSpace(
       heap()->js_dispatch_table_space());
-  if (owns_shareable_data()) {
-    isolate_data_.shared_external_buffer_table_ = new ExternalBufferTable();
-    shared_external_buffer_space_ = new ExternalBufferTable::Space();
-    shared_external_buffer_table().Initialize();
-    shared_external_buffer_table().InitializeSpace(
-        shared_external_buffer_space());
-  } else {
-    DCHECK(has_shared_space());
-    isolate_data_.shared_external_buffer_table_ =
-        shared_space_isolate()->isolate_data_.shared_external_buffer_table_;
-    shared_external_buffer_space_ =
-        shared_space_isolate()->shared_external_buffer_space_;
-  }
 #endif
 
 #if V8_ENABLE_WEBASSEMBLY
@@ -5876,7 +5888,7 @@ bool Isolate::use_optimizer() {
 
 void Isolate::IncreaseTotalRegexpCodeGenerated(DirectHandle<HeapObject> code) {
   PtrComprCageBase cage_base(this);
-  DCHECK(IsCode(*code, cage_base) || IsByteArray(*code, cage_base));
+  DCHECK(IsCode(*code, cage_base) || IsTrustedByteArray(*code, cage_base));
   total_regexp_code_generated_ += code->Size(cage_base);
 }
 

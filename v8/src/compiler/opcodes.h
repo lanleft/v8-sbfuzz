@@ -48,7 +48,8 @@
   V(ExternalConstant)                \
   V(NumberConstant)                  \
   V(PointerConstant)                 \
-  V(HeapConstant)
+  V(HeapConstant)                    \
+  V(TrustedHeapConstant)
 
 // Opcodes for constant operators.
 #define CONSTANT_OP_LIST(V)    \
@@ -919,6 +920,9 @@
   IF_WASM(V, F32x4Trunc)                  \
   IF_WASM(V, F32x4NearestInt)             \
   IF_WASM(V, F32x4DemoteF64x2Zero)        \
+  IF_WASM(V, F16x8Splat)                  \
+  IF_WASM(V, F16x8ExtractLane)            \
+  IF_WASM(V, F16x8ReplaceLane)            \
   IF_WASM(V, I64x2Splat)                  \
   IF_WASM(V, I64x2SplatI32Pair)           \
   IF_WASM(V, I64x2ExtractLane)            \

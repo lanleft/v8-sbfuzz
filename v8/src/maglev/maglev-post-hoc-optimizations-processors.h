@@ -18,6 +18,7 @@ constexpr bool CanBeStoreToNonEscapedObject() {
   return std::is_same_v<NodeT, StoreMap> ||
          std::is_same_v<NodeT, StoreTaggedFieldWithWriteBarrier> ||
          std::is_same_v<NodeT, StoreTaggedFieldNoWriteBarrier> ||
+         std::is_same_v<NodeT, StoreTrustedPointerFieldWithWriteBarrier> ||
          std::is_same_v<NodeT, StoreFloat64>;
 }
 
@@ -25,6 +26,7 @@ class AnyUseMarkingProcessor {
  public:
   void PreProcessGraph(Graph* graph) {}
   void PreProcessBasicBlock(BasicBlock* block) {}
+  void PostPhiProcessing() {}
 
   template <typename NodeT>
   ProcessResult Process(NodeT* node, const ProcessingState& state) {
@@ -48,6 +50,12 @@ class AnyUseMarkingProcessor {
     return ProcessResult::kContinue;
   }
 
+#ifdef DEBUG
+  ProcessResult Process(Dead* node, const ProcessingState& state) {
+    UNREACHABLE();
+  }
+#endif  // DEBUG
+
   void PostProcessGraph(Graph* graph) {
     RunEscapeAnalysis(graph);
     DropUseOfValueInStoresToCapturedAllocations();
@@ -57,17 +65,18 @@ class AnyUseMarkingProcessor {
   std::vector<Node*> stores_to_allocations_;
 
   void EscapeAllocation(Graph* graph, InlinedAllocation* alloc,
-                        Graph::AllocationDependencies& deps) {
+                        Graph::SmallAllocationVector& deps) {
     if (alloc->HasBeenAnalysed() && alloc->HasEscaped()) return;
     alloc->SetEscaped();
     for (auto dep : deps) {
-      EscapeAllocation(graph, dep, graph->allocations().find(dep)->second);
+      EscapeAllocation(graph, dep,
+                       graph->allocations_escape_map().find(dep)->second);
     }
   }
 
   void VerifyEscapeAnalysis(Graph* graph) {
 #ifdef DEBUG
-    for (auto it : graph->allocations()) {
+    for (auto it : graph->allocations_escape_map()) {
       auto alloc = it.first;
       DCHECK(alloc->HasBeenAnalysed());
       if (alloc->HasEscaped()) {
@@ -80,7 +89,7 @@ class AnyUseMarkingProcessor {
   }
 
   void RunEscapeAnalysis(Graph* graph) {
-    for (auto it : graph->allocations()) {
+    for (auto it : graph->allocations_escape_map()) {
       auto alloc = it.first;
       if (alloc->HasBeenAnalysed()) continue;
       // Check if all its uses are non escaping.
@@ -144,6 +153,7 @@ class DeadNodeSweepingProcessor {
   void PreProcessGraph(Graph* graph) {}
   void PostProcessGraph(Graph* graph) {}
   void PreProcessBasicBlock(BasicBlock* block) {}
+  void PostPhiProcessing() {}
 
   ProcessResult Process(AllocationBlock* node, const ProcessingState& state) {
     // Note: this need to be done before ValueLocationConstraintProcessor, since

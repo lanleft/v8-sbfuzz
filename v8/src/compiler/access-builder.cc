@@ -638,14 +638,30 @@ FieldAccess AccessBuilder::ForJSPrimitiveWrapperValue() {
   return access;
 }
 
+#ifdef V8_ENABLE_SANDBOX
 // static
 FieldAccess AccessBuilder::ForJSRegExpData() {
-  FieldAccess access = {kTaggedBase,         JSRegExp::kDataOffset,
-                        MaybeHandle<Name>(), OptionalMapRef(),
-                        Type::NonInternal(), MachineType::AnyTagged(),
-                        kFullWriteBarrier,   "JSRegExpData"};
+  FieldAccess access = {kTaggedBase,
+                        JSRegExp::kDataOffset,
+                        MaybeHandle<Name>(),
+                        OptionalMapRef(),
+                        Type::OtherInternal(),
+                        MachineType::IndirectPointer(),
+                        kIndirectPointerWriteBarrier,
+                        "JSRegExpData"};
+  access.indirect_pointer_tag = kRegExpDataIndirectPointerTag;
   return access;
 }
+#else
+// static
+FieldAccess AccessBuilder::ForJSRegExpData() {
+  FieldAccess access = {kTaggedBase,           JSRegExp::kDataOffset,
+                        MaybeHandle<Name>(),   OptionalMapRef(),
+                        Type::OtherInternal(), MachineType::TaggedPointer(),
+                        kPointerWriteBarrier,  "JSRegExpData"};
+  return access;
+}
+#endif  // V8_ENABLE_SANDBOX
 
 // static
 FieldAccess AccessBuilder::ForJSRegExpFlags() {
@@ -1056,6 +1072,16 @@ FieldAccess AccessBuilder::ForFeedbackVectorSlot(int index) {
                         Handle<Name>(),    OptionalMapRef(),
                         Type::Any(),       MachineType::AnyTagged(),
                         kFullWriteBarrier, "FeedbackVectorSlot"};
+  return access;
+}
+
+// static
+FieldAccess AccessBuilder::ForPropertyArraySlot(int index) {
+  int offset = PropertyArray::OffsetOfElementAt(index);
+  FieldAccess access = {kTaggedBase,       offset,
+                        Handle<Name>(),    OptionalMapRef(),
+                        Type::Any(),       MachineType::AnyTagged(),
+                        kFullWriteBarrier, "PropertyArraySlot"};
   return access;
 }
 

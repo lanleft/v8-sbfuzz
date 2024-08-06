@@ -495,9 +495,22 @@ class SSOAuthenticator(_Authenticator):
     @classmethod
     def _get_sso_info(cls) -> SSOInfo:
         with cls._sso_info_lock:
+
             info = cls._sso_info
             if not info:
                 info = cls._launch_sso_helper()
+                # HACK: `git-remote-sso` doesn't always properly warm up the
+                # cookies - in this case, run a canned git operation against
+                # a public repo to cause `git-remote-sso` to warm the cookies
+                # up, and then try pulling config again.
+                #
+                # BUG: b/342644760
+                if not any(c.domain == '.google.com' for c in info.cookies):
+                    LOGGER.debug('SSO: Refreshing .google.com cookies.')
+                    scm.GIT.Capture(['ls-remote', 'sso://chromium/All-Projects'])
+                    info = cls._launch_sso_helper()
+                    if not any(c.domain == '.google.com' for c in info.cookies):
+                        raise ValueError('Unable to extract .google.com cookie.')
                 cls._sso_info = info
             return info
 
@@ -525,9 +538,7 @@ class SSOAuthenticator(_Authenticator):
         # Finally, add cookies
         sso_info.cookies.add_cookie_header(conn)
         assert 'Cookie' in conn.req_headers, (
-            'sso_info.cookies.add_cookie_header failed to add Cookie'
-            ' (try running `git ls-remote sso://chromium/All-Projects` and retrying)'
-        )
+            'sso_info.cookies.add_cookie_header failed to add Cookie.')
 
     def debug_summary_state(self) -> str:
         return ''
@@ -900,8 +911,8 @@ class HttpConn(httplib2.Http):
         return self.req_host
 
 
-def CreateHttpConn(host,
-                   path,
+def CreateHttpConn(host: str,
+                   path: str,
                    reqtype='GET',
                    headers: Optional[Dict[str, str]] = None,
                    body: Optional[Dict] = None,
@@ -1043,7 +1054,7 @@ def ReadHttpResponse(conn: HttpConn,
 
 
 def ReadHttpJsonResponse(
-    conn, accept_statuses: Container[int] = frozenset([200])) -> Dict:
+    conn, accept_statuses: Container[int] = frozenset([200])) -> dict:
     """Parses an https response as json."""
     fh = ReadHttpResponse(conn, accept_statuses)
     # The first line of the response should always be: )]}'
@@ -1242,7 +1253,7 @@ def GetChangeDetail(host, change, o_params=None):
     return ReadHttpJsonResponse(CreateHttpConn(host, path))
 
 
-def GetChangeCommit(host, change, revision='current'):
+def GetChangeCommit(host: str, change: str, revision: str = 'current') -> dict:
     """Query a Gerrit server for a revision associated with a change."""
     path = 'changes/%s/revisions/%s/commit?links' % (change, revision)
     return ReadHttpJsonResponse(CreateHttpConn(host, path))

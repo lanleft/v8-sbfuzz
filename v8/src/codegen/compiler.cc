@@ -6,13 +6,13 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 
 #include "src/api/api-inl.h"
 #include "src/asmjs/asm-js.h"
 #include "src/ast/prettyprinter.h"
 #include "src/ast/scopes.h"
 #include "src/base/logging.h"
-#include "src/base/optional.h"
 #include "src/base/platform/time.h"
 #include "src/baseline/baseline.h"
 #include "src/codegen/assembler-inl.h"
@@ -615,10 +615,8 @@ void TurbofanCompilationJob::RecordCompilationStats(ConcurrencyMode mode,
       static_cast<int>(time_foreground.InMicroseconds()));
 
   if (v8_flags.profile_guided_optimization &&
-      (shared->cached_tiering_decision() ==
-           CachedTieringDecision::kEarlyMaglevPending ||
-       shared->cached_tiering_decision() ==
-           CachedTieringDecision::kEarlyMaglev)) {
+      shared->cached_tiering_decision() ==
+          CachedTieringDecision::kEarlyMaglev) {
     shared->set_cached_tiering_decision(CachedTieringDecision::kEarlyTurbofan);
   }
 }
@@ -678,7 +676,7 @@ void Compiler::InstallInterpreterTrampolineCopy(
     Isolate* isolate, Handle<SharedFunctionInfo> shared_info,
     LogEventListener::CodeTag log_tag) {
   DCHECK(v8_flags.interpreted_frames_native_stack);
-  if (!IsBytecodeArray(shared_info->GetData(isolate))) {
+  if (!IsBytecodeArray(shared_info->GetTrustedData(isolate))) {
     DCHECK(!shared_info->HasInterpreterData(isolate));
     return;
   }
@@ -991,7 +989,7 @@ class OptimizedCodeCache : public AllStatic {
                                      isolate);
       interpreter::BytecodeArrayIterator it(bytecode, osr_offset.ToInt());
       DCHECK_EQ(it.current_bytecode(), interpreter::Bytecode::kJumpLoop);
-      base::Optional<Tagged<Code>> maybe_code =
+      std::optional<Tagged<Code>> maybe_code =
           feedback_vector->GetOptimizedOsrCode(isolate, it.GetSlotOperand(2));
       if (maybe_code.has_value()) code = maybe_code.value();
     } else {
@@ -1935,9 +1933,10 @@ void BackgroundCompileTask::Run(
     // Get preparsed scope data from the function literal.
     if (shared_info->HasUncompiledDataWithPreparseData()) {
       info.set_consumed_preparse_data(ConsumedPreparseData::For(
-          isolate, handle(shared_info->uncompiled_data_with_preparse_data()
-                              ->preparse_data(isolate),
-                          isolate)));
+          isolate,
+          handle(shared_info->uncompiled_data_with_preparse_data(isolate)
+                     ->preparse_data(isolate),
+                 isolate)));
     }
   }
 
@@ -2028,6 +2027,7 @@ class ConstantPoolPointerForwarder {
   // Record all scope infos relevant for a shared function info or scope info
   // (recorded for eval).
   void RecordScopeInfos(Tagged<HeapObject> info) {
+    if (!v8_flags.reuse_scope_infos) return;
     Tagged<ScopeInfo> scope_info;
     if (Is<SharedFunctionInfo>(info)) {
       Tagged<SharedFunctionInfo> old_sfi = Cast<SharedFunctionInfo>(info);
@@ -2090,6 +2090,7 @@ class ConstantPoolPointerForwarder {
   // This should only directly be used for SFIs that already existed on the
   // script. Their outer scope info will already be correct.
   bool InstallOwnScopeInfo(Tagged<SharedFunctionInfo> sfi) {
+    if (!v8_flags.reuse_scope_infos) return false;
     auto it = scope_infos_to_update_.find(sfi->UniqueIdInScript());
     if (it == scope_infos_to_update_.end()) return false;
     sfi->SetScopeInfo(*it->second);
@@ -2102,6 +2103,7 @@ class ConstantPoolPointerForwarder {
   // This has to be used for all newly created SFIs since their outer scope info
   // also may need to be reattached.
   void UpdateScopeInfo(Tagged<SharedFunctionInfo> sfi) {
+    if (!v8_flags.reuse_scope_infos) return;
     // This should not be called on already existing SFIs. Their scope infos are
     // already correct.
     DCHECK_NE(MakeWeak(sfi),
@@ -2172,6 +2174,7 @@ class ConstantPoolPointerForwarder {
   template <typename TArray>
   void VisitScopeInfo(Tagged<TArray> constant_pool, int i,
                       Tagged<ScopeInfo> scope_info) {
+    if (scope_info->IsHiddenCatchScope()) return;
     auto it = scope_infos_to_update_.find(scope_info->UniqueIdInScript());
     // Try to replace the scope info itself with an already existing version.
     if (it != scope_infos_to_update_.end()) {
@@ -2565,7 +2568,7 @@ bool BackgroundCompileTask::FinalizeFunction(
   // the LazyCompileDispatcher Job that launched this task, which will now be
   // considered complete, so clear that regardless of whether the finalize
   // succeeds or not.
-  input_shared_info->ClearUncompiledDataJobPointer();
+  input_shared_info->ClearUncompiledDataJobPointer(isolate);
 
   // We might not have been able to finalize all jobs on the background
   // thread (e.g. asm.js jobs), so finalize those deferred jobs now.
@@ -2599,7 +2602,8 @@ void BackgroundCompileTask::AbortFunction() {
   // the LazyCompileDispatcher Job that launched this task, which is about to be
   // deleted, so clear that to avoid the SharedFunctionInfo from pointing to
   // deallocated memory.
-  input_shared_info_.ToHandleChecked()->ClearUncompiledDataJobPointer();
+  input_shared_info_.ToHandleChecked()->ClearUncompiledDataJobPointer(
+      isolate_for_local_isolate_);
 }
 
 void BackgroundCompileTask::ReportStatistics(Isolate* isolate) {
@@ -2769,7 +2773,7 @@ bool Compiler::CollectSourcePositions(Isolate* isolate,
 
   // If debugging, make sure that instrumented bytecode has the source position
   // table set on it as well.
-  if (base::Optional<Tagged<DebugInfo>> debug_info =
+  if (std::optional<Tagged<DebugInfo>> debug_info =
           shared_info->TryGetDebugInfo(isolate)) {
     if (debug_info.value()->HasInstrumentedBytecodeArray()) {
       Tagged<TrustedByteArray> source_position_table =
@@ -2830,10 +2834,9 @@ bool Compiler::Compile(Isolate* isolate, Handle<SharedFunctionInfo> shared_info,
 
   if (shared_info->HasUncompiledDataWithPreparseData()) {
     parse_info.set_consumed_preparse_data(ConsumedPreparseData::For(
-        isolate,
-        handle(
-            shared_info->uncompiled_data_with_preparse_data()->preparse_data(),
-            isolate)));
+        isolate, handle(shared_info->uncompiled_data_with_preparse_data(isolate)
+                            ->preparse_data(),
+                        isolate)));
   }
 
   // Parse and update ParseInfo with the results.
@@ -4195,7 +4198,7 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfo(
     if (literal->produced_preparse_data() != nullptr &&
         existing->HasUncompiledDataWithoutPreparseData()) {
       DirectHandle<UncompiledData> existing_uncompiled_data(
-          existing->uncompiled_data(), isolate);
+          existing->uncompiled_data(isolate), isolate);
       DCHECK_EQ(literal->start_position(),
                 existing_uncompiled_data->start_position());
       DCHECK_EQ(literal->end_position(),
@@ -4376,10 +4379,8 @@ void Compiler::FinalizeMaglevCompilationJob(maglev::MaglevCompilationJob* job,
                                     Cast<AbstractCode>(code));
     job->RecordCompilationStats(isolate);
     if (v8_flags.profile_guided_optimization &&
-        shared->cached_tiering_decision() <
-            CachedTieringDecision::kEarlyMaglevPending) {
-      shared->set_cached_tiering_decision(
-          CachedTieringDecision::kEarlyMaglevPending);
+        shared->cached_tiering_decision() == CachedTieringDecision::kPending) {
+      shared->set_cached_tiering_decision(CachedTieringDecision::kEarlyMaglev);
     }
     CompilerTracer::TraceFinishMaglevCompile(
         isolate, function, job->is_osr(), job->prepare_in_ms(),
@@ -4389,9 +4390,8 @@ void Compiler::FinalizeMaglevCompilationJob(maglev::MaglevCompilationJob* job,
 }
 
 // static
-void Compiler::PostInstantiation(Handle<JSFunction> function,
+void Compiler::PostInstantiation(Isolate* isolate, Handle<JSFunction> function,
                                  IsCompiledScope* is_compiled_scope) {
-  Isolate* isolate = function->GetIsolate();
   DirectHandle<SharedFunctionInfo> shared(function->shared(), isolate);
 
   // If code is compiled to bytecode (i.e., isn't asm.js), then allocate a
@@ -4435,9 +4435,13 @@ void Compiler::PostInstantiation(Handle<JSFunction> function,
     TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("devtools.v8-source-rundown"),
                  "ScriptCompiled", "data",
                  AddScriptCompiledTrace(isolate, shared));
-    TRACE_EVENT1(
+    bool tracing_enabled;
+    TRACE_EVENT_CATEGORY_GROUP_ENABLED(
         TRACE_DISABLED_BY_DEFAULT("devtools.v8-source-rundown-sources"),
-        "ScriptCompiled", "data", AddScriptSourceTextTrace(isolate, shared));
+        &tracing_enabled);
+    if (tracing_enabled) {
+      EmitScriptSourceTextTrace(isolate, shared);
+    }
   }
 }
 
@@ -4481,19 +4485,45 @@ std::unique_ptr<v8::tracing::TracedValue> Compiler::AddScriptCompiledTrace(
   return value;
 }
 
-std::unique_ptr<v8::tracing::TracedValue> Compiler::AddScriptSourceTextTrace(
+void Compiler::EmitScriptSourceTextTrace(
     Isolate* isolate, DirectHandle<SharedFunctionInfo> shared) {
   DirectHandle<Script> script(Cast<Script>(shared->script()), isolate);
-  auto value = v8::tracing::TracedValue::Create();
-  value->SetString("isolate",
-                   std::to_string(reinterpret_cast<size_t>(isolate)));
-  value->SetInteger("scriptId", script->id());
   if (IsString(script->source())) {
     Tagged<String> source = i::Cast<i::String>(script->source());
-    value->SetInteger("length", source->length());
-    value->SetString("sourceText", source->ToCString().get());
+    auto script_id = script->id();
+    auto isolate_string = std::to_string(reinterpret_cast<size_t>(isolate));
+    int32_t source_length = source->length();
+    const int32_t kSplitMaxLength = 1000000;
+    if (source_length <= kSplitMaxLength) {
+      auto value = v8::tracing::TracedValue::Create();
+      value->SetString("isolate", isolate_string);
+      value->SetInteger("scriptId", script_id);
+      value->SetInteger("length", source_length);
+      value->SetString("sourceText", source->ToCString().get());
+      TRACE_EVENT1(
+          TRACE_DISABLED_BY_DEFAULT("devtools.v8-source-rundown-sources"),
+          "ScriptCompiled", "data", std::move(value));
+    } else {
+      Handle<String> handle_source(source, isolate);
+      int32_t split_count = source_length / kSplitMaxLength + 1;
+      for (int32_t i = 0; i < split_count; i++) {
+        int32_t begin = i * kSplitMaxLength;
+        int32_t end = std::min(begin + kSplitMaxLength, source_length);
+        Handle<String> partial_source =
+            isolate->factory()->NewSubString(handle_source, begin, end);
+        auto split_trace_value = v8::tracing::TracedValue::Create();
+        split_trace_value->SetInteger("splitIndex", i);
+        split_trace_value->SetInteger("splitCount", split_count);
+        split_trace_value->SetString("isolate", isolate_string);
+        split_trace_value->SetInteger("scriptId", script_id);
+        split_trace_value->SetString("sourceText",
+                                     partial_source->ToCString().get());
+        TRACE_EVENT1(
+            TRACE_DISABLED_BY_DEFAULT("devtools.v8-source-rundown-sources"),
+            "LargeScriptCompiledSplits", "data", std::move(split_trace_value));
+      }
+    }
   }
-  return value;
 }
 
 // ----------------------------------------------------------------------------

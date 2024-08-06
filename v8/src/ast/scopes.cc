@@ -4,11 +4,11 @@
 
 #include "src/ast/scopes.h"
 
+#include <optional>
 #include <set>
 
 #include "src/ast/ast.h"
 #include "src/base/logging.h"
-#include "src/base/optional.h"
 #include "src/builtins/accessors.h"
 #include "src/common/message-template.h"
 #include "src/heap/local-factory-inl.h"
@@ -698,7 +698,7 @@ bool DeclarationScope::Analyze(ParseInfo* info) {
   DCHECK_NOT_NULL(info->literal());
   DeclarationScope* scope = info->literal()->scope();
 
-  base::Optional<AllowHandleDereference> allow_deref;
+  std::optional<AllowHandleDereference> allow_deref;
 #ifdef DEBUG
   if (scope->outer_scope() && !scope->outer_scope()->scope_info_.is_null()) {
     allow_deref.emplace();
@@ -1529,26 +1529,22 @@ DeclarationScope* Scope::GetConstructorScope() {
 }
 
 Scope* Scope::GetHomeObjectScope() {
-  Scope* scope = this;
-  while (scope != nullptr && !scope->is_home_object_scope()) {
-    if (scope->is_function_scope()) {
-      FunctionKind function_kind = scope->AsDeclarationScope()->function_kind();
-      // "super" in arrow functions binds outside the arrow function. But if we
-      // find a function which doesn't bind "super" (is not a method etc.) and
-      // not an arrow function, we know "super" here doesn't bind anywhere and
-      // we can return nullptr.
-      if (!IsArrowFunction(function_kind) && !BindsSuper(function_kind)) {
-        return nullptr;
-      }
-    }
-    if (scope->private_name_lookup_skips_outer_class()) {
-      DCHECK(scope->outer_scope()->is_class_scope());
-      scope = scope->outer_scope()->outer_scope();
-    } else {
-      scope = scope->outer_scope();
-    }
-  }
-  return scope;
+  Scope* scope = GetReceiverScope();
+  DCHECK(scope->is_function_scope());
+  FunctionKind kind = scope->AsDeclarationScope()->function_kind();
+  // "super" in arrow functions binds outside the arrow function. Arrow
+  // functions are also never receiver scopes since they close over the
+  // receiver.
+  DCHECK(!IsArrowFunction(kind));
+  // If we find a function which doesn't bind "super" (is not a method etc.), we
+  // know "super" here doesn't bind anywhere and we can return nullptr.
+  if (!BindsSuper(kind)) return nullptr;
+  // Functions that bind "super" can only syntactically occur nested inside home
+  // object scopes (i.e. class scopes and object literal scopes), so directly
+  // return the outer scope.
+  Scope* outer_scope = scope->outer_scope();
+  CHECK(outer_scope->is_home_object_scope());
+  return outer_scope;
 }
 
 DeclarationScope* Scope::GetScriptScope() {
@@ -2303,7 +2299,7 @@ void Scope::ResolveVariable(VariableProxy* proxy) {
     //
     // Because of the above, start resolving home objects directly at the home
     // object scope instead of the current scope.
-    Scope* scope = GetDeclarationScope()->GetHomeObjectScope();
+    Scope* scope = GetHomeObjectScope();
     DCHECK_NOT_NULL(scope);
     if (scope->scope_info_.is_null()) {
       var = Lookup<kParsedScope>(proxy, scope, nullptr);
@@ -2597,8 +2593,9 @@ void DeclarationScope::AllocateLocals() {
     new_target_ = nullptr;
   }
 
-  NullifyRareVariableIf(RareVariable::kThisFunction,
-                        [=](Variable* var) { return !MustAllocate(var); });
+  NullifyRareVariableIf(RareVariable::kThisFunction, [=, this](Variable* var) {
+    return !MustAllocate(var);
+  });
 }
 
 void ModuleScope::AllocateModuleVariables() {
@@ -2618,6 +2615,7 @@ void ModuleScope::AllocateModuleVariables() {
 // Needs to be kept in sync with ScopeInfo::UniqueIdInScript and
 // SharedFunctionInfo::UniqueIdInScript.
 int Scope::UniqueIdInScript() const {
+  DCHECK(!is_hidden_catch_scope());
   // Script scopes start "before" the script to avoid clashing with a scope that
   // starts on character 0.
   if (is_script_scope() || scope_type() == EVAL_SCOPE ||
@@ -2690,7 +2688,9 @@ void Scope::AllocateScopeInfosRecursively(
   DCHECK(scope_info_.is_null());
   MaybeHandle<ScopeInfo> next_outer_scope = outer_scope;
 
-  auto it = scope_infos_to_reuse.find(UniqueIdInScript());
+  auto it = is_hidden_catch_scope()
+                ? scope_infos_to_reuse.end()
+                : scope_infos_to_reuse.find(UniqueIdInScript());
   if (it != scope_infos_to_reuse.end()) {
     scope_info_ = it->second;
     CHECK(NeedsContext());
@@ -2706,15 +2706,15 @@ void Scope::AllocateScopeInfosRecursively(
     it->second = {};
 #endif
   } else if (NeedsScopeInfo()) {
+    scope_info_ = ScopeInfo::Create(isolate, zone(), this, outer_scope);
 #ifdef DEBUG
     // Mark this ID as being used. Skip hidden scopes because they are
     // synthetic, unreusable, but hard to make unique.
     if (v8_flags.reuse_scope_infos && !is_hidden_catch_scope()) {
       scope_infos_to_reuse[UniqueIdInScript()] = {};
+      DCHECK_EQ(UniqueIdInScript(), scope_info_->UniqueIdInScript());
     }
 #endif
-    scope_info_ = ScopeInfo::Create(isolate, zone(), this, outer_scope);
-    DCHECK_EQ(UniqueIdInScript(), scope_info_->UniqueIdInScript());
     // The ScopeInfo chain mirrors the context chain, so we only link to the
     // next outer scope that needs a context.
     if (NeedsContext()) next_outer_scope = scope_info_;
@@ -2722,9 +2722,14 @@ void Scope::AllocateScopeInfosRecursively(
 
   // Allocate ScopeInfos for inner scopes.
   for (Scope* scope = inner_scope_; scope != nullptr; scope = scope->sibling_) {
-    DCHECK_GT(scope->UniqueIdInScript(), UniqueIdInScript());
-    DCHECK_IMPLIES(scope->sibling_, scope->sibling_->UniqueIdInScript() !=
-                                        scope->UniqueIdInScript());
+#ifdef DEBUG
+    if (!scope->is_hidden_catch_scope()) {
+      DCHECK_GT(scope->UniqueIdInScript(), UniqueIdInScript());
+      DCHECK_IMPLIES(
+          scope->sibling_ && !scope->sibling_->is_hidden_catch_scope(),
+          scope->sibling_->UniqueIdInScript() != scope->UniqueIdInScript());
+    }
+#endif
     if (!scope->is_function_scope() ||
         scope->AsDeclarationScope()->ShouldEagerCompile()) {
       scope->AllocateScopeInfosRecursively(isolate, next_outer_scope,

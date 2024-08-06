@@ -56,8 +56,11 @@ namespace internal {
   HR(wasm_module_code_size_mb, V8.WasmModuleCodeSizeMiB, 0, 1024, 64)          \
   /* Newer histogram, in KiB (0..100MB). */                                    \
   HR(wasm_module_code_size_kb, V8.WasmModuleCodeSizeKiB, 0, 1024 * 100, 101)   \
-  /* Meta data size per module, collected on GC. */                            \
+  /* Metadata size per module, collected on GC. */                             \
   HR(wasm_module_metadata_size_kb, V8.WasmModuleMetadataSizeKiB, 0,            \
+     1024 * 100, 101)                                                          \
+  /* Metadata of the whole Wasm engine, collected on GC. */                    \
+  HR(wasm_engine_metadata_size_kb, V8.WasmEngineMetadataSizeKiB, 0,            \
      1024 * 100, 101)                                                          \
   /* Percent of freed code size per module, collected on GC. */                \
   HR(wasm_module_freed_code_size_percent, V8.WasmModuleCodeSizePercentFreed,   \
@@ -380,6 +383,7 @@ namespace internal {
   SC(lo_space_bytes_used, V8.MemoryLoSpaceBytesUsed)                           \
   SC(wasm_generated_code_size, V8.WasmGeneratedCodeBytes)                      \
   SC(wasm_reloc_size, V8.WasmRelocBytes)                                       \
+  SC(wasm_deopt_data_size, V8.WasmDeoptDataBytes)                              \
   SC(wasm_lazily_compiled_functions, V8.WasmLazilyCompiledFunctions)           \
   SC(wasm_compiled_export_wrapper, V8.WasmCompiledExportWrappers)
 

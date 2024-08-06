@@ -7,6 +7,7 @@
 #include <inttypes.h>
 
 #include <iomanip>
+#include <optional>
 
 #include "src/base/memory.h"
 #include "src/common/assert-scope.h"
@@ -860,7 +861,7 @@ TranslatedFrame TranslatedFrame::WasmInlinedIntoJSFrame(
 
 TranslatedFrame TranslatedFrame::JSToWasmBuiltinContinuationFrame(
     BytecodeOffset bytecode_offset, Tagged<SharedFunctionInfo> shared_info,
-    int height, base::Optional<wasm::ValueKind> return_kind) {
+    int height, std::optional<wasm::ValueKind> return_kind) {
   TranslatedFrame frame(kJSToWasmBuiltinContinuation, shared_info, height);
   frame.bytecode_offset_ = bytecode_offset;
   frame.return_kind_ = return_kind;
@@ -1101,7 +1102,7 @@ TranslatedFrame TranslatedState::CreateNextTranslatedFrame(
           literal_array.get_on_heap_literals()->get(iterator->NextOperand()));
       int height = iterator->NextOperand();
       int return_kind_code = iterator->NextOperand();
-      base::Optional<wasm::ValueKind> return_kind;
+      std::optional<wasm::ValueKind> return_kind;
       if (return_kind_code != kNoWasmReturnKind) {
         return_kind = static_cast<wasm::ValueKind>(return_kind_code);
       }
@@ -2442,6 +2443,17 @@ void TranslatedState::InitializeJSObjectAt(
           .Relaxed_Store(value);
       INDIRECT_POINTER_WRITE_BARRIER(*object_storage, offset,
                                      kCodeIndirectPointerTag, value);
+    } else if (InstanceTypeChecker::IsJSRegExp(map->instance_type()) &&
+               offset == JSRegExp::kDataOffset) {
+      DirectHandle<HeapObject> field_value = slot->storage();
+      CHECK(IsRegExpDataWrapper(*field_value));
+      Tagged<RegExpData> value =
+          Cast<RegExpDataWrapper>(*field_value)->data(isolate());
+      object_storage
+          ->RawIndirectPointerField(offset, kRegExpDataIndirectPointerTag)
+          .Relaxed_Store(value);
+      INDIRECT_POINTER_WRITE_BARRIER(*object_storage, offset,
+                                     kRegExpDataIndirectPointerTag, value);
     } else if (marker == kStoreHeapObject) {
 #else
     if (marker == kStoreHeapObject) {

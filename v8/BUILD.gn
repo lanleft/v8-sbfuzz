@@ -334,6 +334,9 @@ declare_args() {
   # Sets -DV8_ENABLE_SANDBOX.
   v8_enable_sandbox = ""
 
+  # Explicitly disable leaptiering (on builds where it would otherwise be enabled).
+  v8_disable_leaptiering = ""
+
   # Enable the memory corruption API. Useful for testing the sandbox.
   # The memory corruption API is only exposed to JavaScript if sandbox testing
   # mode is enabled at runtime, for example via --sandbox-fuzzing.
@@ -583,8 +586,7 @@ if (v8_enable_short_builtin_calls &&
   v8_enable_short_builtin_calls = false
 }
 if (v8_enable_shared_ro_heap == "") {
-  v8_enable_shared_ro_heap = !v8_enable_pointer_compression ||
-                             v8_enable_pointer_compression_shared_cage
+  v8_enable_shared_ro_heap = true
 }
 
 if (v8_enable_sandbox == "") {
@@ -594,6 +596,10 @@ if (v8_enable_sandbox == "") {
   # on Fuchsia.
   v8_enable_sandbox = v8_enable_pointer_compression_shared_cage &&
                       v8_enable_external_code_space && target_os != "fuchsia"
+}
+
+if (v8_disable_leaptiering == "") {
+  v8_disable_leaptiering = false
 }
 
 if (v8_enable_static_roots == "") {
@@ -673,13 +679,6 @@ assert(!v8_disable_write_barriers || v8_enable_single_generation,
 
 assert(v8_current_cpu == "arm64" || !v8_control_flow_integrity,
        "Control-flow integrity is only supported on arm64")
-
-if (v8_enable_shared_ro_heap && v8_enable_pointer_compression &&
-    !v8_enable_pointer_compression_shared_cage) {
-  assert(
-      is_linux || is_chromeos || is_android,
-      "Sharing read-only heap with pointer compression is only supported on Linux or Android")
-}
 
 assert(!v8_enable_map_packing || !v8_enable_pointer_compression,
        "Map packing does not support pointer compression")
@@ -896,7 +895,7 @@ external_v8_defines = [
   "V8_MAP_PACKING",
   "V8_IS_TSAN",
   "V8_ENABLE_CONSERVATIVE_STACK_SCANNING",
-  "V8_ENABLE_DIRECT_LOCAL",
+  "V8_ENABLE_DIRECT_HANDLE",
   "V8_MINORMS_STRING_SHORTCUTTING",
   "V8_HAVE_TARGET_OS",
   "V8_TARGET_OS_ANDROID",
@@ -950,8 +949,8 @@ if (is_tsan) {
 if (v8_enable_conservative_stack_scanning) {
   enabled_external_v8_defines += [ "V8_ENABLE_CONSERVATIVE_STACK_SCANNING" ]
 }
-if (v8_enable_direct_local) {
-  enabled_external_v8_defines += [ "V8_ENABLE_DIRECT_LOCAL" ]
+if (v8_enable_direct_handle) {
+  enabled_external_v8_defines += [ "V8_ENABLE_DIRECT_HANDLE" ]
 }
 if (v8_shortcut_strings_in_minor_ms) {
   enabled_external_v8_defines += [ "V8_MINORMS_STRING_SHORTCUTTING" ]
@@ -1310,9 +1309,6 @@ config("features") {
   if (v8_enable_builtin_jump_table_switch) {
     defines += [ "V8_ENABLE_BUILTIN_JUMP_TABLE_SWITCH" ]
   }
-  if (v8_enable_direct_handle) {
-    defines += [ "V8_ENABLE_DIRECT_HANDLE" ]
-  }
   if (v8_enable_extensible_ro_snapshot) {
     defines += [ "V8_ENABLE_EXTENSIBLE_RO_SNAPSHOT" ]
   }
@@ -1324,6 +1320,9 @@ config("features") {
   }
   if (v8_enable_experimental_tsa_builtins) {
     defines += [ "V8_ENABLE_EXPERIMENTAL_TSA_BUILTINS" ]
+  }
+  if (v8_disable_leaptiering) {
+    defines += [ "V8_DISABLE_LEAPTIERING" ]
   }
 }
 
@@ -1463,6 +1462,9 @@ config("toolchain") {
     defines += [ "__riscv_xlen=64" ]
     if (!is_clang) {
       cflags += [ "-ffp-contract=off" ]
+    }
+    if (riscv_use_sv39) {
+      defines += [ "RISCV_USE_SV39" ]
     }
   }
 
@@ -2701,10 +2703,7 @@ action("v8_dump_build_config") {
     mips_use_msa_var = mips_use_msa
   }
 
-  js_shared_memory =
-      v8_enable_shared_ro_heap && (!v8_enable_pointer_compression ||
-                                   v8_enable_pointer_compression_shared_cage) &&
-      !v8_disable_write_barriers
+  js_shared_memory = v8_enable_shared_ro_heap && !v8_disable_write_barriers
   simd_mips = mips_arch_variant_var == "r6" && mips_use_msa
   simulator_run = target_cpu != v8_target_cpu
   use_sanitizer = is_asan || is_cfi || is_msan || is_tsan || is_ubsan
@@ -2739,7 +2738,6 @@ action("v8_dump_build_config") {
     "debugging_features=$v8_enable_debugging_features",
     "dict_property_const_tracking=$v8_dict_property_const_tracking",
     "direct_handle=$v8_enable_direct_handle",
-    "direct_local=$v8_enable_direct_local",
     "disassembler=$v8_enable_disassembler",
     "full_debug=$is_full_debug",
     "gdbjit=$v8_enable_gdbjit",
@@ -2797,7 +2795,6 @@ generated_file("v8_generate_features_json") {
     v8_enable_conservative_stack_scanning =
         v8_enable_conservative_stack_scanning
     v8_enable_direct_handle = v8_enable_direct_handle
-    v8_enable_direct_local = v8_enable_direct_local
     v8_enable_extensible_ro_snapshot = v8_enable_extensible_ro_snapshot
     v8_enable_gdbjit = v8_enable_gdbjit
     v8_enable_hugepage = v8_enable_hugepage
@@ -4780,6 +4777,7 @@ v8_header_set("v8_internal_headers") {
       "src/codegen/riscv/constant-riscv-f.h",
       "src/codegen/riscv/constant-riscv-m.h",
       "src/codegen/riscv/constant-riscv-v.h",
+      "src/codegen/riscv/constant-riscv-zicond.h",
       "src/codegen/riscv/constant-riscv-zicsr.h",
       "src/codegen/riscv/constant-riscv-zifencei.h",
       "src/codegen/riscv/constants-riscv.h",
@@ -4791,6 +4789,7 @@ v8_header_set("v8_internal_headers") {
       "src/codegen/riscv/extension-riscv-inl.h",
       "src/codegen/riscv/extension-riscv-m.h",
       "src/codegen/riscv/extension-riscv-v.h",
+      "src/codegen/riscv/extension-riscv-zicond.h",
       "src/codegen/riscv/extension-riscv-zicsr.h",
       "src/codegen/riscv/extension-riscv-zifencei.h",
       "src/codegen/riscv/interface-descriptors-riscv-inl.h",
@@ -6151,6 +6150,7 @@ v8_source_set("v8_base_without_compiler") {
       "src/codegen/riscv/extension-riscv-f.cc",
       "src/codegen/riscv/extension-riscv-m.cc",
       "src/codegen/riscv/extension-riscv-v.cc",
+      "src/codegen/riscv/extension-riscv-zicond.cc",
       "src/codegen/riscv/extension-riscv-zicsr.cc",
       "src/codegen/riscv/extension-riscv-zifencei.cc",
       "src/codegen/riscv/macro-assembler-riscv.cc",
@@ -6190,6 +6190,7 @@ v8_source_set("v8_base_without_compiler") {
       "src/codegen/riscv/extension-riscv-f.cc",
       "src/codegen/riscv/extension-riscv-m.cc",
       "src/codegen/riscv/extension-riscv-v.cc",
+      "src/codegen/riscv/extension-riscv-zicond.cc",
       "src/codegen/riscv/extension-riscv-zicsr.cc",
       "src/codegen/riscv/extension-riscv-zifencei.cc",
       "src/codegen/riscv/macro-assembler-riscv.cc",

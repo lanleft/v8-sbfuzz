@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 
 #include "src/ast/ast-function-literal-id-reindexer.h"
 #include "src/ast/ast-traversal-visitor.h"
@@ -33,8 +34,7 @@
 #include "src/tracing/trace-event.h"
 #include "src/zone/zone-list-inl.h"
 
-namespace v8 {
-namespace internal {
+namespace v8::internal {
 
 FunctionLiteral* Parser::DefaultConstructor(const AstRawString* name,
                                             bool call_super, int pos) {
@@ -151,9 +151,9 @@ void Parser::ReportUnexpectedTokenAt(Scanner::Location location,
 // ----------------------------------------------------------------------------
 // Implementation of Parser
 
-bool Parser::ShortcutNumericLiteralBinaryExpression(Expression** x,
-                                                    Expression* y,
-                                                    Token::Value op, int pos) {
+bool Parser::ShortcutLiteralBinaryExpression(Expression** x, Expression* y,
+                                             Token::Value op, int pos) {
+  // Constant fold numeric operations.
   if ((*x)->IsNumberLiteral() && y->IsNumberLiteral()) {
     double x_val = (*x)->AsLiteral()->AsNumber();
     double y_val = y->AsLiteral()->AsNumber();
@@ -211,6 +211,60 @@ bool Parser::ShortcutNumericLiteralBinaryExpression(Expression** x,
         return true;
       default:
         break;
+    }
+  }
+
+  // Constant fold string concatenation.
+  if (op == Token::kAdd) {
+    // Only consider string concatenation of two strings.
+    // TODO(leszeks): We could also eagerly convert other literals to string if
+    // one side of the addition is a string.
+    if ((*x)->IsStringLiteral() && y->IsStringLiteral()) {
+      const AstRawString* x_val = (*x)->AsLiteral()->AsRawString();
+      const AstRawString* y_val = y->AsLiteral()->AsRawString();
+
+      int new_length = x_val->length() + y_val->length();
+      // Copy the strings into a new AstRawString.
+      // TODO(leszeks): We could avoid the string copy here by using an
+      // AstConsString, but then we'd need to make StringLiteral be able to hold
+      // different kinds of AstString, and we'd need to figure out if we want to
+      // later internalize the concatenated string (right now AstRawStrings are
+      // internalized but AstConsString is not).
+      const AstRawString* new_val;
+      if (x_val->is_one_byte() && y_val->is_one_byte()) {
+        // TODO(leszeks): The data will be copied again by the AstValueFactory.
+        // We could avoid the multiple copies by using a stack vector here, or
+        // by making GetOneByteString do the string concatenation as part of its
+        // string table lookup.
+        base::Vector<uint8_t> new_data =
+            zone()->AllocateVector<uint8_t>(new_length);
+        CopyChars(new_data.data(), x_val->raw_data(), x_val->length());
+        CopyChars(new_data.data() + x_val->length(), y_val->raw_data(),
+                  y_val->length());
+        new_val = ast_value_factory()->GetOneByteString(new_data);
+      } else {
+        base::Vector<uint16_t> new_data =
+            zone()->AllocateVector<uint16_t>(new_length);
+        if (x_val->is_one_byte()) {
+          CopyChars(new_data.data(), x_val->raw_data(), x_val->length());
+        } else {
+          CopyChars(new_data.data(),
+                    reinterpret_cast<const uint16_t*>(x_val->raw_data()),
+                    x_val->length());
+        }
+        if (y_val->is_one_byte()) {
+          CopyChars(new_data.data() + x_val->length(), y_val->raw_data(),
+                    y_val->length());
+        } else {
+          CopyChars(new_data.data() + x_val->length(),
+                    reinterpret_cast<const uint16_t*>(y_val->raw_data()),
+                    y_val->length());
+        }
+        new_val = ast_value_factory()->GetTwoByteString(new_data);
+      }
+
+      *x = factory()->NewStringLiteral(new_val, (*x)->position());
+      return true;
     }
   }
   return false;
@@ -823,7 +877,7 @@ void Parser::ParseREPLProgram(ParseInfo* info, ScopedPtrList<Statement>* body,
 
   if (has_error()) return;
 
-  base::Optional<VariableProxy*> maybe_result =
+  std::optional<VariableProxy*> maybe_result =
       Rewriter::RewriteBody(info, scope, block->statements());
   Expression* result_value =
       (maybe_result && *maybe_result)
@@ -3514,7 +3568,7 @@ void Parser::ParseOnBackground(LocalIsolate* isolate, ParseInfo* info,
       DCHECK_EQ(function_literal_id, kFunctionLiteralIdTopLevel);
       result = DoParseProgram(/* isolate = */ nullptr, info);
     } else {
-      base::Optional<ClassScope::HeritageParsingScope> heritage;
+      std::optional<ClassScope::HeritageParsingScope> heritage;
       if (V8_UNLIKELY(flags().private_name_lookup_skips_outer_class() &&
                       original_scope_->is_class_scope())) {
         // If the function skips the outer class and the outer scope is a class,
@@ -3724,5 +3778,4 @@ void Parser::SetFunctionName(Expression* value, const AstRawString* name,
   }
 }
 
-}  // namespace internal
-}  // namespace v8
+}  // namespace v8::internal

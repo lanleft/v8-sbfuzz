@@ -4,6 +4,8 @@
 
 #include "src/objects/map.h"
 
+#include <optional>
+
 #include "src/common/assert-scope.h"
 #include "src/common/globals.h"
 #include "src/execution/frames.h"
@@ -29,8 +31,7 @@
 #include "src/utils/ostreams.h"
 #include "src/zone/zone-containers.h"
 
-namespace v8 {
-namespace internal {
+namespace v8::internal {
 
 Tagged<Map> Map::GetPrototypeChainRootMap(Isolate* isolate) const {
   DisallowGarbageCollection no_alloc;
@@ -48,7 +49,7 @@ Tagged<Map> Map::GetPrototypeChainRootMap(Isolate* isolate) const {
 }
 
 // static
-base::Optional<Tagged<JSFunction>> Map::GetConstructorFunction(
+std::optional<Tagged<JSFunction>> Map::GetConstructorFunction(
     Tagged<Map> map, Tagged<Context> native_context) {
   DisallowGarbageCollection no_gc;
   if (IsPrimitiveMap(map)) {
@@ -276,7 +277,6 @@ VisitorId Map::GetVisitorId(Tagged<Map> map) {
     case JS_PROMISE_PROTOTYPE_TYPE:
     case JS_REG_EXP_PROTOTYPE_TYPE:
     case JS_REG_EXP_STRING_ITERATOR_TYPE:
-    case JS_REG_EXP_TYPE:
     case JS_SET_ITERATOR_PROTOTYPE_TYPE:
     case JS_SET_KEY_VALUE_ITERATOR_TYPE:
     case JS_SET_PROTOTYPE_TYPE:
@@ -327,6 +327,8 @@ VisitorId Map::GetVisitorId(Tagged<Map> map) {
       CHECK_EQ(0, JSObject::GetEmbedderFieldCount(map));
       return kVisitJSObjectFast;
     }
+    case JS_REG_EXP_TYPE:
+      return kVisitJSRegExp;
 
     // Objects that are used as API wrapper objects and can have embedder
     // fields. Note that there's more of these kinds (e.g. JS_ARRAY_BUFFER_TYPE)
@@ -385,6 +387,12 @@ VisitorId Map::GetVisitorId(Tagged<Map> map) {
       }
       if (instance_type == INTERPRETER_DATA_TYPE) {
         return kVisitInterpreterData;
+      }
+      if (instance_type == REG_EXP_BOILERPLATE_DESCRIPTION_TYPE) {
+        return kVisitRegExpBoilerplateDescription;
+      }
+      if (instance_type == REG_EXP_DATA_WRAPPER_TYPE) {
+        return kVisitRegExpDataWrapper;
       }
       return kVisitStruct;
 
@@ -602,16 +610,14 @@ void Map::DeprecateTransitionTree(Isolate* isolate) {
   DisallowGarbageCollection no_gc;
   ReadOnlyRoots roots(isolate);
   TransitionsAccessor transitions(isolate, *this);
-  transitions.ForEachTransitionWithKey(
-      &no_gc,
-      [&](Tagged<Name> key, Tagged<Map> map) {
-        map->DeprecateTransitionTree(isolate);
-      },
+  transitions.ForEachTransition(
+      &no_gc, [&](Tagged<Map> map) { map->DeprecateTransitionTree(isolate); },
       [&](Tagged<Map> map) {
         if (v8_flags.move_prototype_transitions_first) {
           map->DeprecateTransitionTree(isolate);
         }
-      });
+      },
+      nullptr);
   DCHECK(!IsFunctionTemplateInfo(constructor_or_back_pointer()));
   DCHECK(CanBeDeprecated());
   set_is_deprecated(true);
@@ -720,7 +726,7 @@ MaybeHandle<Map> Map::TryUpdate(Isolate* isolate, Handle<Map> old_map) {
     }
   }
 
-  base::Optional<Tagged<Map>> new_map = MapUpdater::TryUpdateNoLock(
+  std::optional<Tagged<Map>> new_map = MapUpdater::TryUpdateNoLock(
       isolate, *old_map, ConcurrencyMode::kSynchronous);
   if (!new_map.has_value()) return MaybeHandle<Map>();
   if (v8_flags.fast_map_update) {
@@ -1108,10 +1114,10 @@ static Handle<Map> AddMissingElementsTransitions(Isolate* isolate,
 }
 
 // static
-base::Optional<Tagged<Map>> Map::TryAsElementsKind(Isolate* isolate,
-                                                   DirectHandle<Map> map,
-                                                   ElementsKind kind,
-                                                   ConcurrencyMode cmode) {
+std::optional<Tagged<Map>> Map::TryAsElementsKind(Isolate* isolate,
+                                                  DirectHandle<Map> map,
+                                                  ElementsKind kind,
+                                                  ConcurrencyMode cmode) {
   Tagged<Map> closest_map =
       FindClosestElementsTransition(isolate, *map, kind, cmode);
   if (closest_map->elements_kind() != kind) return {};
@@ -1702,9 +1708,10 @@ Handle<Map> Map::AsLanguageMode(Isolate* isolate, Handle<Map> initial_map,
   DCHECK_EQ(LanguageMode::kStrict, shared_info->language_mode());
   Handle<Symbol> transition_symbol =
       isolate->factory()->strict_function_transition_symbol();
-  if (auto maybe_transition = TransitionsAccessor::SearchSpecial(
-          isolate, initial_map, *transition_symbol)) {
-    return *maybe_transition;
+  MaybeHandle<Map> maybe_transition = TransitionsAccessor::SearchSpecial(
+      isolate, initial_map, *transition_symbol);
+  if (!maybe_transition.is_null()) {
+    return maybe_transition.ToHandleChecked();
   }
   initial_map->NotifyLeafMapLayoutChange(isolate);
 
@@ -2506,5 +2513,4 @@ void NormalizedMapCache::Set(DirectHandle<Map> fast_map,
                       MakeWeak(*normalized_map));
 }
 
-}  // namespace internal
-}  // namespace v8
+}  // namespace v8::internal

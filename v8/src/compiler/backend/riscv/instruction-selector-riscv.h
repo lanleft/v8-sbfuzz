@@ -4,6 +4,8 @@
 #ifndef V8_COMPILER_BACKEND_RISCV_INSTRUCTION_SELECTOR_RISCV_H_
 #define V8_COMPILER_BACKEND_RISCV_INSTRUCTION_SELECTOR_RISCV_H_
 
+#include <optional>
+
 #include "src/base/bits.h"
 #include "src/compiler/backend/instruction-selector-impl.h"
 #include "src/compiler/backend/instruction-selector.h"
@@ -45,8 +47,7 @@ class RiscvOperandGeneratorT final : public OperandGeneratorT<Adapter> {
       auto constant = selector()->constant_view(node);
       if ((IsIntegerConstant(constant) &&
            GetIntegerConstantValue(constant) == 0) ||
-          (constant.is_float() &&
-           (base::bit_cast<int64_t>(constant.float_value()) == 0))) {
+          constant.is_float_zero()) {
         return UseImmediate(node);
       }
     }
@@ -71,7 +72,7 @@ class RiscvOperandGeneratorT final : public OperandGeneratorT<Adapter> {
     return constant.int64_value();
   }
 
-  base::Optional<int64_t> GetOptionalIntegerConstant(
+  std::optional<int64_t> GetOptionalIntegerConstant(
       InstructionSelectorT<TurboshaftAdapter>* selector,
       turboshaft::OpIndex operation) {
     if (!this->is_constant(operation)) return {};
@@ -97,8 +98,7 @@ class RiscvOperandGeneratorT final : public OperandGeneratorT<Adapter> {
       auto constant = selector()->constant_view(node);
       if ((IsIntegerConstant(constant) &&
            GetIntegerConstantValue(constant) == 0) ||
-          (constant.is_float() &&
-           (base::bit_cast<int64_t>(constant.float_value()) == 0))) {
+          constant.is_float_zero()) {
         return true;
       }
     }

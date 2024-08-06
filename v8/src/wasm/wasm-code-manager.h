@@ -751,7 +751,7 @@ class V8_EXPORT_PRIVATE NativeModule final {
   };
   // Remove all compiled code based on the `filter` from the {NativeModule},
   // replace it with {CompileLazy} builtins and return the sizes of the removed
-  // (executable) code and the removed meta data.
+  // (executable) code and the removed metadata.
   std::pair<size_t, size_t> RemoveCompiledCode(RemoveFilter filter);
 
   // Returns the code size of all Liftoff compiled functions.
@@ -908,10 +908,6 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // Transfer owned code from {new_owned_code_} to {owned_code_}.
   void TransferNewOwnedCodeLocked() const;
 
-  // Add code to the code cache, if it meets criteria for being cached and we do
-  // not have code in the cache yet.
-  void InsertToCodeCache(WasmCode* code);
-
   bool should_update_code_table(WasmCode* new_code, WasmCode* prior_code) const;
 
   // -- Fields of {NativeModule} start here.
@@ -1008,12 +1004,6 @@ class V8_EXPORT_PRIVATE NativeModule final {
 
   DebugState debug_state_ = kNotDebugging;
 
-  // Cache both baseline and top-tier code if we are debugging, to speed up
-  // repeated enabling/disabling of the debugger or profiler.
-  // Maps <tier, function_index> to WasmCode.
-  std::unique_ptr<std::map<std::pair<ExecutionTier, int>, WasmCode*>>
-      cached_code_;
-
   // End of fields protected by {allocation_mutex_}.
   //////////////////////////////////////////////////////////////////////////////
 
@@ -1084,8 +1074,8 @@ class V8_EXPORT_PRIVATE WasmCodeManager final {
                                              int code_section_length,
                                              bool include_liftoff,
                                              DynamicTiering dynamic_tiering);
-  // Estimate the size of meta data needed for the NativeModule, excluding
-  // generated code. This data still be stored on the C++ heap.
+  // Estimate the size of metadata needed for the NativeModule, excluding
+  // generated code. This data is stored on the C++ heap.
   static size_t EstimateNativeModuleMetaDataSize(const WasmModule* module);
 
   // Returns true if there is hardware support for PKU. Use

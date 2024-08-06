@@ -10,6 +10,7 @@
 #define V8_WASM_WASM_OBJECTS_H_
 
 #include <memory>
+#include <optional>
 
 #include "src/base/bit-field.h"
 #include "src/debug/interface-types.h"
@@ -72,13 +73,13 @@ class TrustedManaged;
   DECL_GETTER(has_##name, bool)             \
   DECL_ACCESSORS(name, type)
 
-class V8_EXPORT_PRIVATE FunctionTargetAndRef {
+class V8_EXPORT_PRIVATE FunctionTargetAndImplicitArg {
  public:
-  FunctionTargetAndRef(Isolate* isolate,
-                       Handle<WasmTrustedInstanceData> target_instance_data,
-                       int target_func_index);
-  // The "ref" will be a WasmTrustedInstanceData or a WasmApiFunctionRef.
-  Handle<TrustedObject> ref() { return ref_; }
+  FunctionTargetAndImplicitArg(
+      Isolate* isolate, Handle<WasmTrustedInstanceData> target_instance_data,
+      int target_func_index);
+  // The "implicit_arg" will be a WasmTrustedInstanceData or a WasmImportData.
+  Handle<TrustedObject> implicit_arg() { return implicit_arg_; }
   Address call_target() { return call_target_; }
 
 #if V8_ENABLE_DRUMBRAKE
@@ -86,7 +87,7 @@ class V8_EXPORT_PRIVATE FunctionTargetAndRef {
 #endif  // V8_ENABLE_DRUMBRAKE
 
  private:
-  Handle<TrustedObject> ref_;
+  Handle<TrustedObject> implicit_arg_;
   Address call_target_;
 
 #if V8_ENABLE_DRUMBRAKE
@@ -103,7 +104,7 @@ enum class OnResume : int { kContinue, kThrow };
 // call imported functions at runtime.
 // Each entry is either:
 //   - Wasm to JS, which has fields
-//      - object = a WasmApiFunctionRef
+//      - object = a WasmImportData
 //      - target = entrypoint to import wrapper code
 //   - Wasm to Wasm, which has fields
 //      - object = target instance data
@@ -115,14 +116,13 @@ class ImportedFunctionEntry {
   inline ImportedFunctionEntry(Handle<WasmTrustedInstanceData>, int index);
 
   // Initialize this entry as a Wasm to JS call. This accepts the isolate as a
-  // parameter, since it must allocate a tuple.
-  void SetWasmToJs(Isolate*, DirectHandle<JSReceiver> callable,
-                   wasm::Suspend suspend, const wasm::FunctionSig* sig);
-  V8_EXPORT_PRIVATE void SetWasmToJs(Isolate*,
-                                     DirectHandle<JSReceiver> callable,
-                                     const wasm::WasmCode* wasm_to_js_wrapper,
-                                     wasm::Suspend suspend,
-                                     const wasm::FunctionSig* sig);
+  // parameter since it allocates a WasmImportData.
+  void SetGenericWasmToJs(Isolate*, DirectHandle<JSReceiver> callable,
+                          wasm::Suspend suspend, const wasm::FunctionSig* sig);
+  V8_EXPORT_PRIVATE void SetCompiledWasmToJs(
+      Isolate*, DirectHandle<JSReceiver> callable,
+      const wasm::WasmCode* wasm_to_js_wrapper, wasm::Suspend suspend,
+      const wasm::FunctionSig* sig);
 
   // Initialize this entry as a Wasm to Wasm call.
   void SetWasmToWasm(Tagged<WasmTrustedInstanceData> target_instance_object,
@@ -135,7 +135,7 @@ class ImportedFunctionEntry {
 
   Tagged<JSReceiver> callable();
   Tagged<Object> maybe_callable();
-  Tagged<Object> object_ref();
+  Tagged<Object> implicit_arg();
   Address target();
   void set_target(Address new_target);
 
@@ -439,6 +439,7 @@ class V8_EXPORT_PRIVATE WasmTrustedInstanceData : public ExposedTrustedObject {
   DECL_ACCESSORS(data_segment_sizes, Tagged<FixedUInt32Array>)
   DECL_ACCESSORS(element_segments, Tagged<FixedArray>)
   DECL_PRIMITIVE_ACCESSORS(break_on_entry, uint8_t)
+  DECL_PRIMITIVE_ACCESSORS(stress_deopt_counter_address, Address)
 
   // Clear uninitialized padding space. This ensures that the snapshot content
   // is deterministic. Depending on the V8 build mode there could be no padding.
@@ -479,6 +480,7 @@ class V8_EXPORT_PRIVATE WasmTrustedInstanceData : public ExposedTrustedObject {
   V(kOldAllocationTopAddressOffset, kSystemPointerSize)                   \
   V(kHookOnFunctionCallAddressOffset, kSystemPointerSize)                 \
   V(kTieringBudgetArrayOffset, kSystemPointerSize)                        \
+  V(kStressDeoptCounterOffset, kSystemPointerSize)                        \
   /* Less than system pointer size aligned fields are below. */           \
   V(kProtectedMemoryBasesAndSizesOffset, kTaggedSize)                     \
   V(kDataSegmentStartsOffset, kTaggedSize)                                \
@@ -616,7 +618,7 @@ class V8_EXPORT_PRIVATE WasmTrustedInstanceData : public ExposedTrustedObject {
   // Loads a range of elements from element segment into a table.
   // Returns the empty {Optional} if the operation succeeds, or an {Optional}
   // with the error {MessageTemplate} if it fails.
-  static base::Optional<MessageTemplate> InitTableEntries(
+  static std::optional<MessageTemplate> InitTableEntries(
       Isolate* isolate, Handle<WasmTrustedInstanceData> trusted_instance_data,
       Handle<WasmTrustedInstanceData> shared_trusted_instance_data,
       uint32_t table_index, uint32_t segment_index, uint32_t dst, uint32_t src,
@@ -704,8 +706,6 @@ class WasmTagObject
 // The dispatch table is referenced from a WasmTableObject and from every
 // WasmTrustedInstanceData which uses the table. It is used from generated code
 // for executing indirect calls.
-// The WasmDispatchTable lives in trusted space and holds tuples of
-// <ref, target, sig>.
 class WasmDispatchTable : public TrustedObject {
  public:
 #if V8_ENABLE_DRUMBRAKE
@@ -722,7 +722,7 @@ class WasmDispatchTable : public TrustedObject {
 #if V8_ENABLE_DRUMBRAKE
   // - function_index (uint32_t) (located in place of target pointer).
 #endif  // V8_ENABLE_DRUMBRAKE
-  // - ref (protected pointer, tagged sized)
+  // - implicit_arg (protected pointer, tagged sized)
   // - sig (int32_t); unused for imports which check the signature statically.
   static constexpr size_t kTargetBias = 0;
 #if V8_ENABLE_DRUMBRAKE
@@ -730,8 +730,8 @@ class WasmDispatchTable : public TrustedObject {
   // function index.
   static constexpr size_t kFunctionIndexBias = kTargetBias;
 #endif  // V8_ENABLE_DRUMBRAKE
-  static constexpr size_t kRefBias = kTargetBias + kSystemPointerSize;
-  static constexpr size_t kSigBias = kRefBias + kTaggedSize;
+  static constexpr size_t kImplicitArgBias = kTargetBias + kSystemPointerSize;
+  static constexpr size_t kSigBias = kImplicitArgBias + kTaggedSize;
   static constexpr size_t kEntryPaddingOffset = kSigBias + kInt32Size;
   static constexpr size_t kEntryPaddingBytes =
       kEntryPaddingOffset % kTaggedSize;
@@ -742,7 +742,7 @@ class WasmDispatchTable : public TrustedObject {
   static_assert(IsAligned(kEntriesOffset, kTaggedSize));
   static_assert(IsAligned(kEntrySize, kTaggedSize));
   static_assert(IsAligned(kTargetBias, kTaggedSize));
-  static_assert(IsAligned(kRefBias, kTaggedSize));
+  static_assert(IsAligned(kImplicitArgBias, kTaggedSize));
 
   // TODO(clemensb): If we ever enable allocation alignment we will needs to add
   // more padding to make the "target" fields system-pointer-size aligned.
@@ -773,16 +773,17 @@ class WasmDispatchTable : public TrustedObject {
   inline int capacity() const;
 
   // Accessors.
-  // {ref} will be a WasmApiFunctionRef, a WasmInstanceObject, or Smi::zero()
-  // (if the entry was cleared).
-  inline Tagged<Object> ref(int index) const;
+  // {implicit_arg} will be a WasmImportData, a WasmTrustedInstanceData, or
+  // Smi::zero() (if the entry was cleared).
+  inline Tagged<Object> implicit_arg(int index) const;
   inline Address target(int index) const;
   inline int sig(int index) const;
 
   // Set an entry for indirect calls.
-  // {ref} has to be a WasmApiFunctionRef, a WasmInstanceObject, or Smi::zero().
-  void V8_EXPORT_PRIVATE Set(int index, Tagged<Object> ref, Address call_target,
-                             int sig_id
+  // {implicit_arg} has to be a WasmImportData, a WasmTrustedInstanceData, or
+  // Smi::zero().
+  void V8_EXPORT_PRIVATE Set(int index, Tagged<Object> implicit_arg,
+                             Address call_target, int sig_id
 #if V8_ENABLE_DRUMBRAKE
                              ,
                              uint32_t function_index
@@ -794,8 +795,9 @@ class WasmDispatchTable : public TrustedObject {
 
   // Set an entry for an import. We check signatures statically there, so the
   // signature is not updated in the dispatch table.
-  // {ref} has to be a WasmApiFunctionRef or a WasmInstanceObject.
-  void V8_EXPORT_PRIVATE SetForImport(int index, Tagged<TrustedObject> ref,
+  // {implicit_arg} has to be a WasmImportData or a WasmTrustedInstanceData.
+  void V8_EXPORT_PRIVATE SetForImport(int index,
+                                      Tagged<TrustedObject> implicit_arg,
                                       Address call_target);
 
   void Clear(int index);
@@ -978,12 +980,11 @@ class WasmExportedFunctionData
   TQ_OBJECT_CONSTRUCTORS(WasmExportedFunctionData)
 };
 
-class WasmApiFunctionRef
-    : public TorqueGeneratedWasmApiFunctionRef<WasmApiFunctionRef,
-                                               TrustedObject> {
+class WasmImportData
+    : public TorqueGeneratedWasmImportData<WasmImportData, TrustedObject> {
  public:
   // Dispatched behavior.
-  DECL_PRINTER(WasmApiFunctionRef)
+  DECL_PRINTER(WasmImportData)
 
   DECL_CODE_POINTER_ACCESSORS(code)
 
@@ -991,7 +992,7 @@ class WasmApiFunctionRef
 
   static constexpr int kInvalidCallOrigin = 0;
 
-  static void SetImportIndexAsCallOrigin(DirectHandle<WasmApiFunctionRef> ref,
+  static void SetImportIndexAsCallOrigin(DirectHandle<WasmImportData> ref,
                                          int entry_index);
 
   static bool CallOriginIsImportIndex(DirectHandle<Object> call_origin);
@@ -1000,22 +1001,22 @@ class WasmApiFunctionRef
 
   static int CallOriginAsIndex(DirectHandle<Object> call_origin);
 
-  static void SetIndexInTableAsCallOrigin(DirectHandle<WasmApiFunctionRef> ref,
+  static void SetIndexInTableAsCallOrigin(DirectHandle<WasmImportData> ref,
                                           int entry_index);
 
   static void SetCrossInstanceTableIndexAsCallOrigin(
-      Isolate* isolate, DirectHandle<WasmApiFunctionRef> ref,
+      Isolate* isolate, DirectHandle<WasmImportData> ref,
       DirectHandle<WasmInstanceObject> instance_object, int entry_index);
 
-  static void SetFuncRefAsCallOrigin(DirectHandle<WasmApiFunctionRef> ref,
+  static void SetFuncRefAsCallOrigin(DirectHandle<WasmImportData> ref,
                                      DirectHandle<WasmFuncRef> func_ref);
 
   using BodyDescriptor =
-      StackedBodyDescriptor<FixedBodyDescriptorFor<WasmApiFunctionRef>,
+      StackedBodyDescriptor<FixedBodyDescriptorFor<WasmImportData>,
                             WithProtectedPointer<kProtectedInstanceDataOffset>,
                             WithStrongCodePointer<kCodeOffset>>;
 
-  TQ_OBJECT_CONSTRUCTORS(WasmApiFunctionRef)
+  TQ_OBJECT_CONSTRUCTORS(WasmImportData)
 };
 
 class WasmInternalFunction
@@ -1029,7 +1030,7 @@ class WasmInternalFunction
   V8_EXPORT_PRIVATE static Handle<JSFunction> GetOrCreateExternal(
       DirectHandle<WasmInternalFunction> internal);
 
-  DECL_PROTECTED_POINTER_ACCESSORS(ref, TrustedObject)
+  DECL_PROTECTED_POINTER_ACCESSORS(implicit_arg, TrustedObject)
 
   // Dispatched behavior.
   DECL_PRINTER(WasmInternalFunction)
@@ -1037,7 +1038,7 @@ class WasmInternalFunction
   using BodyDescriptor = StackedBodyDescriptor<
       FixedExposedTrustedObjectBodyDescriptor<
           WasmInternalFunction, kWasmInternalFunctionIndirectPointerTag>,
-      WithProtectedPointer<kProtectedRefOffset>>;
+      WithProtectedPointer<kProtectedImplicitArgOffset>>;
 
   TQ_OBJECT_CONSTRUCTORS(WasmInternalFunction)
 };
@@ -1341,10 +1342,11 @@ class WasmContinuationObject
 // The suspender object provides an API to suspend and resume wasm code using
 // promises. See: https://github.com/WebAssembly/js-promise-integration.
 class WasmSuspenderObject
-    : public TorqueGeneratedWasmSuspenderObject<WasmSuspenderObject, JSObject> {
+    : public TorqueGeneratedWasmSuspenderObject<WasmSuspenderObject,
+                                                HeapObject> {
  public:
+  using BodyDescriptor = FixedBodyDescriptorFor<WasmSuspenderObject>;
   enum State : int { kInactive = 0, kActive, kSuspended };
-  static Handle<WasmSuspenderObject> New(Isolate* isolate);
   DECL_PRINTER(WasmSuspenderObject)
   TQ_OBJECT_CONSTRUCTORS(WasmSuspenderObject)
 };

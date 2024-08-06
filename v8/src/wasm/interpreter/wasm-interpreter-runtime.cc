@@ -4,6 +4,8 @@
 
 #include "src/wasm/interpreter/wasm-interpreter-runtime.h"
 
+#include <optional>
+
 #include "src/execution/frames-inl.h"
 #include "src/execution/isolate.h"
 #include "src/objects/managed-inl.h"
@@ -487,7 +489,7 @@ void WasmInterpreterRuntime::TableInit(const uint8_t*& current_code,
     PurgeIndirectCallCache(table_index);
   }
 
-  base::Optional<MessageTemplate> msg_template =
+  std::optional<MessageTemplate> msg_template =
       WasmTrustedInstanceData::InitTableEntries(
           instance_object_->GetIsolate(), trusted_data, trusted_data,
           table_index, element_segment_index, dst, src, size);
@@ -2046,7 +2048,7 @@ void WasmInterpreterRuntime::ExecuteCallRef(
     Tagged<WasmInternalFunction> wasm_internal_function =
         Cast<WasmInternalFunction>(*func_ref);
     Tagged<Object> ref = wasm_internal_function->ref();
-    if (IsWasmApiFunctionRef(ref)) {
+    if (IsWasmImportData(ref)) {
       func_ref = handle(ref, isolate_);
     } else {
       DCHECK(IsWasmTrustedInstanceData(ref));
@@ -2203,9 +2205,8 @@ void WasmInterpreterRuntime::CallWasmToJSBuiltin(Isolate* isolate,
                                                  const FunctionSig* sig) {
   DCHECK(!WasmBytecode::ContainsSimd(sig));
   Handle<Object> callable;
-  if (IsWasmApiFunctionRef(*object_ref)) {
-    callable =
-        handle(Cast<WasmApiFunctionRef>(*object_ref)->callable(), isolate);
+  if (IsWasmImportData(*object_ref)) {
+    callable = handle(Cast<WasmImportData>(*object_ref)->callable(), isolate);
   } else {
     callable = object_ref;
     DCHECK(!IsUndefined(*callable));

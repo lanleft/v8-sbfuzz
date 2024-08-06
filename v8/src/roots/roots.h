@@ -127,6 +127,9 @@ class RootVisitor;
   V(Map, property_array_map, PropertyArrayMap)                                 \
   V(Map, accessor_info_map, AccessorInfoMap)                                   \
   V(Map, regexp_match_info_map, RegExpMatchInfoMap)                            \
+  V(Map, regexp_data_map, RegExpDataMap)                                       \
+  V(Map, atom_regexp_data_map, AtomRegExpDataMap)                              \
+  V(Map, ir_regexp_data_map, IrRegExpDataMap)                                  \
   V(Map, simple_number_dictionary_map, SimpleNumberDictionaryMap)              \
   V(Map, small_ordered_hash_map_map, SmallOrderedHashMapMap)                   \
   V(Map, small_ordered_hash_set_map, SmallOrderedHashSetMap)                   \
@@ -134,7 +137,7 @@ class RootVisitor;
   V(Map, source_text_module_map, SourceTextModuleMap)                          \
   V(Map, swiss_name_dictionary_map, SwissNameDictionaryMap)                    \
   V(Map, synthetic_module_map, SyntheticModuleMap)                             \
-  IF_WASM(V, Map, wasm_api_function_ref_map, WasmApiFunctionRefMap)            \
+  IF_WASM(V, Map, wasm_import_data_map, WasmImportDataMap)                     \
   IF_WASM(V, Map, wasm_capi_function_data_map, WasmCapiFunctionDataMap)        \
   IF_WASM(V, Map, wasm_continuation_object_map, WasmContinuationObjectMap)     \
   IF_WASM(V, Map, wasm_dispatch_table_map, WasmDispatchTableMap)               \
@@ -145,6 +148,7 @@ class RootVisitor;
   IF_WASM(V, Map, wasm_js_function_data_map, WasmJSFunctionDataMap)            \
   IF_WASM(V, Map, wasm_null_map, WasmNullMap)                                  \
   IF_WASM(V, Map, wasm_resume_data_map, WasmResumeDataMap)                     \
+  IF_WASM(V, Map, wasm_suspender_object_map, WasmSuspenderObjectMap)           \
   IF_WASM(V, Map, wasm_trusted_instance_data_map, WasmTrustedInstanceDataMap)  \
   IF_WASM(V, Map, wasm_type_info_map, WasmTypeInfoMap)                         \
   V(Map, weak_fixed_array_map, WeakFixedArrayMap)                              \
@@ -659,11 +663,9 @@ class RootsTable {
   friend class Factory;
   friend class FactoryBase<Factory>;
   friend class FactoryBase<LocalFactory>;
-  friend class PointerCompressedReadOnlyArtifacts;
   friend class ReadOnlyHeap;
   friend class ReadOnlyRoots;
   friend class RootsSerializer;
-  friend class SoleReadOnlyHeap;
 };
 
 #define ROOT_TYPE_FWD_DECL(Type, name, CamelName) class Type;

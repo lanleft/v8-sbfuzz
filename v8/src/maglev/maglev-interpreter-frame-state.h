@@ -5,6 +5,8 @@
 #ifndef V8_MAGLEV_MAGLEV_INTERPRETER_FRAME_STATE_H_
 #define V8_MAGLEV_MAGLEV_INTERPRETER_FRAME_STATE_H_
 
+#include <optional>
+
 #include "src/base/threaded-list.h"
 #include "src/compiler/bytecode-analysis.h"
 #include "src/compiler/bytecode-liveness-map.h"
@@ -369,18 +371,27 @@ struct KnownNodeAspects {
       // kName must be zero so that pointers are unaffected.
       kName = 0,
       kElements,
-      kTypedArrayLength
+      kTypedArrayLength,
+      // TODO(leszeks): We could probably share kStringLength with
+      // kTypedArrayLength if needed.
+      kStringLength
     };
     static constexpr int kTypeMask = 0x3;
     static_assert((kName & ~kTypeMask) == 0);
+    static_assert((kElements & ~kTypeMask) == 0);
     static_assert((kTypedArrayLength & ~kTypeMask) == 0);
+    static_assert((kStringLength & ~kTypeMask) == 0);
+
+    static LoadedPropertyMapKey Elements() {
+      return LoadedPropertyMapKey(kElements);
+    }
 
     static LoadedPropertyMapKey TypedArrayLength() {
       return LoadedPropertyMapKey(kTypedArrayLength);
     }
 
-    static LoadedPropertyMapKey Elements() {
-      return LoadedPropertyMapKey(kElements);
+    static LoadedPropertyMapKey StringLength() {
+      return LoadedPropertyMapKey(kStringLength);
     }
 
     // Allow implicit conversion from NameRef to key, so that callers in the
@@ -726,6 +737,7 @@ class CompactInterpreterFrameState {
 
 class MergePointRegisterState {
 #ifdef V8_ENABLE_MAGLEV
+
  public:
   bool is_initialized() const { return values_[0].GetPayload().is_initialized; }
 
@@ -1008,9 +1020,10 @@ class MergePointInterpreterFrameState {
                           const KnownNodeAspects& unmerged_aspects,
                           VirtualObject* merged, VirtualObject* unmerged);
 
-  ValueNode* MergeVirtualObjectValue(const MaglevGraphBuilder* graph_builder,
-                                     const KnownNodeAspects& unmerged_aspects,
-                                     ValueNode* merged, ValueNode* unmerged);
+  std::optional<ValueNode*> MergeVirtualObjectValue(
+      const MaglevGraphBuilder* graph_builder,
+      const KnownNodeAspects& unmerged_aspects, ValueNode* merged,
+      ValueNode* unmerged);
 
   void MergeLoopValue(MaglevGraphBuilder* graph_builder,
                       interpreter::Register owner,
@@ -1057,12 +1070,22 @@ class MergePointInterpreterFrameState {
     interpreter::Register catch_block_context_register_;
   };
 
-  base::Optional<const compiler::LoopInfo*> loop_info_ = base::nullopt;
+  std::optional<const compiler::LoopInfo*> loop_info_ = std::nullopt;
 };
 
 struct LoopEffects {
-  explicit LoopEffects(Zone* zone)
-      : context_slot_written(zone), objects_written(zone), keys_cleared(zone) {}
+  explicit LoopEffects(int loop_header, Zone* zone)
+      :
+#ifdef DEBUG
+        loop_header(loop_header),
+#endif
+        context_slot_written(zone),
+        objects_written(zone),
+        keys_cleared(zone) {
+  }
+#ifdef DEBUG
+  int loop_header;
+#endif
   ZoneSet<KnownNodeAspects::LoadedContextSlotsKey> context_slot_written;
   ZoneSet<ValueNode*> objects_written;
   ZoneSet<KnownNodeAspects::LoadedPropertyMapKey> keys_cleared;
@@ -1072,6 +1095,16 @@ struct LoopEffects {
     objects_written.clear();
     keys_cleared.clear();
     unstable_aspects_cleared = false;
+  }
+  void Merge(const LoopEffects* other) {
+    if (!unstable_aspects_cleared) {
+      unstable_aspects_cleared = other->unstable_aspects_cleared;
+    }
+    context_slot_written.insert(other->context_slot_written.begin(),
+                                other->context_slot_written.end());
+    objects_written.insert(other->objects_written.begin(),
+                           other->objects_written.end());
+    keys_cleared.insert(other->keys_cleared.begin(), other->keys_cleared.end());
   }
 };
 

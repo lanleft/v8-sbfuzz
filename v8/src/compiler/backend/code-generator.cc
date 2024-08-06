@@ -4,6 +4,8 @@
 
 #include "src/compiler/backend/code-generator.h"
 
+#include <optional>
+
 #include "src/base/bounds.h"
 #include "src/base/iterator.h"
 #include "src/codegen/assembler-inl.h"
@@ -51,7 +53,7 @@ class CodeGenerator::JumpTable final : public ZoneObject {
 CodeGenerator::CodeGenerator(Zone* codegen_zone, Frame* frame, Linkage* linkage,
                              InstructionSequence* instructions,
                              OptimizedCompilationInfo* info, Isolate* isolate,
-                             base::Optional<OsrHelper> osr_helper,
+                             std::optional<OsrHelper> osr_helper,
                              int start_source_position,
                              JumpOptimizationInfo* jump_opt,
                              const AssemblerOptions& options, Builtin builtin,
@@ -538,7 +540,8 @@ MaybeHandle<Code> CodeGenerator::FinalizeCode() {
 
   if (CodeKindUsesDeoptimizationData(info()->code_kind())) {
     builder.set_deoptimization_data(GenerateDeoptimizationData());
-    DCHECK(info()->has_bytecode_array());
+    DCHECK(info()->has_bytecode_array() ||
+           info()->code_kind() == CodeKind::WASM_FUNCTION);
   }
 
   MaybeHandle<Code> maybe_code = builder.TryBuild();

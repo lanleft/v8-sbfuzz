@@ -4,6 +4,8 @@
 
 #include "src/wasm/wasm-engine.h"
 
+#include <optional>
+
 #include "src/base/functional.h"
 #include "src/base/platform/time.h"
 #include "src/base/small-vector.h"
@@ -300,7 +302,7 @@ std::shared_ptr<NativeModule> NativeModuleCache::MaybeGetNativeModule(
       // Insert a {nullopt} entry to let other threads know that this
       // {NativeModule} is already being created on another thread.
       [[maybe_unused]] auto [iterator, inserted] =
-          map_.emplace(key, base::nullopt);
+          map_.emplace(key, std::nullopt);
       DCHECK(inserted);
       return nullptr;
     }
@@ -330,7 +332,7 @@ bool NativeModuleCache::GetStreamingCompilationOwnership(
   }
   Key key{prefix_hash, compile_imports, {}};
   DCHECK_EQ(0, map_.count(key));
-  map_.emplace(key, base::nullopt);
+  map_.emplace(key, std::nullopt);
   return true;
 }
 
@@ -374,7 +376,7 @@ std::shared_ptr<NativeModule> NativeModuleCache::Update(
     // so that it stays valid until the native module is freed and erased from
     // the map.
     [[maybe_unused]] auto [iterator, inserted] = map_.emplace(
-        key, base::Optional<std::weak_ptr<NativeModule>>(native_module));
+        key, std::optional<std::weak_ptr<NativeModule>>(native_module));
     DCHECK(inserted);
   }
   cache_cv_.NotifyAll();
@@ -1254,11 +1256,21 @@ void WasmEngine::AddIsolate(Isolate* isolate) {
     Isolate* isolate = reinterpret_cast<Isolate*>(v8_isolate);
     Counters* counters = isolate->counters();
     WasmEngine* engine = GetWasmEngine();
-    base::MutexGuard lock(&engine->mutex_);
-    DCHECK_EQ(1, engine->isolates_.count(isolate));
-    for (auto* native_module : engine->isolates_[isolate]->native_modules) {
-      native_module->SampleCodeSize(counters);
+    {
+      base::MutexGuard lock(&engine->mutex_);
+      DCHECK_EQ(1, engine->isolates_.count(isolate));
+      for (auto* native_module : engine->isolates_[isolate]->native_modules) {
+        native_module->SampleCodeSize(counters);
+      }
     }
+    // Also sample overall metadata size (this includes the metadata size of
+    // individual NativeModules; we are summing that up twice, which could be
+    // improved performance-wise).
+    // The engine-wide metadata also includes global storage e.g. for the type
+    // canonicalizer.
+    size_t engine_meta_data = engine->EstimateCurrentMemoryConsumption();
+    counters->wasm_engine_metadata_size_kb()->AddSample(
+        static_cast<int>(engine_meta_data / KB));
   };
   isolate->heap()->AddGCEpilogueCallback(callback, v8::kGCTypeMarkSweepCompact,
                                          nullptr);

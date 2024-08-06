@@ -404,9 +404,16 @@ bool Heap::CreateEarlyReadOnlyMapsAndObjects() {
     ALLOCATE_AND_SET_ROOT(Map, symbol_map, Map::kSize);
 
     ALLOCATE_AND_SET_ROOT(Map, meta_map, Map::kSize);
+    // Keep HeapNumber and Oddball maps together for cheap NumberOrOddball
+    // checks.
     ALLOCATE_AND_SET_ROOT(Map, undefined_map, Map::kSize);
     ALLOCATE_AND_SET_ROOT(Map, null_map, Map::kSize);
+    // Keep HeapNumber and Boolean maps together for cheap NumberOrBoolean
+    // checks.
     ALLOCATE_AND_SET_ROOT(Map, boolean_map, Map::kSize);
+    // Keep HeapNumber and BigInt maps together for cheaper numerics checks.
+    ALLOCATE_AND_SET_ROOT(Map, heap_number_map, Map::kSize);
+    ALLOCATE_AND_SET_ROOT(Map, bigint_map, Map::kSize);
 
 #undef ALLOCATE_AND_SET_ROOT
 
@@ -417,6 +424,12 @@ bool Heap::CreateEarlyReadOnlyMapsAndObjects() {
     InitializePartialMap(null_map, meta_map, ODDBALL_TYPE, sizeof(Null));
     InitializePartialMap(boolean_map, meta_map, ODDBALL_TYPE, sizeof(Boolean));
     boolean_map->SetConstructorFunctionIndex(Context::BOOLEAN_FUNCTION_INDEX);
+    InitializePartialMap(heap_number_map, meta_map, HEAP_NUMBER_TYPE,
+                         sizeof(HeapNumber));
+    heap_number_map->SetConstructorFunctionIndex(
+        Context::NUMBER_FUNCTION_INDEX);
+    InitializePartialMap(bigint_map, meta_map, BIGINT_TYPE,
+                         kVariableSizeSentinel);
 
     for (const StringTypeInit& entry : kStringTypeTable) {
       Tagged<Map> map = UncheckedCast<Map>(roots.object_at(entry.index));
@@ -571,6 +584,8 @@ bool Heap::CreateEarlyReadOnlyMapsAndObjects() {
   FinalizePartialMap(roots.null_map());
   roots.null_map()->set_is_undetectable(true);
   FinalizePartialMap(roots.boolean_map());
+  FinalizePartialMap(roots.heap_number_map());
+  FinalizePartialMap(roots.bigint_map());
   FinalizePartialMap(roots.hole_map());
   FinalizePartialMap(roots.symbol_map());
   for (const StructInit& entry : kStructTable) {
@@ -608,11 +623,6 @@ bool Heap::CreateEarlyReadOnlyMapsAndObjects() {
     ALLOCATE_VARSIZE_MAP(CLOSURE_FEEDBACK_CELL_ARRAY_TYPE,
                          closure_feedback_cell_array)
     ALLOCATE_VARSIZE_MAP(FEEDBACK_VECTOR_TYPE, feedback_vector)
-
-    // Keep HeapNumber and BigInt maps together for cheaper numerics checks.
-    ALLOCATE_PRIMITIVE_MAP(HEAP_NUMBER_TYPE, sizeof(HeapNumber), heap_number,
-                           Context::NUMBER_FUNCTION_INDEX)
-    ALLOCATE_VARSIZE_MAP(BIGINT_TYPE, bigint);
 
     ALLOCATE_MAP(FOREIGN_TYPE, Foreign::kSize, foreign)
     ALLOCATE_MAP(TRUSTED_FOREIGN_TYPE, TrustedForeign::kSize, trusted_foreign)
@@ -729,6 +739,11 @@ bool Heap::CreateLateReadOnlyNonJSReceiverMaps() {
     ALLOCATE_VARSIZE_MAP(COVERAGE_INFO_TYPE, coverage_info);
     ALLOCATE_VARSIZE_MAP(REG_EXP_MATCH_INFO_TYPE, regexp_match_info);
 
+    ALLOCATE_MAP(REG_EXP_DATA_TYPE, RegExpData::kSize, regexp_data);
+    ALLOCATE_MAP(ATOM_REG_EXP_DATA_TYPE, AtomRegExpData::kSize,
+                 atom_regexp_data);
+    ALLOCATE_MAP(IR_REG_EXP_DATA_TYPE, IrRegExpData::kSize, ir_regexp_data);
+
     ALLOCATE_MAP(SOURCE_TEXT_MODULE_TYPE, SourceTextModule::kSize,
                  source_text_module)
     ALLOCATE_MAP(SYNTHETIC_MODULE_TYPE, SyntheticModule::kSize,
@@ -737,8 +752,8 @@ bool Heap::CreateLateReadOnlyNonJSReceiverMaps() {
     ALLOCATE_MAP(CONST_TRACKING_LET_CELL_TYPE, ConstTrackingLetCell::kSize,
                  global_const_tracking_let_cell)
 
-    IF_WASM(ALLOCATE_MAP, WASM_API_FUNCTION_REF_TYPE, WasmApiFunctionRef::kSize,
-            wasm_api_function_ref)
+    IF_WASM(ALLOCATE_MAP, WASM_IMPORT_DATA_TYPE, WasmImportData::kSize,
+            wasm_import_data)
     IF_WASM(ALLOCATE_MAP, WASM_CAPI_FUNCTION_DATA_TYPE,
             WasmCapiFunctionData::kSize, wasm_capi_function_data)
     IF_WASM(ALLOCATE_MAP, WASM_EXPORTED_FUNCTION_DATA_TYPE,
@@ -750,6 +765,8 @@ bool Heap::CreateLateReadOnlyNonJSReceiverMaps() {
             wasm_js_function_data)
     IF_WASM(ALLOCATE_MAP, WASM_RESUME_DATA_TYPE, WasmResumeData::kSize,
             wasm_resume_data)
+    IF_WASM(ALLOCATE_MAP, WASM_SUSPENDER_OBJECT_TYPE,
+            WasmSuspenderObject::kSize, wasm_suspender_object)
     IF_WASM(ALLOCATE_MAP, WASM_TYPE_INFO_TYPE, kVariableSizeSentinel,
             wasm_type_info)
     IF_WASM(ALLOCATE_MAP, WASM_CONTINUATION_OBJECT_TYPE,

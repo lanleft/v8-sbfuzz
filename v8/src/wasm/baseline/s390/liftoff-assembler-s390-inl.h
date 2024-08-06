@@ -2690,15 +2690,22 @@ SIMD_RELAXED_UNOP_LIST(SIMD_VISIT_RELAXED_UNOP)
 #undef SIMD_VISIT_RELAXED_UNOP
 #undef SIMD_RELAXED_UNOP_LIST
 
-#define F16_UNOP_LIST(V) \
-  V(f16x8_splat)         \
-  V(f16x8_abs)           \
-  V(f16x8_neg)           \
-  V(f16x8_sqrt)          \
-  V(f16x8_ceil)          \
-  V(f16x8_floor)         \
-  V(f16x8_trunc)         \
-  V(f16x8_nearest_int)
+#define F16_UNOP_LIST(V)     \
+  V(f16x8_splat)             \
+  V(f16x8_abs)               \
+  V(f16x8_neg)               \
+  V(f16x8_sqrt)              \
+  V(f16x8_ceil)              \
+  V(f16x8_floor)             \
+  V(f16x8_trunc)             \
+  V(f16x8_nearest_int)       \
+  V(i16x8_sconvert_f16x8)    \
+  V(i16x8_uconvert_f16x8)    \
+  V(f16x8_sconvert_i16x8)    \
+  V(f16x8_uconvert_i16x8)    \
+  V(f16x8_demote_f32x4_zero) \
+  V(f32x4_promote_low_f16x8) \
+  V(f16x8_demote_f64x2_zero)
 
 #define VISIT_F16_UNOP(name)                                \
   bool LiftoffAssembler::emit_##name(LiftoffRegister dst,   \
@@ -2732,6 +2739,8 @@ F16_BINOP_LIST(VISIT_F16_BINOP)
 #undef VISIT_F16_BINOP
 #undef F16_BINOP_LIST
 
+bool LiftoffAssembler::supports_f16_mem_access() { return false; }
+
 bool LiftoffAssembler::emit_f16x8_extract_lane(LiftoffRegister dst,
                                                LiftoffRegister lhs,
                                                uint8_t imm_lane_idx) {
@@ -2742,6 +2751,20 @@ bool LiftoffAssembler::emit_f16x8_replace_lane(LiftoffRegister dst,
                                                LiftoffRegister src1,
                                                LiftoffRegister src2,
                                                uint8_t imm_lane_idx) {
+  return false;
+}
+
+bool LiftoffAssembler::emit_f16x8_qfma(LiftoffRegister dst,
+                                       LiftoffRegister src1,
+                                       LiftoffRegister src2,
+                                       LiftoffRegister src3) {
+  return false;
+}
+
+bool LiftoffAssembler::emit_f16x8_qfms(LiftoffRegister dst,
+                                       LiftoffRegister src1,
+                                       LiftoffRegister src2,
+                                       LiftoffRegister src3) {
   return false;
 }
 
@@ -3129,7 +3152,7 @@ void LiftoffAssembler::CallCWithStackBuffer(
   int arg_offset = 0;
   for (const VarState& arg : args) {
     MemOperand dst{sp, arg_offset};
-    liftoff::StoreToMemory(this, dst, arg, r0);
+    liftoff::StoreToMemory(this, dst, arg, ip);
     arg_offset += value_kind_size(arg.kind());
   }
   DCHECK_LE(arg_offset, stack_bytes);
@@ -3174,7 +3197,7 @@ void LiftoffAssembler::CallCWithStackBuffer(
         LoadF64(result_reg->fp(), MemOperand(sp));
         break;
       case kS128:
-        LoadV128(result_reg->fp(), MemOperand(sp), r0);
+        LoadV128(result_reg->fp(), MemOperand(sp), ip);
         break;
       default:
         UNREACHABLE();
@@ -3206,7 +3229,7 @@ void LiftoffAssembler::CallC(const std::initializer_list<VarState> args,
       int offset =
           (kStackFrameExtraParamSlot + stack_args) * kSystemPointerSize;
       MemOperand dst{sp, offset + bias};
-      liftoff::StoreToMemory(this, dst, arg, r0);
+      liftoff::StoreToMemory(this, dst, arg, ip);
       ++stack_args;
     }
   }
