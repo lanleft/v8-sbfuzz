@@ -17,7 +17,6 @@
 */
 
 // This is not your everyday Unicorn.
-#include <stdint.h>
 #include "unicorn/unicorn.h"
 #include "unicorn/x86.h"
 #define UNICORN_AFL
@@ -26,15 +25,13 @@
 
 
 #define INPUT_ADDR 0x5000
-#define TARGET_RANGE_START 0x2db900000000 // 0x3b9d00000000
+#define TARGET_RANGE_START 0x9b300000000
 #define TARGET_RANGE_END TARGET_RANGE_START+0x100000000
 
 uint64_t current_input_len = 0;
 uint64_t current_input_index = 0;
 // Global flag to indicate if we encountered an invalid memory read
 bool is_invalid = false;
-uint64_t rewrite_addrs[0x100] = {0};
-uint64_t rewrite_addrs_index = 0;
 
 // Callback function for invalid memory reads
 static bool hook_mem_invalid(uc_engine *uc, uc_mem_type type,
@@ -57,60 +54,37 @@ void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size
     if (current_input_index + size >= current_input_len) {
         value = 0xffffff00;
         uc_mem_write(uc, address, &value, size);
-        DEBUG_COLOR(COLOR_BLUE, "0x%lx size: 0x%x end of input buffer. Stopping emulation gracefully.", address, size);
+        DEBUG_COLOR(COLOR_YELLOW, "0x%lx size: 0x%x end of input buffer. Stopping emulation gracefully.", address, size);
         is_invalid = true;
-        exit(1);
-        // uc_emu_stop(uc);
+        uc_emu_stop(uc);
         return;
     }
 
-    if ((address >= TARGET_RANGE_START+0x40000 && address < TARGET_RANGE_START+0x149000) | (address >= TARGET_RANGE_START+0x280000 && address < TARGET_RANGE_START+0x2c0000)) {
+    if ((address >= TARGET_RANGE_START+40000 && address < TARGET_RANGE_START+143000) | (address >= TARGET_RANGE_START+0x180000 && address < TARGET_RANGE_START+0x280000) | (address >= TARGET_RANGE_START+0x2c0000 && address < TARGET_RANGE_START+0x340000)) {
         if (type == UC_MEM_READ) {
 
-            if ((size == 4)) {
-                DEBUG_COLOR(COLOR_MAGENTA, "##### 0x%"PRIx64" size: %d is skipped", address, size);
-                return;
-            }
-
-            // checking this address is already rewritten
-            for (int i=0; i<rewrite_addrs_index; i++){
-                if (address == rewrite_addrs[i]){
-                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" already rewritten", address);
-                    return;
-                }
-            }
-
             switch (address) {
-                // 0x2db900282218 -> 0x0dc20811
-                case 0x2db90028221a:
-                    value = 0xc2;
+
+                case 0x9b3001dca0c:
+                    value = 0x001dc9c9;
                     uc_mem_write(uc, address, &value, size);
-                    DEBUG_COLOR(COLOR_CYAN, "##### 0x%"PRIx64"  size: %d  value: 0x%lx", 
-                                address, size, value);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
+                                address, (uint64_t)0x001dc9c9, size, value);
                     break;
-                case 0x2db90028228c:
-                    value = 0x0811;
+
+                case 0x9b3001dc9cc: // trusted data pointer 
+                    // 0x555556ccf0cc <Builtins_JSToWasmWrapper+76>     and    r8, qword ptr [r9 + rcx]          R8 => 0x16aa000c4935
+                    value = 0x00405e00;
                     uc_mem_write(uc, address, &value, size);
-                    DEBUG_COLOR(COLOR_CYAN, "##### 0x%"PRIx64"  size: %d  value: 0x%lx", 
-                                address, size, value);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
+                                address, (uint64_t)0x00405e00, size, value);
                     break;
-                case 0x2db900282218:
-                    value = 0x0811;
+
+                case 0x9b30019ab68:
+                    value = 0x00000831;
                     uc_mem_write(uc, address, &value, size);
-                    DEBUG_COLOR(COLOR_CYAN, "##### 0x%"PRIx64"  size: %d  value: 0x%lx", 
-                                address, size, value);
-                    break;
-                case 0x2db90029dbea:
-                    value = 0x0003;
-                    uc_mem_write(uc, address, &value, size);
-                    DEBUG_COLOR(COLOR_CYAN, "##### 0x%"PRIx64"  size: %d  value: 0x%lx", 
-                                address, size, value);
-                    break;
-                case 0x374a0029dbf0:
-                    value = 0x00;
-                    uc_mem_write(uc, address, &value, size);
-                    DEBUG_COLOR(COLOR_CYAN, "##### 0x%"PRIx64"  size: %d  value: 0x%lx", 
-                                address, size, value);
+                    DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
+                                address, (uint64_t)0x00000831, size, value);
                     break;
 
                 default:
@@ -120,9 +94,6 @@ void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size
                     DEBUG_COLOR(COLOR_RED, "##### 0x%"PRIx64" -> 0x%lx size: %d  value: 0x%lx", 
                                 address, (uint64_t)INPUT_ADDR + current_input_index, size, value);
                     current_input_index += size;
-        
-                    // adding address to rewrite_addrs
-                    rewrite_addrs[rewrite_addrs_index++] = address;
                     break;
             }
 
@@ -132,13 +103,14 @@ void hook_mem_access(uc_engine *uc, uc_mem_type type, uint64_t address, int size
             DEBUG_COLOR(COLOR_BLUE, "Write operation at 0x%"PRIx64", size: %d, value: 0x%lx", 
                         address, size, value);
         }
-
     }
 }
 static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
 
     uint64_t rdi, rsi, rdx, rsp, new_rip;
-    uint64_t r8, rax, rip, rcx, r9;
+    uint64_t r8, rax, rip, rcx;
+    // uint64_t  key, permission;
+    // unsigned char tmp_data[0x100] = {0};
 
     unsigned char code[16] = {0};
     uc_mem_read(uc, address, code, size);
@@ -162,18 +134,10 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
 
     // hooking address 
     switch (address){
-
-        case 0x7fff7fd94493:
-            // lea rsp, [rsp + r8*8]
-            uc_reg_read(uc, UC_X86_REG_R8, &r8);
+        case 0x555556ccfc68:
             uc_reg_read(uc, UC_X86_REG_RSP, &rsp);
-            DEBUG_COLOR(COLOR_CYAN, "\t>>>  0x%"PRIx64 " 0x%"PRIx64, r8, rsp);
-            break;
-
-        case 0x7fff7fd94489:
-            // 0x7fff7fd94489: lea r8, [r9 + 1]
-            uc_reg_read(uc, UC_X86_REG_R9, &r9);
-            DEBUG_COLOR(COLOR_CYAN, "\t>>>  0x%"PRIx64, r9);
+            uc_reg_read(uc, UC_X86_REG_RCX, &rcx);
+            DEBUG_COLOR(COLOR_RED, ">> rsp: 0x%lx rcx: 0x%lx", rsp, rcx);
             break;
 
         default:
@@ -186,39 +150,6 @@ static void hook_code(uc_engine *uc, uint64_t address, uint32_t size, void *user
         return;
     }
 
-}
-
-// callback for tracing basic blocks
-static void hook_block(uc_engine *uc, uint64_t address, uint32_t size,
-                       void *user_data)
-{
-    // printf(">>> Tracing basic block at 0x%" PRIx64 ", block size = 0x%x\n",
-    //        address, size);
-
-    uint64_t rdi, rsi, rdx, rsp, new_rip;
-    uint64_t r8, rax, rip, rcx;
-
-    switch (address) {
-        // hook __memset_avx2_unaligned_erms 0x7fffed718d90
-        case 0x7ffff79084a0:
-            uc_reg_read(uc, UC_X86_REG_RDI, &rdi);
-            uc_reg_read(uc, UC_X86_REG_RSI, &rsi);
-            uc_reg_read(uc, UC_X86_REG_RDX, &rdx);
-            // do memset and return 
-            uint8_t memset_byte = rsi & 0xff;
-            for (int i=0; i<rdx; i++){
-                uc_mem_write(uc, rdi+i, &memset_byte, 1);
-            }
-            DEBUG_COLOR(COLOR_YELLOW, ">>> memset(0x%"PRIx64 ", 0x%"PRIx64 ", 0x%"PRIx64 ")", rdi, rsi, rdx);
-
-            new_rip = 0x7fff7fda2cad;
-            DEBUG_COLOR(COLOR_YELLOW, "\t new_rip: 0x%"PRIx64 "", new_rip);
-            uc_reg_write(uc, UC_X86_REG_RIP, &new_rip);
-            break;
-
-        default:
-            break;
-    }
 }
 
 
@@ -257,9 +188,6 @@ static bool place_input_callback(
     current_input_index = 0;  // Reset the index for each new input
     is_invalid = false;  // Reset the flag for each new input
 
-    memset(rewrite_addrs, 0, sizeof(rewrite_addrs));
-    rewrite_addrs_index = 0;
-
     return true;
 }
 
@@ -275,11 +203,19 @@ uc_engine* init_unicorn(const char* context_dir) {
     // setup value for fs:0x28
     uc_mem_map(uc, 0, 0x2000, UC_PROT_ALL);
     uint8_t a[8] = "\x00\x2b\x9b\x82\x26\xdf\xc6\x87";
-    uc_mem_write(uc, 0x28, a, 8); // canary value
+    uc_mem_write(uc, 0x28, a, 8); // canary 
+    // mov 0x7ffff7c3bc80 to fs:0x0
+    memcpy(a, "\x80\xbc\xc3\xf7\xff\x7f\x00\x00", 8);
+    uc_mem_write(uc, 0, a, 8); // canary
 
-    // 0x7ffff45270b5
-    // uc_mem_map(uc, 0x7ffff4527000, 0x1000, UC_PROT_ALL);
-    // uc_mem_write(uc, 0x7ffff45270b5, nop_arr, 5);
+    // 0x7ffff7e28d78
+    uc_mem_map(uc, 0x7ffff7e28d78, 0x1000, UC_PROT_ALL);
+    uint8_t b[8] = "\x50\x00\x00\x00\x00\x00\x00\x00";
+    uc_mem_write(uc, 0x7ffff7e28d78, b, 8); // mov    rax,QWORD PTR fs:[r12]
+    // write 0x555557004010 to fs:0x50
+    memcpy(b, "\x10\x40\x00\x57\x55\x55\x00\x00", 8);
+    uc_mem_write(uc, 0x50, b, 8);
+
 
     return uc;
 }
@@ -311,18 +247,16 @@ int main(int argc, char **argv, char **envp) {
     // ======================= load context ===============================
 
     // Set the program counter to the start of the code
-    uint64_t start_address = 0x7fff7fd91f00; // <Builtins_JSToWasmWrapper>       push   rbp  
-    uint64_t end_address = 0x7fff7fd94499; // <Builtins_JSToWasmWrapper+3054>              ret 
+    uint64_t start_address = 0x555556ccf080; // <Builtins_JSToWasmWrapper>       push   rbp  
+    uint64_t end_address = 0x555556ccfc6e; // <Builtins_JSToWasmWrapper+3054>              ret 
 
     // If we want tracing output, set the callbacks here
-    uc_hook hooks[10];
+    uc_hook hooks[3];
     uc_hook_add(uc, &hooks[0], UC_HOOK_CODE, hook_code, NULL, start_address, end_address);
     uc_hook_add(uc, &hooks[1], UC_HOOK_MEM_READ, hook_mem_access, NULL, TARGET_RANGE_START, TARGET_RANGE_END);
 
     uc_hook_add(uc, &hooks[2], UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_FETCH_UNMAPPED,
                       (void *)hook_mem_invalid, NULL, 1, 0); // all addresses
-
-    uc_hook_add(uc, &hooks[3], UC_HOOK_BLOCK, hook_block, NULL, 1, 0); // all addresses
 
     // start fuzzing
     DEBUG("Starting to fuzz...");

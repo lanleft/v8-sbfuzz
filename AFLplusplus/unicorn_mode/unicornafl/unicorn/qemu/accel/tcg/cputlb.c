@@ -1732,12 +1732,12 @@ load_helper(CPUArchState *env, target_ulong addr, TCGMemOpIdx oi,
 
     haddr = (void *)((uintptr_t)addr + entry->addend);
 
-    // hardcode T_T
-    if (((uint64_t)haddr & 0xfff00000000) == 0xba900000000) {
-        printf("### haddr: 0x%lx\n", (uint64_t)haddr);
-        uc_emu_stop(uc);
-        return 0x90;
-    }
+    // // hardcode T_T
+    // if (((uint64_t)haddr & 0xfff00000000) == 0x2db900000000) {
+    //     printf("### haddr: 0x%lx\n", (uint64_t)haddr);
+    //     uc_emu_stop(uc);
+    //     return 0x90;
+    // }
     res = load_memop(haddr, op);
 
 _out:

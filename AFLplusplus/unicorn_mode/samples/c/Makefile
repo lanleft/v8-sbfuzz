@@ -66,3 +66,4 @@ debug: harness-debug.o
 fuzz: harness
 
 	DYLD_FALLBACK_LIBRARY_PATH="../../unicornafl/unicorn/build" LD_LIBRARY_PATH="../../unicornafl/unicorn/build" ../../../afl-fuzz -m none -i sample_inputs -o out -- ./harness @@
+	# 
