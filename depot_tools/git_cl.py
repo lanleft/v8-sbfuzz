@@ -1733,19 +1733,22 @@ class Changelist(object):
         return args
 
     def RunHook(self,
-                committing,
-                may_prompt,
-                verbose,
-                parallel,
-                upstream,
-                description,
-                all_files,
-                files=None,
-                resultdb=False,
-                realm=None):
+                committing: bool,
+                may_prompt: bool,
+                verbose: bool,
+                parallel: bool,
+                upstream: str,
+                description: str,
+                all_files: bool,
+                files: Optional[Sequence[str]] = None,
+                resultdb: Optional[bool] = None,
+                realm: Optional[str] = None,
+                end_commit: Optional[str] = None) -> Mapping[str, Any]:
         """Calls sys.exit() if the hook fails; returns a HookResults otherwise."""
         args = self._GetCommonPresubmitArgs(verbose, upstream)
         args.append('--commit' if committing else '--upload')
+        if end_commit:
+            args.extend(['--end_commit', end_commit])
         if may_prompt:
             args.append('--may_prompt')
         if parallel:
@@ -2068,7 +2071,8 @@ class Changelist(object):
                                         parallel=options.parallel,
                                         upstream=parent,
                                         description=change_desc.description,
-                                        all_files=False)
+                                        all_files=False,
+                                        end_commit=end_commit)
             self.ExtendCC(hook_results['more_cc'])
 
         # Update the change description and ensure we have a Change Id.
@@ -4504,6 +4508,127 @@ def CMDissue(parser, args):
     return 0
 
 
+def _create_commit_message(orig_message, bug=None):
+    """Returns a commit message for the cherry picked CL."""
+    orig_message_lines = orig_message.splitlines()
+    subj_line = orig_message_lines[0]
+    new_message = (f'Cherry pick "{subj_line}"\n\n'
+                   "Original change's description:\n")
+    for line in orig_message_lines:
+        new_message += f'> {line}\n'
+    new_message += '\n'
+    if bug:
+        new_message += f'Bug: {bug}\n'
+    if change_id := git_footers.get_footer_change_id(orig_message):
+        new_message += f'Change-Id: {change_id[0]}\n'
+    return new_message
+
+
+# TODO(b/341792235): Add metrics.
+@subcommand.usage('[revisions ...]')
+def CMDcherry_pick(parser, args):
+    """Upload a chain of cherry picks to Gerrit.
+
+    This must be run inside the git repo you're trying to make changes to.
+    """
+    if gclient_utils.IsEnvCog():
+        print('cherry-pick command is not supported in non-git environment',
+              file=sys.stderr)
+        return 1
+
+    parser.add_option('--branch', help='Gerrit branch, e.g. refs/heads/main')
+    parser.add_option('--bug',
+                      help='Bug to add to the description of each change.')
+    parser.add_option('--parent-change-num',
+                      type='int',
+                      help='The parent change of the first cherry-pick CL, '
+                      'i.e. the start of the CL chain.')
+    options, args = parser.parse_args(args)
+
+    if not options.branch:
+        parser.error('Branch is required.')
+    if not args:
+        parser.error('No revisions to cherry pick.')
+
+    # TODO(b/341792235): Consider using GetCommitMessage after b/362567930 is
+    # fixed so this command can be run outside of a git workspace.
+    host = Changelist().GetGerritHost()
+    change_ids_to_message = {}
+    change_ids_to_commit = {}
+
+    # Gerrit needs a change ID for each commit we cherry pick.
+    for commit in args:
+        # Don't use the ChangeId in the commit message since it may not be
+        # unique. Gerrit will error with "Multiple changes found" if we use a
+        # non-unique ID. Instead, query Gerrit with the hash and verify it
+        # corresponds to a unique CL.
+        changes = gerrit_util.QueryChanges(host, [('commit', commit)])
+        if not changes:
+            raise RuntimeError(f'No changes found for {commit}.')
+        if len(changes) > 1:
+            raise RuntimeError(f'Multiple changes found for {commit}.')
+
+        change_id = changes[0]['id']
+        change_ids_to_commit[change_id] = commit
+
+        message = git_common.run('show', '-s', '--format=%B', commit).strip()
+        change_ids_to_message[change_id] = message
+
+    print(f'Creating chain of {len(change_ids_to_message)} cherry pick(s)...')
+
+    def print_any_remaining_commits():
+        if not change_ids_to_commit:
+            return
+        print('Remaining commit(s) to cherry pick:')
+        for commit in change_ids_to_commit.values():
+            print(f'  {commit}')
+
+    # Gerrit only supports cherry picking one commit per change, so we have
+    # to cherry pick each commit individually and create a chain of CLs.
+    parent_change_num = options.parent_change_num
+    for change_id, orig_message in change_ids_to_message.items():
+        message = _create_commit_message(orig_message, options.bug)
+        orig_subj_line = orig_message.splitlines()[0]
+
+        # Create a cherry pick first, then rebase. If we create a chained CL
+        # then cherry pick, the change will lose its relation to the parent.
+        try:
+            new_change_info = gerrit_util.CherryPick(host,
+                                                     change_id,
+                                                     options.branch,
+                                                     message=message)
+        except gerrit_util.GerritError as e:
+            print(f'Failed to create cherry pick "{orig_subj_line}": {e}. '
+                  'Please resolve any merge conflicts.')
+            print_any_remaining_commits()
+            return 1
+
+        change_ids_to_commit.pop(change_id)
+        new_change_id = new_change_info['id']
+        new_change_num = new_change_info['_number']
+        new_change_url = gerrit_util.GetChangePageUrl(host, new_change_num)
+        print(f'Created cherry pick of "{orig_subj_line}": {new_change_url}')
+
+        if parent_change_num:
+            try:
+                gerrit_util.RebaseChange(host, new_change_id, parent_change_num)
+            except gerrit_util.GerritError as e:
+                parent_change_url = gerrit_util.GetChangePageUrl(
+                    host, parent_change_num)
+                print(f'Failed to rebase {new_change_url} on '
+                      f'{parent_change_url}: {e}. Please resolve any merge '
+                      'conflicts.')
+                print('Once resolved, you can continue the CL chain with '
+                      f'`--parent-change-num={new_change_num}` to specify '
+                      'which change the chain should start with.\n')
+                print_any_remaining_commits()
+                return 1
+
+        parent_change_num = new_change_num
+
+    return 0
+
+
 @metrics.collector.collect_metrics('git cl comments')
 def CMDcomments(parser, args):
     """Shows or posts review comments for any changelist."""
@@ -5141,6 +5266,18 @@ def CMDupload(parser, args):
                        if opt.help != optparse.SUPPRESS_HELP))
         return
 
+    cl = Changelist(branchref=options.target_branch)
+
+    # Do a quick RPC to Gerrit to ensure that our authentication is all working
+    # properly. Otherwise `git cl upload` will:
+    #   * run `git status` (slow for large repos)
+    #   * run presubmit tests (likely slow)
+    #   * ask the user to edit the CL description (requires thinking)
+    #
+    # And then attempt to push the change up to Gerrit, which can fail if
+    # authentication is not working properly.
+    gerrit_util.GetAccountDetails(cl.GetGerritHost())
+
     # TODO(crbug.com/1475405): Warn users if the project uses submodules and
     # they have fsmonitor enabled.
     if os.path.isfile('.gitmodules'):
@@ -5187,8 +5324,6 @@ def CMDupload(parser, args):
     if options.squash is None:
         # Load default for user, repo, squash=true, in this order.
         options.squash = settings.GetSquashGerritUploads()
-
-    cl = Changelist(branchref=options.target_branch)
 
     # Warm change details cache now to avoid RPCs later, reducing latency for
     # developers.
@@ -6755,8 +6890,8 @@ def CMDformat(parser, args):
         DieWithError('Could not find base commit for this branch. '
                      'Are you in detached state?')
 
-    # Filter out copied/renamed/deleted files
-    diff_output = RunGitDiffCmd(['--name-only', '--diff-filter=crd'],
+    # Filter out deleted files
+    diff_output = RunGitDiffCmd(['--name-only', '--diff-filter=d'],
                                 upstream_commit, files)
     diff_files = diff_output.splitlines()
 

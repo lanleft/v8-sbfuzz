@@ -14,6 +14,8 @@ import re
 import threading
 
 from collections import defaultdict
+from itertools import chain
+from typing import Any
 from typing import Collection, Iterable, Iterator, Literal, Dict
 from typing import Optional, Sequence, Mapping
 
@@ -64,6 +66,10 @@ class GitConfigStateBase(metaclass=abc.ABCMeta):
 
     In GitConfigStateTest, this is modeled using a set of GitConfigScope-indexed
     dictionaries.
+
+    Implementations MUST ensure that all keys returned in load_config are
+    already canonicalized, and implementations MUST accept non-canonical keys to
+    set_* and unset_* methods.
     """
 
     @abc.abstractmethod
@@ -72,6 +78,9 @@ class GitConfigStateBase(metaclass=abc.ABCMeta):
         observable.
 
         The caller must not mutate the returned value.
+
+        Implementations MUST ensure that all keys returned in load_config are
+        already canonicalized.
         """
 
     @abc.abstractmethod
@@ -82,6 +91,8 @@ class GitConfigStateBase(metaclass=abc.ABCMeta):
 
         If `append` is True, this should add an additional value to the existing
         `key`, if any.
+
+        Implementations MUST accept non-canonical `key` values.
         """
 
     @abc.abstractmethod
@@ -95,6 +106,8 @@ class GitConfigStateBase(metaclass=abc.ABCMeta):
 
         TODO: Make value_pattern an re.Pattern. This wasn't done at the time of
         this refactor to keep the refactor small.
+
+        Implementations MUST accept non-canonical `key` values.
         """
 
     @abc.abstractmethod
@@ -107,6 +120,8 @@ class GitConfigStateBase(metaclass=abc.ABCMeta):
 
         If `key` is multi-valued in this scope, this must raise
         GitConfigUnsetMultipleValues with `key` and `scope`.
+
+        Implementations MUST accept non-canonical `key` values.
         """
 
     @abc.abstractmethod
@@ -122,6 +137,8 @@ class GitConfigStateBase(metaclass=abc.ABCMeta):
 
         TODO: Make value_pattern an re.Pattern. This wasn't done at the time of
         this refactor to keep the refactor small.
+
+        Implementations MUST accept non-canonical `key` values.
         """
 
 
@@ -153,6 +170,33 @@ class GitConfigUnknownScope(ValueError):
         super().__init__(f'Unknown git config scope {scope!r}.')
 
 
+class GitConfigInvalidKey(ValueError):
+
+    def __init__(self, key: str) -> None:
+        super().__init__(
+            f'Invalid git config key {key!r}: does not contain a section.')
+
+
+def canonicalize_git_config_key(key: str) -> str:
+    """Returns the canonicalized form of `key` for git config.
+
+    Git config internally canonicalizes keys (i.e. for
+    'section.subsection.variable', both 'section' and 'variable' will be
+    lowercased, but 'subsection' will not).
+
+    This also normalizes keys in the form 'section.variable' (both 'section' and
+    'variable' will be lowercased).
+    """
+    sections = key.split('.')
+    if len(sections) >= 3:
+        return '.'.join(
+            chain((sections[0].lower(), ), sections[1:-1],
+                  (sections[-1].lower(), )))
+    if len(sections) == 2:
+        return '.'.join((sections[0].lower(), sections[1].lower()))
+    raise GitConfigInvalidKey(key)
+
+
 class CachedGitConfigState(object):
     """This represents the observable git configuration state for a given
     repository (whose top-level path is `root`).
@@ -181,6 +225,8 @@ class CachedGitConfigState(object):
 
     def _maybe_load_config(self) -> GitFlatConfigData:
         if self._config is None:
+            # NOTE: Implementations of self._impl must already ensure that all
+            # keys are canonicalized.
             self._config = self._impl.load_config()
         return self._config
 
@@ -189,16 +235,30 @@ class CachedGitConfigState(object):
 
     def GetConfig(self,
                   key: str,
-                  default: Optional[str] = None) -> Optional[str]:
+                  default: Optional[str] = None,
+                  scope: Optional[str] = None) -> Optional[str]:
         """Lazily loads all configration observable for this CachedGitConfigState,
         then returns the last value for `key` as a string.
 
         If `key` is missing, returns default.
         """
-        values = self._maybe_load_config().get(key, None)
-        if not values:
+
+        key = canonicalize_git_config_key(key)
+        if not scope:
+            scope = "default"
+
+        scoped_config = self._maybe_load_config()
+        if not scoped_config:
             return default
 
+        scoped_config = scoped_config.get(scope, None)
+        if not scoped_config:
+            return default
+
+        values = scoped_config.get(key, None)
+
+        if not values:
+            return default
         return values[-1]
 
     def GetConfigBool(self, key: str) -> bool:
@@ -211,24 +271,31 @@ class CachedGitConfigState(object):
 
     def GetConfigList(self, key: str) -> list[str]:
         """Returns all values of `key` as a list of strings."""
-        return list(self._maybe_load_config().get(key, []))
+        key = canonicalize_git_config_key(key)
+        return list(self._maybe_load_config().get('default', {}).get(key, ()))
 
     def YieldConfigRegexp(self,
-                          pattern: Optional[str]) -> Iterable[tuple[str, str]]:
+                          pattern: Optional[str] = None
+                          ) -> Iterable[tuple[str, str]]:
         """Yields (key, value) pairs for any config keys matching `pattern`.
 
         This use re.match, so `pattern` needs to be for the entire config key.
 
-        If pattern is None, this returns all config items.
+        If `pattern` is None, this returns all config items.
+
+        Note that `pattern` is always matched against the canonicalized key
+        value (i.e. for 'section.[subsection.]variable', both 'section' and
+        'variable' will be lowercased, but 'subsection', if present, will not).
         """
         if pattern is None:
             pred = lambda _: True
         else:
             pred = re.compile(pattern).match
-        for name, values in sorted(self._maybe_load_config().items()):
-            if pred(name):
+        for key, values in sorted(self._maybe_load_config().get('default',
+                                                                {}).items()):
+            if pred(key):
                 for value in values:
-                    yield name, value
+                    yield key, value
 
     def SetConfig(self,
                   key,
@@ -311,49 +378,75 @@ class GitConfigStateReal(GitConfigStateBase):
     the git configuration files on disk via GIT.Capture.
     """
 
+    _GLOBAL_LOCK = threading.Lock()
+
     def __init__(self, root: pathlib.Path):
         super().__init__()
         self.root = root
 
     def load_config(self) -> GitFlatConfigData:
+        # NOTE: `git config --list` already canonicalizes keys.
         try:
-            rawConfig = GIT.Capture(['config', '--list', '-z'],
+            rawConfig = GIT.Capture(['config', '--list', '-z', '--show-scope'],
                                     cwd=self.root,
                                     strip_out=False)
         except subprocess2.CalledProcessError:
             return {}
 
         assert isinstance(rawConfig, str)
-        cfg: Dict[str, list[str]] = defaultdict(list)
+        cfg: Dict[str, Dict[str,
+                            List[str]]] = defaultdict(lambda: defaultdict(list))
 
-        # Splitting by '\x00' gets an additional empty string at the end.
-        for line in rawConfig.split('\x00')[:-1]:
-            key, value = map(str.strip, line.split('\n', 1))
-            cfg[key].append(value)
+        entries = rawConfig.split('\x00')[:-1]
+
+        def process_entry(entry: str, scope: str) -> None:
+            parts = entry.split('\n', 1)
+            key, value = parts if len(parts) == 2 else (parts[0], '')
+            key, value = key.strip(), value.strip()
+            cfg[scope][key].append(value)
+            if scope != "default":
+                cfg["default"][key].append(value)
+
+        i = 0
+        while i < len(entries):
+            if entries[i] in ['local', 'global', 'system']:
+                scope = entries[i]
+                i += 1
+                if i < len(entries):
+                    process_entry(entries[i], scope)
+            else:
+                process_entry(entries[i], "default")
+            i += 1
 
         return cfg
 
     def set_config(self, key: str, value: str, *, append: bool,
                    scope: GitConfigScope):
+        # NOTE: `git config` already canonicalizes key.
         args = ['config', f'--{scope}', key, value]
         if append:
             args.append('--add')
-        GIT.Capture(args, cwd=self.root)
+        with self._scope_lock(scope):
+            GIT.Capture(args, cwd=self.root)
 
     def set_config_multi(self, key: str, value: str, *,
                          value_pattern: Optional[str], scope: GitConfigScope):
+        # NOTE: `git config` already canonicalizes key.
         args = ['config', f'--{scope}', '--replace-all', key, value]
         if value_pattern is not None:
             args.append(value_pattern)
-        GIT.Capture(args, cwd=self.root)
+        with self._scope_lock(scope):
+            GIT.Capture(args, cwd=self.root)
 
     def unset_config(self, key: str, *, scope: GitConfigScope,
                      missing_ok: bool):
+        # NOTE: `git config` already canonicalizes key.
         accepted_retcodes = (0, 5) if missing_ok else (0, )
         try:
-            GIT.Capture(['config', f'--{scope}', '--unset', key],
-                        cwd=self.root,
-                        accepted_retcodes=accepted_retcodes)
+            with self._scope_lock(scope):
+                GIT.Capture(['config', f'--{scope}', '--unset', key],
+                            cwd=self.root,
+                            accepted_retcodes=accepted_retcodes)
         except subprocess2.CalledProcessError as cpe:
             if cpe.returncode == 5:
                 if b'multiple values' in cpe.stderr:
@@ -363,18 +456,29 @@ class GitConfigStateReal(GitConfigStateBase):
 
     def unset_config_multi(self, key: str, *, value_pattern: Optional[str],
                            scope: GitConfigScope, missing_ok: bool):
+        # NOTE: `git config` already canonicalizes key.
         accepted_retcodes = (0, 5) if missing_ok else (0, )
         args = ['config', f'--{scope}', '--unset-all', key]
         if value_pattern is not None:
             args.append(value_pattern)
         try:
-            GIT.Capture(args,
-                        cwd=self.root,
-                        accepted_retcodes=accepted_retcodes)
+            with self._scope_lock(scope):
+                GIT.Capture(args,
+                            cwd=self.root,
+                            accepted_retcodes=accepted_retcodes)
         except subprocess2.CalledProcessError as cpe:
             if cpe.returncode == 5:
                 raise GitConfigUnsetMissingValue(key, scope)
             raise
+
+    def _scope_lock(
+            self,
+            scope: GitConfigScope) -> contextlib.AbstractContextManager[Any]:
+        if scope == 'global':
+            return self._GLOBAL_LOCK
+        # TODO(ayatane): We should lock per local repo scope as well
+        # from a correctness perspective.
+        return contextlib.nullcontext()
 
 
 class GitConfigStateTest(GitConfigStateBase):
@@ -387,17 +491,15 @@ class GitConfigStateTest(GitConfigStateBase):
                  global_state_lock: threading.Lock,
                  global_state: dict[str, list[str]],
                  *,
-                 system_state: Optional[GitFlatConfigData] = None,
-                 local_state: Optional[GitFlatConfigData] = None,
-                 worktree_state: Optional[GitFlatConfigData] = None):
+                 system_state: Optional[GitFlatConfigData] = None):
         """Initializes a new (local, worktree) config state, with a reference to
         a single global `global` state and an optional immutable `system` state.
 
+        All keys in global_state and system_state MUST already be canonicalized
+        with canonicalize_key().
+
         The caller must supply a single shared Lock, plus a mutable reference to
         the global-state dictionary.
-
-        Optionally, the caller may supply an initial local/worktree
-        configuration state.
 
         This implementation will hold global_state_lock during all read/write
         operations on the 'global' scope.
@@ -408,15 +510,7 @@ class GitConfigStateTest(GitConfigStateBase):
         self.global_state = global_state
 
         self.worktree_state: dict[str, list[str]] = {}
-        if worktree_state is not None:
-            self.worktree_state = {
-                k: list(v)
-                for k, v in worktree_state.items()
-            }
-
         self.local_state: dict[str, list[str]] = {}
-        if local_state is not None:
-            self.local_state = {k: list(v) for k, v in local_state.items()}
 
         super().__init__()
 
@@ -441,34 +535,41 @@ class GitConfigStateTest(GitConfigStateBase):
             raise GitConfigUnknownScope(scope)
 
     def load_config(self) -> GitFlatConfigData:
-        ret = {k: list(v) for k, v in self.system_state.items()}
-        for scope in GitScopeOrder:
-            if scope == 'system':
+        cfg: Dict[str, Dict[str,
+                            List[str]]] = defaultdict(lambda: defaultdict(list))
+
+        for key, values in self.system_state.items():
+            cfg['system'][key].extend(values)
+            cfg['default'][key].extend(values)
+        for ordered_scope in GitScopeOrder:
+            if ordered_scope == 'system':
                 continue
-            with self._editable_scope(scope) as cfg:
-                for key, value in cfg.items():
-                    curvals = ret.get(key, None)
-                    if curvals is None:
-                        curvals = []
-                        ret[key] = curvals
-                    curvals.extend(value)
-        return ret
+            with self._editable_scope(ordered_scope) as scope_cfg:
+                for key, values in scope_cfg.items():
+                    cfg[ordered_scope][key].extend(values)
+                    cfg['default'][key].extend(values)
+        return cfg
 
     def set_config(self, key: str, value: str, *, append: bool,
                    scope: GitConfigScope):
+        key = canonicalize_git_config_key(key)
         with self._editable_scope(scope) as cfg:
             cur = cfg.get(key)
-            if cur is None or len(cur) == 1:
-                if append:
-                    cfg[key] = (cur or []) + [value]
-                else:
-                    cfg[key] = [value]
+            if cur is None:
+                cfg[key] = [value]
+                return
+            if append:
+                cfg[key] = cur + [value]
+                return
+            if len(cur) == 1:
+                cfg[key] = [value]
                 return
             raise ValueError(f'GitConfigStateTest: Cannot set key {key} '
                              f'- current value {cur!r} is multiple.')
 
     def set_config_multi(self, key: str, value: str, *,
                          value_pattern: Optional[str], scope: GitConfigScope):
+        key = canonicalize_git_config_key(key)
         with self._editable_scope(scope) as cfg:
             cur = cfg.get(key)
             if value_pattern is None or cur is None:
@@ -493,6 +594,7 @@ class GitConfigStateTest(GitConfigStateBase):
 
     def unset_config(self, key: str, *, scope: GitConfigScope,
                      missing_ok: bool):
+        key = canonicalize_git_config_key(key)
         with self._editable_scope(scope) as cfg:
             cur = cfg.get(key)
             if cur is None:
@@ -506,6 +608,7 @@ class GitConfigStateTest(GitConfigStateBase):
 
     def unset_config_multi(self, key: str, *, value_pattern: Optional[str],
                            scope: GitConfigScope, missing_ok: bool):
+        key = canonicalize_git_config_key(key)
         with self._editable_scope(scope) as cfg:
             cur = cfg.get(key)
             if cur is None:
@@ -574,7 +677,8 @@ class GIT(object):
             state = {}
             for key, val in cls._CONFIG_CACHE.items():
                 if val is not None:
-                    state[str(key)] = val._maybe_load_config()
+                    state[str(key)] = val._maybe_load_config().get(
+                        'default', {})
         return state
 
     @staticmethod
@@ -644,13 +748,14 @@ class GIT(object):
     @staticmethod
     def GetConfig(cwd: str,
                   key: str,
-                  default: Optional[str] = None) -> Optional[str]:
+                  default: Optional[str] = None,
+                  scope: Optional[str] = None) -> Optional[str]:
         """Lazily loads all configration observable for this CachedGitConfigState,
         then returns the last value for `key` as a string.
 
         If `key` is missing, returns default.
         """
-        return GIT._get_config_state(cwd).GetConfig(key, default)
+        return GIT._get_config_state(cwd).GetConfig(key, default, scope)
 
     @staticmethod
     def GetConfigBool(cwd: str, key: str) -> bool:

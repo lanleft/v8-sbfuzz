@@ -51,6 +51,18 @@ def callError(code=1, cmd='', cwd='', stdout=b'', stderr=b''):
 CERR1 = callError(1)
 
 
+def getAccountDetailsMock(host, account_id='self'):
+    if account_id == 'self':
+        return {
+            '_account_id': 123456,
+            'avatars': [],
+            'email': 'getAccountDetailsMock@example.com',
+            'name': 'GetAccountDetails(self)',
+            'status': 'OOO',
+        }
+    return None
+
+
 class TemporaryFileMock(object):
     def __init__(self):
         self.suffix = 0
@@ -1199,6 +1211,8 @@ class TestGitCl(unittest.TestCase):
                    return_value=change_id).start()
         mock.patch('git_common.get_or_create_merge_base',
                    return_value='origin/' + default_branch).start()
+        mock.patch('gerrit_util.GetAccountDetails',
+                    getAccountDetailsMock).start()
         mock.patch(
             'gclient_utils.AskForData',
             lambda prompt: self._mocked_call('ask_for_data', prompt)).start()
@@ -4169,7 +4183,8 @@ class ChangelistTest(unittest.TestCase):
                                             parallel=False,
                                             upstream='420parent',
                                             description=desc,
-                                            all_files=False)
+                                            all_files=False,
+                                            end_commit='420latest_tree')
 
     @mock.patch('git_cl.Changelist.GetAffectedFiles', return_value=[])
     @mock.patch('git_cl.Changelist.GetIssue', return_value='123')
@@ -4219,9 +4234,10 @@ class ChangelistTest(unittest.TestCase):
                                             may_prompt=True,
                                             verbose=False,
                                             parallel=False,
-                                            upstream='420parent',
+                                            upstream=parent,
                                             description=desc,
-                                            all_files=False)
+                                            all_files=False,
+                                            end_commit=latest_tree)
         mockEnsureCanUploadPatchset.assert_called_once()
 
         # Test preserve_tryjob
@@ -5413,6 +5429,60 @@ class CMDLintTestCase(CMDTestCaseBase):
                       git_cl.sys.stderr.getvalue())
         self.assertIn('chg-2.cc:3:  (cpplint) Do not indent within a namespace',
                       git_cl.sys.stderr.getvalue())
+
+
+class CMDCherryPickTestCase(CMDTestCaseBase):
+
+    def setUp(self):
+        super(CMDTestCaseBase, self).setUp()
+
+    def testCreateCommitMessage(self):
+        orig_message = """Foo the bar
+
+This change foo's the bar.
+
+Bug: 123456
+Change-Id: I25699146b24c7ad8776f17775f489b9d41499595
+"""
+        expected_message = """Cherry pick "Foo the bar"
+
+Original change's description:
+> Foo the bar
+> 
+> This change foo's the bar.
+> 
+> Bug: 123456
+> Change-Id: I25699146b24c7ad8776f17775f489b9d41499595
+
+Change-Id: I25699146b24c7ad8776f17775f489b9d41499595
+"""
+        self.assertEqual(git_cl._create_commit_message(orig_message),
+                         expected_message)
+
+    def testCreateCommitMessageWithBug(self):
+        bug = "987654"
+        orig_message = """Foo the bar
+
+This change foo's the bar.
+
+Bug: 123456
+Change-Id: I25699146b24c7ad8776f17775f489b9d41499595
+"""
+        expected_message = f"""Cherry pick "Foo the bar"
+
+Original change's description:
+> Foo the bar
+> 
+> This change foo's the bar.
+> 
+> Bug: 123456
+> Change-Id: I25699146b24c7ad8776f17775f489b9d41499595
+
+Bug: {bug}
+Change-Id: I25699146b24c7ad8776f17775f489b9d41499595
+"""
+        self.assertEqual(git_cl._create_commit_message(orig_message, bug),
+                         expected_message)
 
 
 if __name__ == '__main__':

@@ -38,3 +38,8 @@ sandbox_fuzzer/UnicornContext*
 AFLplusplus/unicorn_mode/samples/c/fuzz_out*
 AFLplusplus/unicorn_mode/samples/c/-g
 v8/'+'
+
+v8/
+.env
+auto-commit.py
+compile_commands.json

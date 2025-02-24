@@ -61,6 +61,7 @@ class ConfigChanger(object):
 
     @functools.cached_property
     def _shortname(self) -> str:
+        # Example: chromium
         parts: urllib.parse.SplitResult = urllib.parse.urlsplit(
             self._remote_url)
         name: str = parts.netloc.split('.')[0]
@@ -70,13 +71,14 @@ class ConfigChanger(object):
 
     @functools.cached_property
     def _base_url(self) -> str:
-        # Base URL looks like https://chromium.googlesource.com/
+        # Example: https://chromium.googlesource.com/
+        # Example: https://chromium-review.googlesource.com/
         parts: urllib.parse.SplitResult = urllib.parse.urlsplit(
             self._remote_url)
         return parts._replace(path='/', query='', fragment='').geturl()
 
     @classmethod
-    def new_from_env(cls, cwd: str, cl: git_cl.Changelist) -> 'ConfigChanger':
+    def new_from_env(cls, cwd: str, cl: git_cl.Changelist) -> ConfigChanger:
         """Create a ConfigChanger by inferring from env.
 
         The Gerrit host is inferred from the current repo/branch.
@@ -105,6 +107,20 @@ class ConfigChanger(object):
             mode=cls._infer_mode(cwd, gerrit_host),
             remote_url=remote_url,
         )
+
+    @classmethod
+    def new_for_remote(cls, cwd: str, remote_url: str) -> ConfigChanger:
+        """Create a ConfigChanger for the given Gerrit host.
+
+        The user, which is used to determine the mode, is inferred using
+        git-config(1) in the given `cwd`.
+        """
+        c = cls(
+            mode=ConfigMode.NEW_AUTH,
+            remote_url=remote_url,
+        )
+        c.mode = cls._infer_mode(cwd, c._shortname + '-review.googlesource.com')
+        return c
 
     @staticmethod
     def _infer_mode(cwd: str, gerrit_host: str) -> ConfigMode:
@@ -276,6 +292,12 @@ def Configure(cwd: str, cl: git_cl.Changelist) -> None:
                   c2.mode, c.mode)
     logging.debug('Configuring current Git repo authentication...')
     c2.apply(cwd)
+
+
+def ConfigureGlobal(cwd: str, remote_url: str) -> None:
+    """Configure global/user Git authentication."""
+    logging.debug('Configuring global Git authentication for %s', remote_url)
+    ConfigChanger.new_for_remote(cwd, remote_url).apply_global(cwd)
 
 
 def ClearRepoConfig(cwd: str, cl: git_cl.Changelist) -> None:
