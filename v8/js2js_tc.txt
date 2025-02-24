@@ -1,3 +1,0 @@
-./test/mjsunit/wasm/type-reflection-with-mv.js
-./test/mjsunit/wasm/js-to-js.js
-./test/mjsunit/wasm/type-reflection.js
